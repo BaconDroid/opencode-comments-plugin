@@ -1,5 +1,5 @@
 import { spawn } from "bun"
-import { appendFileSync, chmodSync, existsSync, mkdirSync, unlinkSync } from "node:fs"
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "node:fs"
 import { join } from "node:path"
 import { homedir, tmpdir } from "node:os"
 import { createRequire } from "node:module"
@@ -39,18 +39,37 @@ export function getBinaryName(): string {
   return process.platform === "win32" ? "comment-checker.exe" : "comment-checker"
 }
 
-export function getCachedBinaryPath(): string | null {
-  const binaryPath = join(getCacheDir(), getBinaryName())
+export function getCachedBinaryPath(version?: string | null): string | null {
+  if (!version) return null
+  const binaryPath = join(getCacheDir(), version, getBinaryName())
   return existsSync(binaryPath) ? binaryPath : null
 }
 
-function getPackageVersion(): string {
+export function getCommentCheckerVersion(): string | null {
   try {
     const require = createRequire(import.meta.url)
     const pkg = require("@code-yeongyu/comment-checker/package.json")
-    return pkg.version
+    const version = pkg?.version
+    return typeof version === "string" && version.length > 0 ? version : null
   } catch {
-    return "0.7.0"
+    return null
+  }
+}
+
+export function cleanupStaleCache(version: string): void {
+  let entries: string[]
+  try {
+    entries = readdirSync(getCacheDir())
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    if (entry === version) continue
+    try {
+      rmSync(join(getCacheDir(), entry), { recursive: true, force: true })
+    } catch (err) {
+      debugLog("Failed to remove stale cache entry:", entry, err)
+    }
   }
 }
 
@@ -98,7 +117,13 @@ export async function downloadCommentChecker(): Promise<string | null> {
     return null
   }
 
-  const cacheDir = getCacheDir()
+  const version = getCommentCheckerVersion()
+  if (!version) {
+    debugLog("Cannot resolve @code-yeongyu/comment-checker version; refusing to download a stale binary")
+    return null
+  }
+
+  const cacheDir = join(getCacheDir(), version)
   const binaryName = getBinaryName()
   const binaryPath = join(cacheDir, binaryName)
 
@@ -107,7 +132,6 @@ export async function downloadCommentChecker(): Promise<string | null> {
     return binaryPath
   }
 
-  const version = getPackageVersion()
   const { os, arch, ext } = platformInfo
   const assetName = `comment-checker_v${version}_${os}_${arch}.${ext}`
   const downloadUrl = `https://github.com/${REPO}/releases/download/v${version}/${assetName}`
@@ -148,6 +172,8 @@ export async function downloadCommentChecker(): Promise<string | null> {
     debugLog("Successfully downloaded binary to:", binaryPath)
     console.log("[opencode-comments-plugin] comment-checker binary ready.")
 
+    cleanupStaleCache(version)
+
     return binaryPath
   } catch (err) {
     debugLog("Failed to download:", err)
@@ -158,9 +184,13 @@ export async function downloadCommentChecker(): Promise<string | null> {
 }
 
 export async function ensureCommentCheckerBinary(): Promise<string | null> {
-  const cachedPath = getCachedBinaryPath()
+  const version = getCommentCheckerVersion()
+  if (!version) return null
+
+  const cachedPath = getCachedBinaryPath(version)
   if (cachedPath) {
     debugLog("Using cached binary:", cachedPath)
+    cleanupStaleCache(version)
     return cachedPath
   }
 
