@@ -16,7 +16,7 @@ import { existsSync as existsSync2 } from "fs";
 
 // src/downloader.ts
 var {spawn } = globalThis.Bun;
-import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { createRequire } from "module";
@@ -29,6 +29,9 @@ function debugLog(...args) {
   process.stderr.write(msg);
 }
 var REPO = "code-yeongyu/go-claude-code-comment-checker";
+var LATEST_URL = `https://github.com/${REPO}/releases/latest`;
+var LATEST_TTL_MS = 24 * 60 * 60 * 1000;
+var LATEST_CACHE_FILE = "latest.json";
 var PLATFORM_MAP = {
   "darwin-arm64": { os: "darwin", arch: "arm64", ext: "tar.gz" },
   "darwin-x64": { os: "darwin", arch: "amd64", ext: "tar.gz" },
@@ -60,6 +63,60 @@ function getCommentCheckerVersion() {
     return null;
   }
 }
+function parseLatestTag(location) {
+  if (!location)
+    return null;
+  const match = location.match(/\/tag\/v?(\d+\.\d+\.\d+)$/);
+  return match ? match[1] : null;
+}
+function getLatestCachePath() {
+  return join(getCacheDir(), LATEST_CACHE_FILE);
+}
+function readLatestCache() {
+  try {
+    const parsed = JSON.parse(readFileSync(getLatestCachePath(), "utf8"));
+    if (typeof parsed.version === "string" && parsed.version.length > 0 && typeof parsed.checkedAt === "number") {
+      return { version: parsed.version, checkedAt: parsed.checkedAt };
+    }
+  } catch {
+    debugLog("no latest-version cache");
+  }
+  return null;
+}
+function writeLatestCache(version) {
+  try {
+    const dir = getCacheDir();
+    if (!existsSync(dir))
+      mkdirSync(dir, { recursive: true });
+    writeFileSync(getLatestCachePath(), JSON.stringify({ version, checkedAt: Date.now() }));
+  } catch (err) {
+    debugLog("failed to cache latest version:", err);
+  }
+}
+function getPreferredCommentCheckerVersionSync() {
+  return readLatestCache()?.version ?? getCommentCheckerVersion();
+}
+async function getLatestCommentCheckerVersion() {
+  const cached = readLatestCache();
+  if (cached && Date.now() - cached.checkedAt < LATEST_TTL_MS) {
+    return cached.version;
+  }
+  try {
+    const response = await fetch(LATEST_URL, { redirect: "manual" });
+    const version = parseLatestTag(response.headers.get("location"));
+    if (version) {
+      debugLog("resolved latest comment-checker release:", version);
+      writeLatestCache(version);
+      return version;
+    }
+    debugLog("could not parse latest release location:", response.headers.get("location"));
+  } catch (err) {
+    debugLog("failed to resolve latest release:", err);
+  }
+  if (cached)
+    return cached.version;
+  return getCommentCheckerVersion();
+}
 function cleanupStaleCache(version) {
   let entries;
   try {
@@ -68,7 +125,7 @@ function cleanupStaleCache(version) {
     return;
   }
   for (const entry of entries) {
-    if (entry === version)
+    if (entry === version || entry === LATEST_CACHE_FILE)
       continue;
     try {
       rmSync(join(getCacheDir(), entry), { recursive: true, force: true });
@@ -104,16 +161,16 @@ async function extractZip(archivePath, destDir) {
     throw new Error(`zip extraction failed (exit ${exitCode}): ${stderr}`);
   }
 }
-async function downloadCommentChecker() {
+async function downloadCommentChecker(versionOverride) {
   const platformKey = `${process.platform}-${process.arch}`;
   const platformInfo = PLATFORM_MAP[platformKey];
   if (!platformInfo) {
     debugLog("Unsupported platform:", platformKey);
     return null;
   }
-  const version = getCommentCheckerVersion();
+  const version = versionOverride ?? getCommentCheckerVersion();
   if (!version) {
-    debugLog("Cannot resolve @code-yeongyu/comment-checker version; refusing to download a stale binary");
+    debugLog("Cannot resolve a comment-checker version; refusing to download a stale binary");
     return null;
   }
   const cacheDir = join(getCacheDir(), version);
@@ -162,8 +219,8 @@ async function downloadCommentChecker() {
     return null;
   }
 }
-async function ensureCommentCheckerBinary() {
-  const version = getCommentCheckerVersion();
+async function ensureCommentCheckerBinary(versionOverride) {
+  const version = versionOverride ?? await getLatestCommentCheckerVersion();
   if (!version)
     return null;
   const cachedPath = getCachedBinaryPath(version);
@@ -172,7 +229,7 @@ async function ensureCommentCheckerBinary() {
     cleanupStaleCache(version);
     return cachedPath;
   }
-  return downloadCommentChecker();
+  return downloadCommentChecker(version);
 }
 
 // src/cli.ts
@@ -189,22 +246,24 @@ function getBinaryName2() {
 }
 function findCommentCheckerPathSync() {
   const binaryName = getBinaryName2();
-  const version = getCommentCheckerVersion();
+  const version = getPreferredCommentCheckerVersionSync();
   if (!version) {
     debugLog2("cannot resolve comment-checker version; comment checking disabled");
     return null;
   }
-  try {
-    const require2 = createRequire2(import.meta.url);
-    const cliPkgPath = require2.resolve("@code-yeongyu/comment-checker/package.json");
-    const cliDir = dirname(cliPkgPath);
-    const binaryPath = join2(cliDir, "bin", binaryName);
-    if (existsSync2(binaryPath)) {
-      debugLog2("found binary in main package:", binaryPath);
-      return binaryPath;
+  if (getCommentCheckerVersion() === version) {
+    try {
+      const require2 = createRequire2(import.meta.url);
+      const cliPkgPath = require2.resolve("@code-yeongyu/comment-checker/package.json");
+      const cliDir = dirname(cliPkgPath);
+      const binaryPath = join2(cliDir, "bin", binaryName);
+      if (existsSync2(binaryPath)) {
+        debugLog2("found binary in main package:", binaryPath);
+        return binaryPath;
+      }
+    } catch {
+      debugLog2("main package not installed");
     }
-  } catch {
-    debugLog2("main package not installed");
   }
   const cachedPath = getCachedBinaryPath(version);
   if (cachedPath) {
@@ -225,6 +284,11 @@ async function getCommentCheckerPath() {
     return initPromise;
   }
   initPromise = (async () => {
+    const version = await getLatestCommentCheckerVersion();
+    if (!version) {
+      debugLog2("cannot resolve a comment-checker version; comment checking disabled");
+      return null;
+    }
     const syncPath = findCommentCheckerPathSync();
     if (syncPath && existsSync2(syncPath)) {
       resolvedCliPath = syncPath;
@@ -232,7 +296,7 @@ async function getCommentCheckerPath() {
       return syncPath;
     }
     debugLog2("triggering lazy download...");
-    const downloadedPath = await ensureCommentCheckerBinary();
+    const downloadedPath = await ensureCommentCheckerBinary(version);
     if (downloadedPath) {
       resolvedCliPath = downloadedPath;
       debugLog2("using downloaded path:", downloadedPath);

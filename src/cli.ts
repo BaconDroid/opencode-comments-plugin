@@ -2,7 +2,14 @@ import { spawn } from "bun"
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
 import { existsSync } from "node:fs"
-import { cleanupStaleCache, ensureCommentCheckerBinary, getCachedBinaryPath, getCommentCheckerVersion } from "./downloader"
+import {
+  cleanupStaleCache,
+  ensureCommentCheckerBinary,
+  getCachedBinaryPath,
+  getCommentCheckerVersion,
+  getLatestCommentCheckerVersion,
+  getPreferredCommentCheckerVersionSync,
+} from "./downloader"
 import { DEFAULT_CLI_TIMEOUT_MS } from "./constants"
 import type { CheckResult, HookInput } from "./types"
 
@@ -21,24 +28,26 @@ function getBinaryName(): string {
 function findCommentCheckerPathSync(): string | null {
   const binaryName = getBinaryName()
 
-  const version = getCommentCheckerVersion()
+  const version = getPreferredCommentCheckerVersionSync()
   if (!version) {
     debugLog("cannot resolve comment-checker version; comment checking disabled")
     return null
   }
 
-  try {
-    const require = createRequire(import.meta.url)
-    const cliPkgPath = require.resolve("@code-yeongyu/comment-checker/package.json")
-    const cliDir = dirname(cliPkgPath)
-    const binaryPath = join(cliDir, "bin", binaryName)
+  if (getCommentCheckerVersion() === version) {
+    try {
+      const require = createRequire(import.meta.url)
+      const cliPkgPath = require.resolve("@code-yeongyu/comment-checker/package.json")
+      const cliDir = dirname(cliPkgPath)
+      const binaryPath = join(cliDir, "bin", binaryName)
 
-    if (existsSync(binaryPath)) {
-      debugLog("found binary in main package:", binaryPath)
-      return binaryPath
+      if (existsSync(binaryPath)) {
+        debugLog("found binary in main package:", binaryPath)
+        return binaryPath
+      }
+    } catch {
+      debugLog("main package not installed")
     }
-  } catch {
-    debugLog("main package not installed")
   }
 
   const cachedPath = getCachedBinaryPath(version)
@@ -65,6 +74,12 @@ export async function getCommentCheckerPath(): Promise<string | null> {
   }
 
   initPromise = (async () => {
+    const version = await getLatestCommentCheckerVersion()
+    if (!version) {
+      debugLog("cannot resolve a comment-checker version; comment checking disabled")
+      return null
+    }
+
     const syncPath = findCommentCheckerPathSync()
     if (syncPath && existsSync(syncPath)) {
       resolvedCliPath = syncPath
@@ -73,7 +88,7 @@ export async function getCommentCheckerPath(): Promise<string | null> {
     }
 
     debugLog("triggering lazy download...")
-    const downloadedPath = await ensureCommentCheckerBinary()
+    const downloadedPath = await ensureCommentCheckerBinary(version)
     if (downloadedPath) {
       resolvedCliPath = downloadedPath
       debugLog("using downloaded path:", downloadedPath)
