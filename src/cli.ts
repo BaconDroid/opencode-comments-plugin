@@ -2,18 +2,15 @@ import { spawn } from "bun"
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
 import { existsSync } from "node:fs"
-import { appendFileSync } from "node:fs"
-import { tmpdir } from "node:os"
 import { cleanupStaleCache, ensureCommentCheckerBinary, getCachedBinaryPath, getCommentCheckerVersion } from "./downloader"
 import type { CheckResult, HookInput } from "./types"
 
 const DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1"
-const DEBUG_FILE = join(tmpdir(), "comment-checker-debug.log")
 
 function debugLog(...args: unknown[]) {
   if (!DEBUG) return
   const msg = `[${new Date().toISOString()}] [comment-checker:cli] ${args.map(a => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}\n`
-  appendFileSync(DEBUG_FILE, msg)
+  process.stderr.write(msg)
 }
 
 function getBinaryName(): string {

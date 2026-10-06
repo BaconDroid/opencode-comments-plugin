@@ -1,9 +1,6 @@
 // @bun
 // src/index.ts
 import { existsSync as existsSync3 } from "fs";
-import { appendFileSync as appendFileSync3 } from "fs";
-import { join as join3 } from "path";
-import { tmpdir as tmpdir3 } from "os";
 
 // src/constants.ts
 var COMMENT_CHECKER_EVENT = "PostToolUse";
@@ -14,23 +11,20 @@ var {spawn: spawn2 } = globalThis.Bun;
 import { createRequire as createRequire2 } from "module";
 import { dirname, join as join2 } from "path";
 import { existsSync as existsSync2 } from "fs";
-import { appendFileSync as appendFileSync2 } from "fs";
-import { tmpdir as tmpdir2 } from "os";
 
 // src/downloader.ts
 var {spawn } = globalThis.Bun;
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "fs";
 import { join } from "path";
-import { homedir, tmpdir } from "os";
+import { homedir } from "os";
 import { createRequire } from "module";
 var DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1";
-var DEBUG_FILE = join(tmpdir(), "comment-checker-debug.log");
 function debugLog(...args) {
   if (!DEBUG)
     return;
   const msg = `[${new Date().toISOString()}] [comment-checker:downloader] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
 `;
-  appendFileSync(DEBUG_FILE, msg);
+  process.stderr.write(msg);
 }
 var REPO = "code-yeongyu/go-claude-code-comment-checker";
 var PLATFORM_MAP = {
@@ -181,13 +175,12 @@ async function ensureCommentCheckerBinary() {
 
 // src/cli.ts
 var DEBUG2 = process.env.COMMENT_CHECKER_DEBUG === "1";
-var DEBUG_FILE2 = join2(tmpdir2(), "comment-checker-debug.log");
 function debugLog2(...args) {
   if (!DEBUG2)
     return;
   const msg = `[${new Date().toISOString()}] [comment-checker:cli] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
 `;
-  appendFileSync2(DEBUG_FILE2, msg);
+  process.stderr.write(msg);
 }
 function getBinaryName2() {
   return process.platform === "win32" ? "comment-checker.exe" : "comment-checker";
@@ -330,13 +323,12 @@ async function runCommentChecker(input, options = {}) {
 
 // src/index.ts
 var DEBUG3 = process.env.COMMENT_CHECKER_DEBUG === "1";
-var DEBUG_FILE3 = join3(tmpdir3(), "comment-checker-debug.log");
 function debugLog3(...args) {
   if (!DEBUG3)
     return;
   const msg = `[${new Date().toISOString()}] [comment-checker:hook] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
 `;
-  appendFileSync3(DEBUG_FILE3, msg);
+  process.stderr.write(msg);
 }
 var pendingCalls = new Map;
 var PENDING_CALL_TTL = 60000;
