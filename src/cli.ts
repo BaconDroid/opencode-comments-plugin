@@ -4,7 +4,7 @@ import { dirname, join } from "node:path"
 import { existsSync } from "node:fs"
 import { appendFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { ensureCommentCheckerBinary, getCachedBinaryPath } from "./downloader"
+import { ensureCommentCheckerBinary, getCachedBinaryPath, getCommentCheckerVersion } from "./downloader"
 import type { CheckResult, HookInput } from "./types"
 
 const DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1"
@@ -23,6 +23,12 @@ function getBinaryName(): string {
 function findCommentCheckerPathSync(): string | null {
   const binaryName = getBinaryName()
 
+  const version = getCommentCheckerVersion()
+  if (!version) {
+    debugLog("cannot resolve comment-checker version; comment checking disabled")
+    return null
+  }
+
   try {
     const require = createRequire(import.meta.url)
     const cliPkgPath = require.resolve("@code-yeongyu/comment-checker/package.json")
@@ -37,7 +43,7 @@ function findCommentCheckerPathSync(): string | null {
     debugLog("main package not installed")
   }
 
-  const cachedPath = getCachedBinaryPath()
+  const cachedPath = getCachedBinaryPath(version)
   if (cachedPath) {
     debugLog("found binary in cache:", cachedPath)
     return cachedPath
