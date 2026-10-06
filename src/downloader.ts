@@ -56,7 +56,7 @@ export function getCommentCheckerVersion(): string | null {
   }
 }
 
-function cleanupStaleCache(version: string): void {
+export function cleanupStaleCache(version: string): void {
   let entries: string[]
   try {
     entries = readdirSync(getCacheDir())
@@ -184,9 +184,13 @@ export async function downloadCommentChecker(): Promise<string | null> {
 }
 
 export async function ensureCommentCheckerBinary(): Promise<string | null> {
-  const cachedPath = getCachedBinaryPath(getCommentCheckerVersion())
+  const version = getCommentCheckerVersion()
+  if (!version) return null
+
+  const cachedPath = getCachedBinaryPath(version)
   if (cachedPath) {
     debugLog("Using cached binary:", cachedPath)
+    cleanupStaleCache(version)
     return cachedPath
   }
 

@@ -4,7 +4,7 @@ import { dirname, join } from "node:path"
 import { existsSync } from "node:fs"
 import { appendFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { ensureCommentCheckerBinary, getCachedBinaryPath, getCommentCheckerVersion } from "./downloader"
+import { cleanupStaleCache, ensureCommentCheckerBinary, getCachedBinaryPath, getCommentCheckerVersion } from "./downloader"
 import type { CheckResult, HookInput } from "./types"
 
 const DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1"
@@ -46,6 +46,7 @@ function findCommentCheckerPathSync(): string | null {
   const cachedPath = getCachedBinaryPath(version)
   if (cachedPath) {
     debugLog("found binary in cache:", cachedPath)
+    cleanupStaleCache(version)
     return cachedPath
   }
 
@@ -134,12 +135,41 @@ export async function runCommentChecker(input: HookInput, options: RunOptions = 
     proc.stdin.write(jsonInput)
     proc.stdin.end()
 
-    const watchdog = setTimeout(() => proc.kill(), 5_000)
-    const stdout = await new Response(proc.stdout).text()
-    const stderr = await new Response(proc.stderr).text()
-    const exitCode = await proc.exited
-    clearTimeout(watchdog)
+    const TIMEOUT_MS = 5_000
+    const outcome = await new Promise<{ stdout: string; stderr: string; exitCode: number } | "timeout">(resolve => {
+      const timer = setTimeout(() => {
+        debugLog("comment-checker timed out; killing")
+        try {
+          proc.kill()
+        } catch {
+          debugLog("comment-checker already exited")
+        }
+        proc.stdout.cancel().catch(() => {})
+        proc.stderr.cancel().catch(() => {})
+        resolve("timeout")
+      }, TIMEOUT_MS)
 
+      void (async () => {
+        try {
+          const stdout = await new Response(proc.stdout).text()
+          const stderr = await new Response(proc.stderr).text()
+          const exitCode = await proc.exited
+          clearTimeout(timer)
+          resolve({ stdout, stderr, exitCode })
+        } catch (err) {
+          debugLog("comment-checker stream failed:", err)
+          clearTimeout(timer)
+          resolve("timeout")
+        }
+      })()
+    })
+
+    if (outcome === "timeout") {
+      debugLog("comment-checker abandoned after timeout or stream failure")
+      return { hasComments: false, message: "" }
+    }
+
+    const { stdout, stderr, exitCode } = outcome
     debugLog("exit code:", exitCode, "stdout length:", stdout.length, "stderr length:", stderr.length)
 
     if (exitCode === 0) {
