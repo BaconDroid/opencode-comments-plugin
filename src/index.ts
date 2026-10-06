@@ -15,13 +15,26 @@ function debugLog(...args: unknown[]) {
 const pendingCalls = new Map<string, PendingCall>()
 const PENDING_CALL_TTL = 60_000
 
-let customPrompt: string | undefined
+interface SessionWarnings {
+  lastSeen: number
+  files: Map<string, number>
+}
 
-function cleanupOldPendingCalls(): void {
+const warningCounts = new Map<string, SessionWarnings>()
+
+let customPrompt: string | undefined
+let maxWarningsPerFile = 0
+
+function cleanupStaleState(): void {
   const now = Date.now()
   for (const [callID, call] of pendingCalls) {
     if (now - call.timestamp > PENDING_CALL_TTL) {
       pendingCalls.delete(callID)
+    }
+  }
+  for (const [sessionID, session] of warningCounts) {
+    if (now - session.lastSeen > PENDING_CALL_TTL) {
+      warningCounts.delete(sessionID)
     }
   }
 }
@@ -33,7 +46,86 @@ function resolveCustomPrompt(config: unknown): string | undefined {
   return typeof prompt === "string" && prompt.trim().length > 0 ? prompt : undefined
 }
 
-setInterval(cleanupOldPendingCalls, 10_000).unref()
+function resolveMaxWarnings(config: unknown): number {
+  const raw = (config as unknown as { comment_checker?: { max_warnings_per_file?: unknown } }).comment_checker
+  if (!raw || typeof raw !== "object") return 0
+  const value = raw.max_warnings_per_file
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+}
+
+// The config hook never sees unknown top-level keys: opencode validates the config
+// against a fixed schema, so comment_checker is dropped before plugins are called.
+function resolveMaxWarningsFromEnv(): number {
+  const raw = process.env.COMMENT_CHECKER_MAX_WARNINGS_PER_FILE
+  if (!raw || raw.trim().length === 0) return 0
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+}
+
+setInterval(cleanupStaleState, 10_000).unref()
+
+function canWarn(sessionID: string, filePath: string): boolean {
+  if (maxWarningsPerFile <= 0) return true
+  const session = warningCounts.get(sessionID)
+  if (!session) return true
+  return (session.files.get(filePath) ?? 0) < maxWarningsPerFile
+}
+
+function recordWarning(sessionID: string, filePath: string): void {
+  if (maxWarningsPerFile <= 0) return
+  let session = warningCounts.get(sessionID)
+  if (!session) {
+    session = { lastSeen: Date.now(), files: new Map() }
+    warningCounts.set(sessionID, session)
+  }
+  session.files.set(filePath, (session.files.get(filePath) ?? 0) + 1)
+}
+
+function touchSession(sessionID: string): void {
+  const session = warningCounts.get(sessionID)
+  if (session) {
+    session.lastSeen = Date.now()
+  }
+}
+
+async function reportComments(
+  sessionID: string,
+  toolName: string,
+  toolInput: HookInput["tool_input"],
+  output: { output: string },
+): Promise<void> {
+  try {
+    const filePath = toolInput.file_path ?? ""
+
+    if (!canWarn(sessionID, filePath)) {
+      debugLog("warning budget spent for", filePath)
+      return
+    }
+
+    const cliPath = await getCommentCheckerPath()
+    if (!cliPath || !existsSync(cliPath)) {
+      debugLog("CLI not available, skipping comment check")
+      return
+    }
+
+    const hookInput = {
+      session_id: sessionID,
+      tool_name: toolName,
+      transcript_path: "",
+      cwd: process.cwd(),
+      hook_event_name: COMMENT_CHECKER_EVENT,
+      tool_input: toolInput,
+    }
+
+    const result = await runCommentChecker(hookInput, { prompt: customPrompt })
+    if (result.hasComments && result.message) {
+      recordWarning(sessionID, filePath)
+      output.output += `\n\n${result.message}`
+    }
+  } catch (err) {
+    debugLog("comment check failed:", err)
+  }
+}
 
 function toPatchFiles(metadata: unknown): PatchFileChange[] {
   const files = (metadata as { files?: unknown } | undefined)?.files
@@ -53,8 +145,8 @@ function toPatchFiles(metadata: unknown): PatchFileChange[] {
   return changes
 }
 
-// apply_patch reports one unified diff per file; the CLI needs the removed and
-// the added lines to tell what changed.
+// apply_patch reports one unified diff per file; the comment-checker CLI only
+// needs the removed and the added lines to tell old from new.
 function splitPatch(patch: string): { oldString: string; newString: string } | undefined {
   const removed: string[] = []
   const added: string[] = []
@@ -84,46 +176,26 @@ async function checkApplyPatch(
     const filePath = file.movePath ?? file.filePath
     const sides = file.patch ? splitPatch(file.patch) : undefined
     if (!filePath || !sides) {
-      debugLog("no file path or no added lines in apply_patch entry")
+      debugLog("no file path or no added lines in patch entry for apply_patch")
       continue
     }
 
-    try {
-      const cliPath = await getCommentCheckerPath()
-      if (!cliPath || !existsSync(cliPath)) {
-        debugLog("CLI not available, skipping comment check")
-        return
-      }
-
-      const hookInput = {
-        session_id: sessionID,
-        tool_name: APPLY_PATCH_TOOL_NAME,
-        transcript_path: "",
-        cwd: process.cwd(),
-        hook_event_name: COMMENT_CHECKER_EVENT,
-        tool_input: {
-          file_path: filePath,
-          old_string: sides.oldString,
-          new_string: sides.newString,
-        },
-      }
-
-      const result = await runCommentChecker(hookInput, { prompt: customPrompt })
-      if (result.hasComments && result.message) {
-        output.output += `\n\n${result.message}`
-      }
-    } catch (err) {
-      debugLog("apply_patch check failed:", err)
-    }
+    await reportComments(sessionID, APPLY_PATCH_TOOL_NAME, {
+      file_path: filePath,
+      old_string: sides.oldString,
+      new_string: sides.newString,
+    }, output)
   }
 }
 
 export const CommentCheckerPlugin: Plugin = async () => {
+  maxWarningsPerFile = resolveMaxWarningsFromEnv()
   startBackgroundInit()
 
   return {
     config: async (config: unknown) => {
       customPrompt = resolveCustomPrompt(config)
+      maxWarningsPerFile = resolveMaxWarningsFromEnv() || resolveMaxWarnings(config)
     },
     "tool.execute.before": async (input: { tool: string; sessionID: string; callID: string }, output: { args: Record<string, unknown> }) => {
       const toolLower = input.tool.toLowerCase()
@@ -158,6 +230,7 @@ export const CommentCheckerPlugin: Plugin = async () => {
       output: { title: string; output: string; metadata: unknown }
     ) => {
       if (input.tool.toLowerCase() === APPLY_PATCH_TOOL_NAME) {
+        touchSession(input.sessionID)
         await checkApplyPatch(input.sessionID, output)
         return
       }
@@ -168,6 +241,7 @@ export const CommentCheckerPlugin: Plugin = async () => {
       }
 
       pendingCalls.delete(input.callID)
+      touchSession(input.sessionID)
 
       const isToolFailure = output.output.toLowerCase().startsWith("error")
 
@@ -176,35 +250,13 @@ export const CommentCheckerPlugin: Plugin = async () => {
         return
       }
 
-      try {
-        const cliPath = await getCommentCheckerPath()
-        if (!cliPath || !existsSync(cliPath)) {
-          debugLog("CLI not available, skipping comment check")
-          return
-        }
-
-        const hookInput = {
-          session_id: pendingCall.sessionID,
-          tool_name: pendingCall.tool.charAt(0).toUpperCase() + pendingCall.tool.slice(1),
-          transcript_path: "",
-          cwd: process.cwd(),
-          hook_event_name: COMMENT_CHECKER_EVENT,
-          tool_input: {
-            file_path: pendingCall.filePath,
-            content: pendingCall.content,
-            old_string: pendingCall.oldString,
-            new_string: pendingCall.newString,
-            edits: pendingCall.edits,
-          },
-        }
-
-        const result = await runCommentChecker(hookInput, { prompt: customPrompt })
-        if (result.hasComments && result.message) {
-          output.output += `\n\n${result.message}`
-        }
-      } catch (err) {
-        debugLog("tool.execute.after failed:", err)
-      }
+      await reportComments(pendingCall.sessionID, pendingCall.tool.charAt(0).toUpperCase() + pendingCall.tool.slice(1), {
+        file_path: pendingCall.filePath,
+        content: pendingCall.content,
+        old_string: pendingCall.oldString,
+        new_string: pendingCall.newString,
+        edits: pendingCall.edits,
+      }, output)
     },
   }
 }

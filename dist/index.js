@@ -333,12 +333,19 @@ function debugLog3(...args) {
 }
 var pendingCalls = new Map;
 var PENDING_CALL_TTL = 60000;
+var warningCounts = new Map;
 var customPrompt;
-function cleanupOldPendingCalls() {
+var maxWarningsPerFile = 0;
+function cleanupStaleState() {
   const now = Date.now();
   for (const [callID, call] of pendingCalls) {
     if (now - call.timestamp > PENDING_CALL_TTL) {
       pendingCalls.delete(callID);
+    }
+  }
+  for (const [sessionID, session] of warningCounts) {
+    if (now - session.lastSeen > PENDING_CALL_TTL) {
+      warningCounts.delete(sessionID);
     }
   }
 }
@@ -349,7 +356,76 @@ function resolveCustomPrompt(config) {
   const prompt = raw.custom_prompt;
   return typeof prompt === "string" && prompt.trim().length > 0 ? prompt : undefined;
 }
-setInterval(cleanupOldPendingCalls, 1e4).unref();
+function resolveMaxWarnings(config) {
+  const raw = config.comment_checker;
+  if (!raw || typeof raw !== "object")
+    return 0;
+  const value = raw.max_warnings_per_file;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+function resolveMaxWarningsFromEnv() {
+  const raw = process.env.COMMENT_CHECKER_MAX_WARNINGS_PER_FILE;
+  if (!raw || raw.trim().length === 0)
+    return 0;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+setInterval(cleanupStaleState, 1e4).unref();
+function canWarn(sessionID, filePath) {
+  if (maxWarningsPerFile <= 0)
+    return true;
+  const session = warningCounts.get(sessionID);
+  if (!session)
+    return true;
+  return (session.files.get(filePath) ?? 0) < maxWarningsPerFile;
+}
+function recordWarning(sessionID, filePath) {
+  if (maxWarningsPerFile <= 0)
+    return;
+  let session = warningCounts.get(sessionID);
+  if (!session) {
+    session = { lastSeen: Date.now(), files: new Map };
+    warningCounts.set(sessionID, session);
+  }
+  session.files.set(filePath, (session.files.get(filePath) ?? 0) + 1);
+}
+function touchSession(sessionID) {
+  const session = warningCounts.get(sessionID);
+  if (session) {
+    session.lastSeen = Date.now();
+  }
+}
+async function reportComments(sessionID, toolName, toolInput, output) {
+  try {
+    const filePath = toolInput.file_path ?? "";
+    if (!canWarn(sessionID, filePath)) {
+      debugLog3("warning budget spent for", filePath);
+      return;
+    }
+    const cliPath = await getCommentCheckerPath();
+    if (!cliPath || !existsSync3(cliPath)) {
+      debugLog3("CLI not available, skipping comment check");
+      return;
+    }
+    const hookInput = {
+      session_id: sessionID,
+      tool_name: toolName,
+      transcript_path: "",
+      cwd: process.cwd(),
+      hook_event_name: COMMENT_CHECKER_EVENT,
+      tool_input: toolInput
+    };
+    const result = await runCommentChecker(hookInput, { prompt: customPrompt });
+    if (result.hasComments && result.message) {
+      recordWarning(sessionID, filePath);
+      output.output += `
+
+${result.message}`;
+    }
+  } catch (err) {
+    debugLog3("comment check failed:", err);
+  }
+}
 function toPatchFiles(metadata) {
   const files = metadata?.files;
   if (!Array.isArray(files))
@@ -397,43 +473,23 @@ async function checkApplyPatch(sessionID, output) {
     const filePath = file.movePath ?? file.filePath;
     const sides = file.patch ? splitPatch(file.patch) : undefined;
     if (!filePath || !sides) {
-      debugLog3("no file path or no added lines in apply_patch entry");
+      debugLog3("no file path or no added lines in patch entry for apply_patch");
       continue;
     }
-    try {
-      const cliPath = await getCommentCheckerPath();
-      if (!cliPath || !existsSync3(cliPath)) {
-        debugLog3("CLI not available, skipping comment check");
-        return;
-      }
-      const hookInput = {
-        session_id: sessionID,
-        tool_name: APPLY_PATCH_TOOL_NAME,
-        transcript_path: "",
-        cwd: process.cwd(),
-        hook_event_name: COMMENT_CHECKER_EVENT,
-        tool_input: {
-          file_path: filePath,
-          old_string: sides.oldString,
-          new_string: sides.newString
-        }
-      };
-      const result = await runCommentChecker(hookInput, { prompt: customPrompt });
-      if (result.hasComments && result.message) {
-        output.output += `
-
-${result.message}`;
-      }
-    } catch (err) {
-      debugLog3("apply_patch check failed:", err);
-    }
+    await reportComments(sessionID, APPLY_PATCH_TOOL_NAME, {
+      file_path: filePath,
+      old_string: sides.oldString,
+      new_string: sides.newString
+    }, output);
   }
 }
 var CommentCheckerPlugin = async () => {
+  maxWarningsPerFile = resolveMaxWarningsFromEnv();
   startBackgroundInit();
   return {
     config: async (config) => {
       customPrompt = resolveCustomPrompt(config);
+      maxWarningsPerFile = resolveMaxWarningsFromEnv() || resolveMaxWarnings(config);
     },
     "tool.execute.before": async (input, output) => {
       const toolLower = input.tool.toLowerCase();
@@ -462,6 +518,7 @@ var CommentCheckerPlugin = async () => {
     },
     "tool.execute.after": async (input, output) => {
       if (input.tool.toLowerCase() === APPLY_PATCH_TOOL_NAME) {
+        touchSession(input.sessionID);
         await checkApplyPatch(input.sessionID, output);
         return;
       }
@@ -470,40 +527,19 @@ var CommentCheckerPlugin = async () => {
         return;
       }
       pendingCalls.delete(input.callID);
+      touchSession(input.sessionID);
       const isToolFailure = output.output.toLowerCase().startsWith("error");
       if (isToolFailure) {
         debugLog3("skipping due to tool failure in output");
         return;
       }
-      try {
-        const cliPath = await getCommentCheckerPath();
-        if (!cliPath || !existsSync3(cliPath)) {
-          debugLog3("CLI not available, skipping comment check");
-          return;
-        }
-        const hookInput = {
-          session_id: pendingCall.sessionID,
-          tool_name: pendingCall.tool.charAt(0).toUpperCase() + pendingCall.tool.slice(1),
-          transcript_path: "",
-          cwd: process.cwd(),
-          hook_event_name: COMMENT_CHECKER_EVENT,
-          tool_input: {
-            file_path: pendingCall.filePath,
-            content: pendingCall.content,
-            old_string: pendingCall.oldString,
-            new_string: pendingCall.newString,
-            edits: pendingCall.edits
-          }
-        };
-        const result = await runCommentChecker(hookInput, { prompt: customPrompt });
-        if (result.hasComments && result.message) {
-          output.output += `
-
-${result.message}`;
-        }
-      } catch (err) {
-        debugLog3("tool.execute.after failed:", err);
-      }
+      await reportComments(pendingCall.sessionID, pendingCall.tool.charAt(0).toUpperCase() + pendingCall.tool.slice(1), {
+        file_path: pendingCall.filePath,
+        content: pendingCall.content,
+        old_string: pendingCall.oldString,
+        new_string: pendingCall.newString,
+        edits: pendingCall.edits
+      }, output);
     }
   };
 };
