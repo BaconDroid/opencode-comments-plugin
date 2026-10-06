@@ -4,7 +4,7 @@ import { existsSync as existsSync3 } from "fs";
 
 // src/constants.ts
 var COMMENT_CHECKER_EVENT = "PostToolUse";
-var TOOL_NAMES = new Set(["write", "edit", "multiedit"]);
+var TOOL_NAMES = new Set(["write", "edit"]);
 
 // src/cli.ts
 var {spawn: spawn2 } = globalThis.Bun;

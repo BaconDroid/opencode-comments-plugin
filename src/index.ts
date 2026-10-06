@@ -65,7 +65,7 @@ export const CommentCheckerPlugin: Plugin = async () => {
         oldString,
         newString,
         edits,
-        tool: toolLower as "write" | "edit" | "multiedit",
+        tool: toolLower as "write" | "edit",
         sessionID: input.sessionID,
         timestamp: Date.now(),
       })
