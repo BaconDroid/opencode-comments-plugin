@@ -49,6 +49,8 @@ Options are passed as the second element of the plugin tuple. opencode calls the
 
 Why the tuple and not a top-level `comment_checker` key: opencode validates its config against a fixed schema, so unknown top-level keys are dropped before plugins see them. The tuple is the supported per-plugin channel; a top-level `comment_checker` block is still read if a future opencode version forwards it.
 
+A full `custom_prompt` example (the plugin's warning rewritten in simple English) is in [`examples/custom-prompt.json`](examples/custom-prompt.json), with the prompt itself explained in [`docs/comment-guidelines.md`](docs/comment-guidelines.md).
+
 Available options (all under `comment_checker`):
 
 | Option | Type | Default | Meaning |

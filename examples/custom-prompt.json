@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    [
+      "github:BaconDroid/opencode-comments-plugin",
+      {
+        "comment_checker": {
+          "custom_prompt": "COMMENT/DOCSTRING DETECTED - IMMEDIATE ACTION REQUIRED\n\nYour changes contain comments/docstrings that were flagged:\n{{comments}}\n\nYou must act on them. Never ignore this warning.\n\n1. Keep a comment only if it explains why: a business rule, something outside your control, a complex algorithm, security, performance, regex, math, or public API docs (including complex module or class interfaces). Most docstrings are not needed; keep only the essential ones.\n2. Otherwise, remove it and make the code explain itself: clearer names, extract complex logic into well-named functions, less nesting.\n\nDo not leave notes about what you changed or how you did it; git already shows that.\n\nDo not explain, narrate, or apologize; be specific. Apply this to the rest of this session."
+        }
+      }
+    ]
+  ]
+}
