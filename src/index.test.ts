@@ -98,6 +98,7 @@ function editArgs(
 
 const ENV_KEYS = [
   "COMMENT_CHECKER_CUSTOM_PROMPT",
+  "COMMENT_CHECKER_APPEND_PROMPT",
   "COMMENT_CHECKER_MAX_WARNINGS_PER_FILE",
   "COMMENT_CHECKER_TOOLS",
   "COMMENT_CHECKER_TIMEOUT_MS",
@@ -459,4 +460,50 @@ test("accepts a comma separated tool list from the environment", async () => {
   expect(patchOutput.output).toBe("Success. Updated the following files:")
   expect(await cliInvocations()).toHaveLength(0)
 })
+
+test("appends append_prompt after the CLI message", async () => {
+  const hooks = await newSession({ comment_checker: { append_prompt: "Be concise, specific, and direct by default." } })
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// explain\n"))
+  await hooks["tool.execute.after"](TOOL_AFTER_INPUT, output)
+
+  expect(output.output).toBe(
+    "Wrote file successfully.\n\nCOMMENT/DOCSTRING DETECTED\n\nBe concise, specific, and direct by default.",
+  )
+})
+
+test("appends nothing unless append_prompt is set", async () => {
+  const hooks = await newSession()
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// explain\n"))
+  await hooks["tool.execute.after"](TOOL_AFTER_INPUT, output)
+
+  expect(output.output).toBe("Wrote file successfully.\n\nCOMMENT/DOCSTRING DETECTED")
+})
+
+test("lets the environment override append_prompt", async () => {
+  process.env.COMMENT_CHECKER_APPEND_PROMPT = "FROM ENV"
+  const hooks = await newSession({ comment_checker: { append_prompt: "FROM OPTIONS" } })
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// explain\n"))
+  await hooks["tool.execute.after"](TOOL_AFTER_INPUT, output)
+
+  expect(output.output).toContain("\n\nFROM ENV")
+  expect(output.output).not.toContain("FROM OPTIONS")
+})
+
+test("appends append_prompt on top of a custom prompt", async () => {
+  const hooks = await newSession({ comment_checker: { custom_prompt: "CUSTOM", append_prompt: "SUFFIX" } })
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// explain\n"))
+  await hooks["tool.execute.after"](TOOL_AFTER_INPUT, output)
+
+  expect((await cliInvocations())[0]!.args).toContain("CUSTOM")
+  expect(output.output).toBe("Wrote file successfully.\n\nCOMMENT/DOCSTRING DETECTED\n\nSUFFIX")
+})
+
 
