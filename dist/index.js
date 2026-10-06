@@ -5,6 +5,7 @@ import { existsSync as existsSync3 } from "fs";
 // src/constants.ts
 var COMMENT_CHECKER_EVENT = "PostToolUse";
 var TOOL_NAMES = new Set(["write", "edit"]);
+var APPLY_PATCH_TOOL_NAME = "apply_patch";
 
 // src/cli.ts
 var {spawn: spawn2 } = globalThis.Bun;
@@ -349,6 +350,85 @@ function resolveCustomPrompt(config) {
   return typeof prompt === "string" && prompt.trim().length > 0 ? prompt : undefined;
 }
 setInterval(cleanupOldPendingCalls, 1e4).unref();
+function toPatchFiles(metadata) {
+  const files = metadata?.files;
+  if (!Array.isArray(files))
+    return [];
+  const changes = [];
+  for (const file of files) {
+    if (!file || typeof file !== "object")
+      continue;
+    const entry = file;
+    changes.push({
+      type: typeof entry.type === "string" ? entry.type : undefined,
+      filePath: typeof entry.filePath === "string" ? entry.filePath : undefined,
+      movePath: typeof entry.movePath === "string" ? entry.movePath : undefined,
+      patch: typeof entry.patch === "string" ? entry.patch : undefined
+    });
+  }
+  return changes;
+}
+function splitPatch(patch) {
+  const removed = [];
+  const added = [];
+  for (const line of patch.split(`
+`)) {
+    if (line.startsWith("@@") || line.startsWith("---") || line.startsWith("+++"))
+      continue;
+    if (line.startsWith("-"))
+      removed.push(line.slice(1));
+    else if (line.startsWith("+"))
+      added.push(line.slice(1));
+  }
+  if (added.length === 0)
+    return;
+  return { oldString: removed.join(`
+`), newString: added.join(`
+`) };
+}
+async function checkApplyPatch(sessionID, output) {
+  if (output.output.toLowerCase().startsWith("error")) {
+    debugLog3("skipping due to tool failure in output");
+    return;
+  }
+  for (const file of toPatchFiles(output.metadata)) {
+    if (file.type === "delete")
+      continue;
+    const filePath = file.movePath ?? file.filePath;
+    const sides = file.patch ? splitPatch(file.patch) : undefined;
+    if (!filePath || !sides) {
+      debugLog3("no file path or no added lines in apply_patch entry");
+      continue;
+    }
+    try {
+      const cliPath = await getCommentCheckerPath();
+      if (!cliPath || !existsSync3(cliPath)) {
+        debugLog3("CLI not available, skipping comment check");
+        return;
+      }
+      const hookInput = {
+        session_id: sessionID,
+        tool_name: APPLY_PATCH_TOOL_NAME,
+        transcript_path: "",
+        cwd: process.cwd(),
+        hook_event_name: COMMENT_CHECKER_EVENT,
+        tool_input: {
+          file_path: filePath,
+          old_string: sides.oldString,
+          new_string: sides.newString
+        }
+      };
+      const result = await runCommentChecker(hookInput, { prompt: customPrompt });
+      if (result.hasComments && result.message) {
+        output.output += `
+
+${result.message}`;
+      }
+    } catch (err) {
+      debugLog3("apply_patch check failed:", err);
+    }
+  }
+}
 var CommentCheckerPlugin = async () => {
   startBackgroundInit();
   return {
@@ -381,6 +461,10 @@ var CommentCheckerPlugin = async () => {
       });
     },
     "tool.execute.after": async (input, output) => {
+      if (input.tool.toLowerCase() === APPLY_PATCH_TOOL_NAME) {
+        await checkApplyPatch(input.sessionID, output);
+        return;
+      }
       const pendingCall = pendingCalls.get(input.callID);
       if (!pendingCall) {
         return;

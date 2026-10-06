@@ -9,6 +9,13 @@ export interface PendingCall {
   timestamp: number
 }
 
+export interface PatchFileChange {
+  type?: string
+  filePath?: string
+  movePath?: string
+  patch?: string
+}
+
 export interface HookInput {
   session_id: string
   tool_name: string
