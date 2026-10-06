@@ -1,36 +1,31 @@
 // @bun
 // src/index.ts
 import { existsSync as existsSync3 } from "fs";
-import { appendFileSync as appendFileSync3 } from "fs";
-import { join as join3 } from "path";
-import { tmpdir as tmpdir3 } from "os";
 
 // src/constants.ts
 var COMMENT_CHECKER_EVENT = "PostToolUse";
-var TOOL_NAMES = new Set(["write", "edit", "multiedit"]);
+var TOOL_NAMES = new Set(["write", "edit"]);
+var APPLY_PATCH_TOOL_NAME = "apply_patch";
 
 // src/cli.ts
 var {spawn: spawn2 } = globalThis.Bun;
 import { createRequire as createRequire2 } from "module";
 import { dirname, join as join2 } from "path";
 import { existsSync as existsSync2 } from "fs";
-import { appendFileSync as appendFileSync2 } from "fs";
-import { tmpdir as tmpdir2 } from "os";
 
 // src/downloader.ts
 var {spawn } = globalThis.Bun;
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "fs";
 import { join } from "path";
-import { homedir, tmpdir } from "os";
+import { homedir } from "os";
 import { createRequire } from "module";
 var DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1";
-var DEBUG_FILE = join(tmpdir(), "comment-checker-debug.log");
 function debugLog(...args) {
   if (!DEBUG)
     return;
   const msg = `[${new Date().toISOString()}] [comment-checker:downloader] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
 `;
-  appendFileSync(DEBUG_FILE, msg);
+  process.stderr.write(msg);
 }
 var REPO = "code-yeongyu/go-claude-code-comment-checker";
 var PLATFORM_MAP = {
@@ -181,13 +176,12 @@ async function ensureCommentCheckerBinary() {
 
 // src/cli.ts
 var DEBUG2 = process.env.COMMENT_CHECKER_DEBUG === "1";
-var DEBUG_FILE2 = join2(tmpdir2(), "comment-checker-debug.log");
 function debugLog2(...args) {
   if (!DEBUG2)
     return;
   const msg = `[${new Date().toISOString()}] [comment-checker:cli] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
 `;
-  appendFileSync2(DEBUG_FILE2, msg);
+  process.stderr.write(msg);
 }
 function getBinaryName2() {
   return process.platform === "win32" ? "comment-checker.exe" : "comment-checker";
@@ -330,22 +324,28 @@ async function runCommentChecker(input, options = {}) {
 
 // src/index.ts
 var DEBUG3 = process.env.COMMENT_CHECKER_DEBUG === "1";
-var DEBUG_FILE3 = join3(tmpdir3(), "comment-checker-debug.log");
 function debugLog3(...args) {
   if (!DEBUG3)
     return;
   const msg = `[${new Date().toISOString()}] [comment-checker:hook] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
 `;
-  appendFileSync3(DEBUG_FILE3, msg);
+  process.stderr.write(msg);
 }
 var pendingCalls = new Map;
 var PENDING_CALL_TTL = 60000;
+var warningCounts = new Map;
 var customPrompt;
-function cleanupOldPendingCalls() {
+var maxWarningsPerFile = 0;
+function cleanupStaleState() {
   const now = Date.now();
   for (const [callID, call] of pendingCalls) {
     if (now - call.timestamp > PENDING_CALL_TTL) {
       pendingCalls.delete(callID);
+    }
+  }
+  for (const [sessionID, session] of warningCounts) {
+    if (now - session.lastSeen > PENDING_CALL_TTL) {
+      warningCounts.delete(sessionID);
     }
   }
 }
@@ -356,12 +356,140 @@ function resolveCustomPrompt(config) {
   const prompt = raw.custom_prompt;
   return typeof prompt === "string" && prompt.trim().length > 0 ? prompt : undefined;
 }
-setInterval(cleanupOldPendingCalls, 1e4).unref();
+function resolveMaxWarnings(config) {
+  const raw = config.comment_checker;
+  if (!raw || typeof raw !== "object")
+    return 0;
+  const value = raw.max_warnings_per_file;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+function resolveMaxWarningsFromEnv() {
+  const raw = process.env.COMMENT_CHECKER_MAX_WARNINGS_PER_FILE;
+  if (!raw || raw.trim().length === 0)
+    return 0;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+setInterval(cleanupStaleState, 1e4).unref();
+function canWarn(sessionID, filePath) {
+  if (maxWarningsPerFile <= 0)
+    return true;
+  const session = warningCounts.get(sessionID);
+  if (!session)
+    return true;
+  return (session.files.get(filePath) ?? 0) < maxWarningsPerFile;
+}
+function recordWarning(sessionID, filePath) {
+  if (maxWarningsPerFile <= 0)
+    return;
+  let session = warningCounts.get(sessionID);
+  if (!session) {
+    session = { lastSeen: Date.now(), files: new Map };
+    warningCounts.set(sessionID, session);
+  }
+  session.files.set(filePath, (session.files.get(filePath) ?? 0) + 1);
+}
+function touchSession(sessionID) {
+  const session = warningCounts.get(sessionID);
+  if (session) {
+    session.lastSeen = Date.now();
+  }
+}
+async function reportComments(sessionID, toolName, toolInput, output) {
+  try {
+    const filePath = toolInput.file_path ?? "";
+    if (!canWarn(sessionID, filePath)) {
+      debugLog3("warning budget spent for", filePath);
+      return;
+    }
+    const cliPath = await getCommentCheckerPath();
+    if (!cliPath || !existsSync3(cliPath)) {
+      debugLog3("CLI not available, skipping comment check");
+      return;
+    }
+    const hookInput = {
+      session_id: sessionID,
+      tool_name: toolName,
+      transcript_path: "",
+      cwd: process.cwd(),
+      hook_event_name: COMMENT_CHECKER_EVENT,
+      tool_input: toolInput
+    };
+    const result = await runCommentChecker(hookInput, { prompt: customPrompt });
+    if (result.hasComments && result.message) {
+      recordWarning(sessionID, filePath);
+      output.output += `
+
+${result.message}`;
+    }
+  } catch (err) {
+    debugLog3("comment check failed:", err);
+  }
+}
+function toPatchFiles(metadata) {
+  const files = metadata?.files;
+  if (!Array.isArray(files))
+    return [];
+  const changes = [];
+  for (const file of files) {
+    if (!file || typeof file !== "object")
+      continue;
+    const entry = file;
+    changes.push({
+      type: typeof entry.type === "string" ? entry.type : undefined,
+      filePath: typeof entry.filePath === "string" ? entry.filePath : undefined,
+      movePath: typeof entry.movePath === "string" ? entry.movePath : undefined,
+      patch: typeof entry.patch === "string" ? entry.patch : undefined
+    });
+  }
+  return changes;
+}
+function splitPatch(patch) {
+  const removed = [];
+  const added = [];
+  for (const line of patch.split(`
+`)) {
+    if (line.startsWith("@@") || line.startsWith("---") || line.startsWith("+++"))
+      continue;
+    if (line.startsWith("-"))
+      removed.push(line.slice(1));
+    else if (line.startsWith("+"))
+      added.push(line.slice(1));
+  }
+  if (added.length === 0)
+    return;
+  return { oldString: removed.join(`
+`), newString: added.join(`
+`) };
+}
+async function checkApplyPatch(sessionID, output) {
+  if (output.output.toLowerCase().startsWith("error")) {
+    debugLog3("skipping due to tool failure in output");
+    return;
+  }
+  for (const file of toPatchFiles(output.metadata)) {
+    if (file.type === "delete")
+      continue;
+    const filePath = file.movePath ?? file.filePath;
+    const sides = file.patch ? splitPatch(file.patch) : undefined;
+    if (!filePath || !sides) {
+      debugLog3("no file path or no added lines in patch entry for apply_patch");
+      continue;
+    }
+    await reportComments(sessionID, APPLY_PATCH_TOOL_NAME, {
+      file_path: filePath,
+      old_string: sides.oldString,
+      new_string: sides.newString
+    }, output);
+  }
+}
 var CommentCheckerPlugin = async () => {
+  maxWarningsPerFile = resolveMaxWarningsFromEnv();
   startBackgroundInit();
   return {
     config: async (config) => {
       customPrompt = resolveCustomPrompt(config);
+      maxWarningsPerFile = resolveMaxWarningsFromEnv() || resolveMaxWarnings(config);
     },
     "tool.execute.before": async (input, output) => {
       const toolLower = input.tool.toLowerCase();
@@ -389,45 +517,29 @@ var CommentCheckerPlugin = async () => {
       });
     },
     "tool.execute.after": async (input, output) => {
+      if (input.tool.toLowerCase() === APPLY_PATCH_TOOL_NAME) {
+        touchSession(input.sessionID);
+        await checkApplyPatch(input.sessionID, output);
+        return;
+      }
       const pendingCall = pendingCalls.get(input.callID);
       if (!pendingCall) {
         return;
       }
       pendingCalls.delete(input.callID);
+      touchSession(input.sessionID);
       const isToolFailure = output.output.toLowerCase().startsWith("error");
       if (isToolFailure) {
         debugLog3("skipping due to tool failure in output");
         return;
       }
-      try {
-        const cliPath = await getCommentCheckerPath();
-        if (!cliPath || !existsSync3(cliPath)) {
-          debugLog3("CLI not available, skipping comment check");
-          return;
-        }
-        const hookInput = {
-          session_id: pendingCall.sessionID,
-          tool_name: pendingCall.tool.charAt(0).toUpperCase() + pendingCall.tool.slice(1),
-          transcript_path: "",
-          cwd: process.cwd(),
-          hook_event_name: COMMENT_CHECKER_EVENT,
-          tool_input: {
-            file_path: pendingCall.filePath,
-            content: pendingCall.content,
-            old_string: pendingCall.oldString,
-            new_string: pendingCall.newString,
-            edits: pendingCall.edits
-          }
-        };
-        const result = await runCommentChecker(hookInput, { prompt: customPrompt });
-        if (result.hasComments && result.message) {
-          output.output += `
-
-${result.message}`;
-        }
-      } catch (err) {
-        debugLog3("tool.execute.after failed:", err);
-      }
+      await reportComments(pendingCall.sessionID, pendingCall.tool.charAt(0).toUpperCase() + pendingCall.tool.slice(1), {
+        file_path: pendingCall.filePath,
+        content: pendingCall.content,
+        old_string: pendingCall.oldString,
+        new_string: pendingCall.newString,
+        edits: pendingCall.edits
+      }, output);
     }
   };
 };

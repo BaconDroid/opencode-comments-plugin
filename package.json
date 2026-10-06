@@ -23,10 +23,11 @@
 	"files": ["dist"],
 	"scripts": {
 		"build": "bun build src/index.ts --outdir dist --target bun --format esm && tsc --emitDeclarationOnly",
+		"test": "bun test",
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@code-yeongyu/comment-checker": "^0.7.0",
+		"@code-yeongyu/comment-checker": "^0.8.2",
 		"@opencode-ai/plugin": "^1.0.162"
 	},
 	"devDependencies": {

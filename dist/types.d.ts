@@ -7,9 +7,15 @@ export interface PendingCall {
         old_string: string;
         new_string: string;
     }>;
-    tool: "write" | "edit" | "multiedit";
+    tool: "write" | "edit";
     sessionID: string;
     timestamp: number;
+}
+export interface PatchFileChange {
+    type?: string;
+    filePath?: string;
+    movePath?: string;
+    patch?: string;
 }
 export interface HookInput {
     session_id: string;

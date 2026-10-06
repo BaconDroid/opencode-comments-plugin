@@ -4,9 +4,16 @@ export interface PendingCall {
   oldString?: string
   newString?: string
   edits?: Array<{ old_string: string; new_string: string }>
-  tool: "write" | "edit" | "multiedit"
+  tool: "write" | "edit"
   sessionID: string
   timestamp: number
+}
+
+export interface PatchFileChange {
+  type?: string
+  filePath?: string
+  movePath?: string
+  patch?: string
 }
 
 export interface HookInput {
