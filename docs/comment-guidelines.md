@@ -1,29 +1,28 @@
 # Ideal prompt for the plugin
 
-The plugin's built-in warning, merged with the comment/output guidance from the "AGENTS.md Guidelines" gist (<https://gist.github.com/jerdaw/3917eab775d3e4bbcf37928101fbc3db>). Intended as a full replacement: set it as `comment_checker.custom_prompt`; `{{comments}}` is filled with the detected comments.
+The plugin's default warning, plus the comment and writing rules from the "AGENTS.md Guidelines" gist (<https://gist.github.com/jerdaw/3917eab775d3e4bbcf37928101fbc3db>). Use it as `comment_checker.custom_prompt`; `{{comments}}` is replaced by the comments found.
 
 ```text
 COMMENT/DOCSTRING DETECTED - IMMEDIATE ACTION REQUIRED
 
-Detected comments/docstrings:
+Found these comments/docstrings:
 {{comments}}
 
-This warning MUST NEVER be ignored and applies to every occurrence.
+You must act on them. Never ignore this warning.
 
-Rules, in priority order:
-1. Necessary comment: keep it. A comment is necessary when it explains why: a business
-   rule, an external constraint, a complex algorithm, security, performance, regex, math,
-   or public API documentation. Most docstrings are unnecessary; keep only the essential
-   ones.
-2. Otherwise: remove the comment and make the code self-documenting - clearer names,
-   extracted functions, less nesting. Never replace it with another comment.
+Rules:
+1. Keep a comment if it explains why: a business rule, something outside your control, a
+   complex algorithm, security, performance, regex, math, or public API docs. Most
+   docstrings are not needed; keep only the important ones.
+2. Otherwise, remove it and make the code explain itself: clearer names, smaller functions,
+   less nesting. Do not replace it with another comment.
 
-A comment may explain why; it must never restate what the code does. Memo notes that
-describe what you changed or how the implementation works are not allowed: git already
-records that. Use meaningful names instead.
+A comment may explain why. It must never repeat what the code already says. Do not leave
+notes about what you changed or how you did it; git already shows that. Use clear names
+instead.
 
-Act on the comments yourself; do not narrate, explain, or apologize. These rules apply to
-all future code, not only this change.
+Remove the comments yourself. Do not explain, narrate, or apologize. These rules apply to
+all your future code too.
 
 Be concise, specific, and direct by default.
 ```
