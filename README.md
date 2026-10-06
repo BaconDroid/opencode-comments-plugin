@@ -58,6 +58,8 @@ Available options (all under `comment_checker`):
 | `tools` | string[] or CSV string | `["write","edit","apply_patch"]` | Which tools trigger the check. |
 | `timeout_ms` | number | `5000` | How long to wait for the CLI before ignoring it. |
 
+The options may also be given flat, without the `comment_checker` wrapper (`["opencode-comments-plugin", { "tools": ["write"] }]`); both forms are equivalent.
+
 Every option can also be set (and overridden) through the environment, which always wins:
 
 | Env var | Option |
@@ -71,7 +73,7 @@ Every option can also be set (and overridden) through the environment, which alw
 
 - Runs on the tools in `tools` (`write`, `edit`, and `apply_patch` by default).
 - If the CLI detects comments, it appends the warning message to the tool output, so the model that called the tool reads it on its next turn. Nothing is blocked and the file is never rewritten.
-- Only comments introduced by the change count: for `edit`, a comment that already existed is not reported; for `write`, the new content is compared to the previous file.
+- Only comments introduced by the change are candidates: for `edit` and `apply_patch` the plugin passes the old and the new snippet, so a comment that was already on the changed lines is not reported; for `write` the whole new content is checked, because the hook cannot see the previous content (rewriting a file keeps flagging the comments it contains).
 - The `comment-checker` binary is resolved from the latest GitHub release (checked at most once a day), cached under `~/.cache/opencode-comments-plugin/bin/<version>/`, and downloaded on demand. If the network is unavailable it falls back to the cached or installed version.
 
 ## Detection
