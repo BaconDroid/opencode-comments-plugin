@@ -4,8 +4,9 @@ import { existsSync as existsSync3 } from "fs";
 
 // src/constants.ts
 var COMMENT_CHECKER_EVENT = "PostToolUse";
-var TOOL_NAMES = new Set(["write", "edit"]);
 var APPLY_PATCH_TOOL_NAME = "apply_patch";
+var DEFAULT_TRIGGER_TOOLS = ["write", "edit", "apply_patch"];
+var DEFAULT_CLI_TIMEOUT_MS = 5000;
 
 // src/cli.ts
 var {spawn: spawn2 } = globalThis.Bun;
@@ -15,7 +16,7 @@ import { existsSync as existsSync2 } from "fs";
 
 // src/downloader.ts
 var {spawn } = globalThis.Bun;
-import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { createRequire } from "module";
@@ -28,6 +29,9 @@ function debugLog(...args) {
   process.stderr.write(msg);
 }
 var REPO = "code-yeongyu/go-claude-code-comment-checker";
+var LATEST_URL = `https://github.com/${REPO}/releases/latest`;
+var LATEST_TTL_MS = 24 * 60 * 60 * 1000;
+var LATEST_CACHE_FILE = "latest.json";
 var PLATFORM_MAP = {
   "darwin-arm64": { os: "darwin", arch: "arm64", ext: "tar.gz" },
   "darwin-x64": { os: "darwin", arch: "amd64", ext: "tar.gz" },
@@ -59,6 +63,60 @@ function getCommentCheckerVersion() {
     return null;
   }
 }
+function parseLatestTag(location) {
+  if (!location)
+    return null;
+  const match = location.match(/\/tag\/v?(\d+\.\d+\.\d+)$/);
+  return match ? match[1] : null;
+}
+function getLatestCachePath() {
+  return join(getCacheDir(), LATEST_CACHE_FILE);
+}
+function readLatestCache() {
+  try {
+    const parsed = JSON.parse(readFileSync(getLatestCachePath(), "utf8"));
+    if (typeof parsed.version === "string" && parsed.version.length > 0 && typeof parsed.checkedAt === "number") {
+      return { version: parsed.version, checkedAt: parsed.checkedAt };
+    }
+  } catch {
+    debugLog("no latest-version cache");
+  }
+  return null;
+}
+function writeLatestCache(version) {
+  try {
+    const dir = getCacheDir();
+    if (!existsSync(dir))
+      mkdirSync(dir, { recursive: true });
+    writeFileSync(getLatestCachePath(), JSON.stringify({ version, checkedAt: Date.now() }));
+  } catch (err) {
+    debugLog("failed to cache latest version:", err);
+  }
+}
+function getPreferredCommentCheckerVersionSync() {
+  return readLatestCache()?.version ?? getCommentCheckerVersion();
+}
+async function getLatestCommentCheckerVersion() {
+  const cached = readLatestCache();
+  if (cached && Date.now() - cached.checkedAt < LATEST_TTL_MS) {
+    return cached.version;
+  }
+  try {
+    const response = await fetch(LATEST_URL, { redirect: "manual" });
+    const version = parseLatestTag(response.headers.get("location"));
+    if (version) {
+      debugLog("resolved latest comment-checker release:", version);
+      writeLatestCache(version);
+      return version;
+    }
+    debugLog("could not parse latest release location:", response.headers.get("location"));
+  } catch (err) {
+    debugLog("failed to resolve latest release:", err);
+  }
+  if (cached)
+    return cached.version;
+  return getCommentCheckerVersion();
+}
 function cleanupStaleCache(version) {
   let entries;
   try {
@@ -67,7 +125,7 @@ function cleanupStaleCache(version) {
     return;
   }
   for (const entry of entries) {
-    if (entry === version)
+    if (entry === version || entry === LATEST_CACHE_FILE)
       continue;
     try {
       rmSync(join(getCacheDir(), entry), { recursive: true, force: true });
@@ -103,16 +161,16 @@ async function extractZip(archivePath, destDir) {
     throw new Error(`zip extraction failed (exit ${exitCode}): ${stderr}`);
   }
 }
-async function downloadCommentChecker() {
+async function downloadCommentChecker(versionOverride) {
   const platformKey = `${process.platform}-${process.arch}`;
   const platformInfo = PLATFORM_MAP[platformKey];
   if (!platformInfo) {
     debugLog("Unsupported platform:", platformKey);
     return null;
   }
-  const version = getCommentCheckerVersion();
+  const version = versionOverride ?? getCommentCheckerVersion();
   if (!version) {
-    debugLog("Cannot resolve @code-yeongyu/comment-checker version; refusing to download a stale binary");
+    debugLog("Cannot resolve a comment-checker version; refusing to download a stale binary");
     return null;
   }
   const cacheDir = join(getCacheDir(), version);
@@ -161,8 +219,8 @@ async function downloadCommentChecker() {
     return null;
   }
 }
-async function ensureCommentCheckerBinary() {
-  const version = getCommentCheckerVersion();
+async function ensureCommentCheckerBinary(versionOverride) {
+  const version = versionOverride ?? await getLatestCommentCheckerVersion();
   if (!version)
     return null;
   const cachedPath = getCachedBinaryPath(version);
@@ -171,7 +229,7 @@ async function ensureCommentCheckerBinary() {
     cleanupStaleCache(version);
     return cachedPath;
   }
-  return downloadCommentChecker();
+  return downloadCommentChecker(version);
 }
 
 // src/cli.ts
@@ -188,22 +246,24 @@ function getBinaryName2() {
 }
 function findCommentCheckerPathSync() {
   const binaryName = getBinaryName2();
-  const version = getCommentCheckerVersion();
+  const version = getPreferredCommentCheckerVersionSync();
   if (!version) {
     debugLog2("cannot resolve comment-checker version; comment checking disabled");
     return null;
   }
-  try {
-    const require2 = createRequire2(import.meta.url);
-    const cliPkgPath = require2.resolve("@code-yeongyu/comment-checker/package.json");
-    const cliDir = dirname(cliPkgPath);
-    const binaryPath = join2(cliDir, "bin", binaryName);
-    if (existsSync2(binaryPath)) {
-      debugLog2("found binary in main package:", binaryPath);
-      return binaryPath;
+  if (getCommentCheckerVersion() === version) {
+    try {
+      const require2 = createRequire2(import.meta.url);
+      const cliPkgPath = require2.resolve("@code-yeongyu/comment-checker/package.json");
+      const cliDir = dirname(cliPkgPath);
+      const binaryPath = join2(cliDir, "bin", binaryName);
+      if (existsSync2(binaryPath)) {
+        debugLog2("found binary in main package:", binaryPath);
+        return binaryPath;
+      }
+    } catch {
+      debugLog2("main package not installed");
     }
-  } catch {
-    debugLog2("main package not installed");
   }
   const cachedPath = getCachedBinaryPath(version);
   if (cachedPath) {
@@ -224,6 +284,11 @@ async function getCommentCheckerPath() {
     return initPromise;
   }
   initPromise = (async () => {
+    const version = await getLatestCommentCheckerVersion();
+    if (!version) {
+      debugLog2("cannot resolve a comment-checker version; comment checking disabled");
+      return null;
+    }
     const syncPath = findCommentCheckerPathSync();
     if (syncPath && existsSync2(syncPath)) {
       resolvedCliPath = syncPath;
@@ -231,7 +296,7 @@ async function getCommentCheckerPath() {
       return syncPath;
     }
     debugLog2("triggering lazy download...");
-    const downloadedPath = await ensureCommentCheckerBinary();
+    const downloadedPath = await ensureCommentCheckerBinary(version);
     if (downloadedPath) {
       resolvedCliPath = downloadedPath;
       debugLog2("using downloaded path:", downloadedPath);
@@ -275,7 +340,7 @@ async function runCommentChecker(input, options = {}) {
     const proc = spawn2(args, { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
     proc.stdin.write(jsonInput);
     proc.stdin.end();
-    const TIMEOUT_MS = 5000;
+    const TIMEOUT_MS = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_CLI_TIMEOUT_MS;
     const outcome = await new Promise((resolve) => {
       const timer = setTimeout(() => {
         debugLog2("comment-checker timed out; killing");
@@ -334,8 +399,11 @@ function debugLog3(...args) {
 var pendingCalls = new Map;
 var PENDING_CALL_TTL = 60000;
 var warningCounts = new Map;
+var pluginOptions;
 var customPrompt;
 var maxWarningsPerFile = 0;
+var triggerTools = new Set(DEFAULT_TRIGGER_TOOLS);
+var cliTimeoutMs = DEFAULT_CLI_TIMEOUT_MS;
 function cleanupStaleState() {
   const now = Date.now();
   for (const [callID, call] of pendingCalls) {
@@ -349,26 +417,38 @@ function cleanupStaleState() {
     }
   }
 }
-function resolveCustomPrompt(config) {
-  const raw = config.comment_checker;
-  if (!raw || typeof raw !== "object")
+function optionContainer(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
     return;
-  const prompt = raw.custom_prompt;
-  return typeof prompt === "string" && prompt.trim().length > 0 ? prompt : undefined;
+  const object = value;
+  const nested = object.comment_checker;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    return nested;
+  }
+  return object;
 }
-function resolveMaxWarnings(config) {
-  const raw = config.comment_checker;
-  if (!raw || typeof raw !== "object")
-    return 0;
-  const value = raw.max_warnings_per_file;
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+function asString(value) {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
-function resolveMaxWarningsFromEnv() {
-  const raw = process.env.COMMENT_CHECKER_MAX_WARNINGS_PER_FILE;
-  if (!raw || raw.trim().length === 0)
-    return 0;
-  const value = Number(raw);
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+function asCount(value, minimum) {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value.trim()) : Number.NaN;
+  return Number.isFinite(parsed) && parsed >= minimum ? Math.floor(parsed) : undefined;
+}
+function asTools(value) {
+  const entries = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : undefined;
+  if (!entries)
+    return;
+  const tools = entries.filter((entry) => typeof entry === "string").map((entry) => entry.trim().toLowerCase()).filter((entry) => entry.length > 0);
+  return tools.length > 0 ? tools : undefined;
+}
+function resolveConfiguration(config) {
+  const fromOptions = optionContainer(pluginOptions);
+  const fromConfig = optionContainer(config);
+  customPrompt = asString(process.env.COMMENT_CHECKER_CUSTOM_PROMPT) ?? asString(fromOptions?.custom_prompt) ?? asString(fromConfig?.custom_prompt);
+  maxWarningsPerFile = asCount(process.env.COMMENT_CHECKER_MAX_WARNINGS_PER_FILE, 1) ?? asCount(fromOptions?.max_warnings_per_file, 1) ?? asCount(fromConfig?.max_warnings_per_file, 1) ?? 0;
+  const tools = asTools(process.env.COMMENT_CHECKER_TOOLS) ?? asTools(fromOptions?.tools) ?? asTools(fromConfig?.tools);
+  triggerTools = new Set(tools ?? DEFAULT_TRIGGER_TOOLS);
+  cliTimeoutMs = asCount(process.env.COMMENT_CHECKER_TIMEOUT_MS, 1) ?? asCount(fromOptions?.timeout_ms, 1) ?? asCount(fromConfig?.timeout_ms, 1) ?? DEFAULT_CLI_TIMEOUT_MS;
 }
 setInterval(cleanupStaleState, 1e4).unref();
 function canWarn(sessionID, filePath) {
@@ -415,7 +495,7 @@ async function reportComments(sessionID, toolName, toolInput, output) {
       hook_event_name: COMMENT_CHECKER_EVENT,
       tool_input: toolInput
     };
-    const result = await runCommentChecker(hookInput, { prompt: customPrompt });
+    const result = await runCommentChecker(hookInput, { prompt: customPrompt, timeoutMs: cliTimeoutMs });
     if (result.hasComments && result.message) {
       recordWarning(sessionID, filePath);
       output.output += `
@@ -483,17 +563,17 @@ async function checkApplyPatch(sessionID, output) {
     }, output);
   }
 }
-var CommentCheckerPlugin = async () => {
-  maxWarningsPerFile = resolveMaxWarningsFromEnv();
+var CommentCheckerPlugin = async (_input, options) => {
+  pluginOptions = options;
+  resolveConfiguration();
   startBackgroundInit();
   return {
     config: async (config) => {
-      customPrompt = resolveCustomPrompt(config);
-      maxWarningsPerFile = resolveMaxWarningsFromEnv() || resolveMaxWarnings(config);
+      resolveConfiguration(config);
     },
     "tool.execute.before": async (input, output) => {
       const toolLower = input.tool.toLowerCase();
-      if (!TOOL_NAMES.has(toolLower)) {
+      if (toolLower === APPLY_PATCH_TOOL_NAME || !triggerTools.has(toolLower)) {
         return;
       }
       const filePath = output.args.filePath ?? output.args.file_path ?? output.args.path;
@@ -518,6 +598,9 @@ var CommentCheckerPlugin = async () => {
     },
     "tool.execute.after": async (input, output) => {
       if (input.tool.toLowerCase() === APPLY_PATCH_TOOL_NAME) {
+        if (!triggerTools.has(APPLY_PATCH_TOOL_NAME)) {
+          return;
+        }
         touchSession(input.sessionID);
         await checkApplyPatch(input.sessionID, output);
         return;

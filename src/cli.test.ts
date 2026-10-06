@@ -98,6 +98,14 @@ test("ignores a CLI that never answers instead of hanging the tool call", async 
   expect(result).toEqual({ hasComments: false, message: "" })
 }, 20_000)
 
+test("honours the timeout option so a hung CLI cannot block the tool call", async () => {
+  const started = Date.now()
+  const result = await runCommentChecker(hookInput(), { cliPath: writeFakeBinary("hang"), timeoutMs: 200 })
+
+  expect(result).toEqual({ hasComments: false, message: "" })
+  expect(Date.now() - started).toBeLessThan(5_000)
+}, 20_000)
+
 test("caches the binary per comment-checker version and drops the stale versions", async () => {
   process.env.XDG_CACHE_HOME = dir
   const version = getCommentCheckerVersion()
@@ -108,6 +116,7 @@ test("caches the binary per comment-checker version and drops the stale versions
   const versioned = join(cacheRoot, version!, binaryName)
   mkdirSync(join(cacheRoot, version!), { recursive: true })
   writeFileSync(versioned, "binary")
+  writeFileSync(join(cacheRoot, "latest.json"), JSON.stringify({ version, checkedAt: Date.now() }))
   mkdirSync(join(cacheRoot, "0.0.0-stale"), { recursive: true })
   writeFileSync(join(cacheRoot, "0.0.0-stale", binaryName), "stale")
 
@@ -116,4 +125,5 @@ test("caches the binary per comment-checker version and drops the stale versions
 
   expect(await ensureCommentCheckerBinary()).toBe(versioned)
   expect(existsSync(join(cacheRoot, "0.0.0-stale"))).toBe(false)
+  expect(existsSync(join(cacheRoot, "latest.json"))).toBe(true)
 })

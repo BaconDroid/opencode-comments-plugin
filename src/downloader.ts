@@ -1,5 +1,5 @@
 import { spawn } from "bun"
-import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { homedir } from "node:os"
 import { createRequire } from "node:module"
@@ -13,6 +13,9 @@ function debugLog(...args: unknown[]) {
 }
 
 const REPO = "code-yeongyu/go-claude-code-comment-checker"
+const LATEST_URL = `https://github.com/${REPO}/releases/latest`
+const LATEST_TTL_MS = 24 * 60 * 60 * 1000
+const LATEST_CACHE_FILE = "latest.json"
 
 interface PlatformInfo {
   os: string
@@ -55,6 +58,70 @@ export function getCommentCheckerVersion(): string | null {
   }
 }
 
+export function parseLatestTag(location: string | null): string | null {
+  if (!location) return null
+  const match = location.match(/\/tag\/v?(\d+\.\d+\.\d+)$/)
+  return match ? match[1] : null
+}
+
+interface LatestCache {
+  version: string
+  checkedAt: number
+}
+
+function getLatestCachePath(): string {
+  return join(getCacheDir(), LATEST_CACHE_FILE)
+}
+
+function readLatestCache(): LatestCache | null {
+  try {
+    const parsed = JSON.parse(readFileSync(getLatestCachePath(), "utf8")) as Partial<LatestCache>
+    if (typeof parsed.version === "string" && parsed.version.length > 0 && typeof parsed.checkedAt === "number") {
+      return { version: parsed.version, checkedAt: parsed.checkedAt }
+    }
+  } catch {
+    debugLog("no latest-version cache")
+  }
+  return null
+}
+
+function writeLatestCache(version: string): void {
+  try {
+    const dir = getCacheDir()
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    writeFileSync(getLatestCachePath(), JSON.stringify({ version, checkedAt: Date.now() }))
+  } catch (err) {
+    debugLog("failed to cache latest version:", err)
+  }
+}
+
+export function getPreferredCommentCheckerVersionSync(): string | null {
+  return readLatestCache()?.version ?? getCommentCheckerVersion()
+}
+
+export async function getLatestCommentCheckerVersion(): Promise<string | null> {
+  const cached = readLatestCache()
+  if (cached && Date.now() - cached.checkedAt < LATEST_TTL_MS) {
+    return cached.version
+  }
+
+  try {
+    const response = await fetch(LATEST_URL, { redirect: "manual" })
+    const version = parseLatestTag(response.headers.get("location"))
+    if (version) {
+      debugLog("resolved latest comment-checker release:", version)
+      writeLatestCache(version)
+      return version
+    }
+    debugLog("could not parse latest release location:", response.headers.get("location"))
+  } catch (err) {
+    debugLog("failed to resolve latest release:", err)
+  }
+
+  if (cached) return cached.version
+  return getCommentCheckerVersion()
+}
+
 export function cleanupStaleCache(version: string): void {
   let entries: string[]
   try {
@@ -63,7 +130,7 @@ export function cleanupStaleCache(version: string): void {
     return
   }
   for (const entry of entries) {
-    if (entry === version) continue
+    if (entry === version || entry === LATEST_CACHE_FILE) continue
     try {
       rmSync(join(getCacheDir(), entry), { recursive: true, force: true })
     } catch (err) {
@@ -107,7 +174,7 @@ async function extractZip(archivePath: string, destDir: string): Promise<void> {
   }
 }
 
-export async function downloadCommentChecker(): Promise<string | null> {
+export async function downloadCommentChecker(versionOverride?: string): Promise<string | null> {
   const platformKey = `${process.platform}-${process.arch}`
   const platformInfo = PLATFORM_MAP[platformKey]
 
@@ -116,9 +183,9 @@ export async function downloadCommentChecker(): Promise<string | null> {
     return null
   }
 
-  const version = getCommentCheckerVersion()
+  const version = versionOverride ?? getCommentCheckerVersion()
   if (!version) {
-    debugLog("Cannot resolve @code-yeongyu/comment-checker version; refusing to download a stale binary")
+    debugLog("Cannot resolve a comment-checker version; refusing to download a stale binary")
     return null
   }
 
@@ -182,8 +249,8 @@ export async function downloadCommentChecker(): Promise<string | null> {
   }
 }
 
-export async function ensureCommentCheckerBinary(): Promise<string | null> {
-  const version = getCommentCheckerVersion()
+export async function ensureCommentCheckerBinary(versionOverride?: string): Promise<string | null> {
+  const version = versionOverride ?? (await getLatestCommentCheckerVersion())
   if (!version) return null
 
   const cachedPath = getCachedBinaryPath(version)
@@ -193,5 +260,5 @@ export async function ensureCommentCheckerBinary(): Promise<string | null> {
     return cachedPath
   }
 
-  return downloadCommentChecker()
+  return downloadCommentChecker(version)
 }

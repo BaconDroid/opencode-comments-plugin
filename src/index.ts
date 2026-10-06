@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { existsSync } from "node:fs"
-import { APPLY_PATCH_TOOL_NAME, COMMENT_CHECKER_EVENT, TOOL_NAMES } from "./constants"
+import { APPLY_PATCH_TOOL_NAME, COMMENT_CHECKER_EVENT, DEFAULT_CLI_TIMEOUT_MS, DEFAULT_TRIGGER_TOOLS } from "./constants"
 import { getCommentCheckerPath, runCommentChecker, startBackgroundInit } from "./cli"
 import type { HookInput, PatchFileChange, PendingCall } from "./types"
 
@@ -22,8 +22,11 @@ interface SessionWarnings {
 
 const warningCounts = new Map<string, SessionWarnings>()
 
+let pluginOptions: unknown
 let customPrompt: string | undefined
 let maxWarningsPerFile = 0
+let triggerTools = new Set(DEFAULT_TRIGGER_TOOLS)
+let cliTimeoutMs = DEFAULT_CLI_TIMEOUT_MS
 
 function cleanupStaleState(): void {
   const now = Date.now()
@@ -39,27 +42,65 @@ function cleanupStaleState(): void {
   }
 }
 
-function resolveCustomPrompt(config: unknown): string | undefined {
-  const raw = (config as unknown as { comment_checker?: { custom_prompt?: unknown } }).comment_checker
-  if (!raw || typeof raw !== "object") return undefined
-  const prompt = raw.custom_prompt
-  return typeof prompt === "string" && prompt.trim().length > 0 ? prompt : undefined
+// opencode validates its config against a fixed schema and drops unknown
+// top-level keys, so `comment_checker` never reaches the config hook. Plugin
+// options are therefore passed as the second element of the plugin tuple:
+// "plugin": [["opencode-comments-plugin", { "comment_checker": { ... } }]]
+function optionContainer(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const object = value as Record<string, unknown>
+  const nested = object.comment_checker
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    return nested as Record<string, unknown>
+  }
+  return object
 }
 
-function resolveMaxWarnings(config: unknown): number {
-  const raw = (config as unknown as { comment_checker?: { max_warnings_per_file?: unknown } }).comment_checker
-  if (!raw || typeof raw !== "object") return 0
-  const value = raw.max_warnings_per_file
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined
 }
 
-// The config hook never sees unknown top-level keys: opencode validates the config
-// against a fixed schema, so comment_checker is dropped before plugins are called.
-function resolveMaxWarningsFromEnv(): number {
-  const raw = process.env.COMMENT_CHECKER_MAX_WARNINGS_PER_FILE
-  if (!raw || raw.trim().length === 0) return 0
-  const value = Number(raw)
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+function asCount(value: unknown, minimum: number): number | undefined {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value.trim()) : Number.NaN
+  return Number.isFinite(parsed) && parsed >= minimum ? Math.floor(parsed) : undefined
+}
+
+function asTools(value: unknown): string[] | undefined {
+  const entries = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : undefined
+  if (!entries) return undefined
+  const tools = entries
+    .filter((entry): entry is string => typeof entry === "string")
+    .map(entry => entry.trim().toLowerCase())
+    .filter(entry => entry.length > 0)
+  return tools.length > 0 ? tools : undefined
+}
+
+function resolveConfiguration(config?: unknown): void {
+  const fromOptions = optionContainer(pluginOptions)
+  const fromConfig = optionContainer(config)
+
+  customPrompt =
+    asString(process.env.COMMENT_CHECKER_CUSTOM_PROMPT) ??
+    asString(fromOptions?.custom_prompt) ??
+    asString(fromConfig?.custom_prompt)
+
+  maxWarningsPerFile =
+    asCount(process.env.COMMENT_CHECKER_MAX_WARNINGS_PER_FILE, 1) ??
+    asCount(fromOptions?.max_warnings_per_file, 1) ??
+    asCount(fromConfig?.max_warnings_per_file, 1) ??
+    0
+
+  const tools =
+    asTools(process.env.COMMENT_CHECKER_TOOLS) ??
+    asTools(fromOptions?.tools) ??
+    asTools(fromConfig?.tools)
+  triggerTools = new Set(tools ?? DEFAULT_TRIGGER_TOOLS)
+
+  cliTimeoutMs =
+    asCount(process.env.COMMENT_CHECKER_TIMEOUT_MS, 1) ??
+    asCount(fromOptions?.timeout_ms, 1) ??
+    asCount(fromConfig?.timeout_ms, 1) ??
+    DEFAULT_CLI_TIMEOUT_MS
 }
 
 setInterval(cleanupStaleState, 10_000).unref()
@@ -117,7 +158,7 @@ async function reportComments(
       tool_input: toolInput,
     }
 
-    const result = await runCommentChecker(hookInput, { prompt: customPrompt })
+    const result = await runCommentChecker(hookInput, { prompt: customPrompt, timeoutMs: cliTimeoutMs })
     if (result.hasComments && result.message) {
       recordWarning(sessionID, filePath)
       output.output += `\n\n${result.message}`
@@ -188,18 +229,18 @@ async function checkApplyPatch(
   }
 }
 
-export const CommentCheckerPlugin: Plugin = async () => {
-  maxWarningsPerFile = resolveMaxWarningsFromEnv()
+export const CommentCheckerPlugin: Plugin = async (_input, options?: unknown) => {
+  pluginOptions = options
+  resolveConfiguration()
   startBackgroundInit()
 
   return {
     config: async (config: unknown) => {
-      customPrompt = resolveCustomPrompt(config)
-      maxWarningsPerFile = resolveMaxWarningsFromEnv() || resolveMaxWarnings(config)
+      resolveConfiguration(config)
     },
     "tool.execute.before": async (input: { tool: string; sessionID: string; callID: string }, output: { args: Record<string, unknown> }) => {
       const toolLower = input.tool.toLowerCase()
-      if (!TOOL_NAMES.has(toolLower)) {
+      if (toolLower === APPLY_PATCH_TOOL_NAME || !triggerTools.has(toolLower)) {
         return
       }
 
@@ -220,7 +261,7 @@ export const CommentCheckerPlugin: Plugin = async () => {
         oldString,
         newString,
         edits,
-        tool: toolLower as "write" | "edit",
+        tool: toolLower,
         sessionID: input.sessionID,
         timestamp: Date.now(),
       })
@@ -230,6 +271,9 @@ export const CommentCheckerPlugin: Plugin = async () => {
       output: { title: string; output: string; metadata: unknown }
     ) => {
       if (input.tool.toLowerCase() === APPLY_PATCH_TOOL_NAME) {
+        if (!triggerTools.has(APPLY_PATCH_TOOL_NAME)) {
+          return
+        }
         touchSession(input.sessionID)
         await checkApplyPatch(input.sessionID, output)
         return
