@@ -401,6 +401,7 @@ var PENDING_CALL_TTL = 60000;
 var warningCounts = new Map;
 var pluginOptions;
 var customPrompt;
+var appendPrompt;
 var maxWarningsPerFile = 0;
 var triggerTools = new Set(DEFAULT_TRIGGER_TOOLS);
 var cliTimeoutMs = DEFAULT_CLI_TIMEOUT_MS;
@@ -445,6 +446,7 @@ function resolveConfiguration(config) {
   const fromOptions = optionContainer(pluginOptions);
   const fromConfig = optionContainer(config);
   customPrompt = asString(process.env.COMMENT_CHECKER_CUSTOM_PROMPT) ?? asString(fromOptions?.custom_prompt) ?? asString(fromConfig?.custom_prompt);
+  appendPrompt = asString(process.env.COMMENT_CHECKER_APPEND_PROMPT) ?? asString(fromOptions?.append_prompt) ?? asString(fromConfig?.append_prompt);
   maxWarningsPerFile = asCount(process.env.COMMENT_CHECKER_MAX_WARNINGS_PER_FILE, 1) ?? asCount(fromOptions?.max_warnings_per_file, 1) ?? asCount(fromConfig?.max_warnings_per_file, 1) ?? 0;
   const tools = asTools(process.env.COMMENT_CHECKER_TOOLS) ?? asTools(fromOptions?.tools) ?? asTools(fromConfig?.tools);
   triggerTools = new Set(tools ?? DEFAULT_TRIGGER_TOOLS);
@@ -498,9 +500,12 @@ async function reportComments(sessionID, toolName, toolInput, output) {
     const result = await runCommentChecker(hookInput, { prompt: customPrompt, timeoutMs: cliTimeoutMs });
     if (result.hasComments && result.message) {
       recordWarning(sessionID, filePath);
+      const message = appendPrompt ? `${result.message}
+
+${appendPrompt}` : result.message;
       output.output += `
 
-${result.message}`;
+${message}`;
     }
   } catch (err) {
     debugLog3("comment check failed:", err);

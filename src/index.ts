@@ -24,6 +24,7 @@ const warningCounts = new Map<string, SessionWarnings>()
 
 let pluginOptions: unknown
 let customPrompt: string | undefined
+let appendPrompt: string | undefined
 let maxWarningsPerFile = 0
 let triggerTools = new Set(DEFAULT_TRIGGER_TOOLS)
 let cliTimeoutMs = DEFAULT_CLI_TIMEOUT_MS
@@ -83,6 +84,11 @@ function resolveConfiguration(config?: unknown): void {
     asString(process.env.COMMENT_CHECKER_CUSTOM_PROMPT) ??
     asString(fromOptions?.custom_prompt) ??
     asString(fromConfig?.custom_prompt)
+
+  appendPrompt =
+    asString(process.env.COMMENT_CHECKER_APPEND_PROMPT) ??
+    asString(fromOptions?.append_prompt) ??
+    asString(fromConfig?.append_prompt)
 
   maxWarningsPerFile =
     asCount(process.env.COMMENT_CHECKER_MAX_WARNINGS_PER_FILE, 1) ??
@@ -161,7 +167,8 @@ async function reportComments(
     const result = await runCommentChecker(hookInput, { prompt: customPrompt, timeoutMs: cliTimeoutMs })
     if (result.hasComments && result.message) {
       recordWarning(sessionID, filePath)
-      output.output += `\n\n${result.message}`
+      const message = appendPrompt ? `${result.message}\n\n${appendPrompt}` : result.message
+      output.output += `\n\n${message}`
     }
   } catch (err) {
     debugLog("comment check failed:", err)
