@@ -57,6 +57,19 @@ Available options (all under `comment_checker`):
 | `max_warnings_per_file` | number | `0` | Stop warning after N warnings about the same file in one session. `0` = unlimited. |
 | `tools` | string[] or CSV string | `["write","edit","apply_patch"]` | Which tools trigger the check. |
 | `timeout_ms` | number | `5000` | How long to wait for the CLI before ignoring it. |
+| `append_prompt` | string | unset | Opt-in text appended after the warning, keeping the default (or `custom_prompt`) message intact. |
+
+Keep the default CLI warning and add your own line to it, for example:
+
+```json
+{
+  "plugin": [
+    ["opencode-comments-plugin", { "comment_checker": { "append_prompt": "Be concise, specific, and direct by default." } }]
+  ]
+}
+```
+
+`append_prompt` is not passed to the CLI; the plugin appends it to the warning it already injects.
 
 The options may also be given flat, without the `comment_checker` wrapper (`["opencode-comments-plugin", { "tools": ["write"] }]`); both forms are equivalent.
 
@@ -68,6 +81,7 @@ Every option can also be set (and overridden) through the environment, which alw
 | `COMMENT_CHECKER_MAX_WARNINGS_PER_FILE` | `max_warnings_per_file` |
 | `COMMENT_CHECKER_TOOLS` | `tools` (comma separated) |
 | `COMMENT_CHECKER_TIMEOUT_MS` | `timeout_ms` |
+| `COMMENT_CHECKER_APPEND_PROMPT` | `append_prompt` |
 
 ## Behavior
 
