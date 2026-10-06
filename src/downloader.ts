@@ -39,7 +39,7 @@ export function getBinaryName(): string {
   return process.platform === "win32" ? "comment-checker.exe" : "comment-checker"
 }
 
-export function getCachedBinaryPath(version?: string): string | null {
+export function getCachedBinaryPath(version?: string | null): string | null {
   if (!version) return null
   const binaryPath = join(getCacheDir(), version, getBinaryName())
   return existsSync(binaryPath) ? binaryPath : null
