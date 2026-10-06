@@ -16,5 +16,5 @@ Rules:
 
 A comment may explain why. It must never repeat what the code already says. Do not leave notes about what you changed or how you did it; git already shows that. Use clear names instead.
 
-Remove the comments yourself. Do not explain, narrate, or apologize. Apply this to the rest of this session.
+Remove the comments yourself. Do not explain, narrate, or apologize; be specific. Apply this to the rest of this session.
 ```
