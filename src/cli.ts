@@ -3,6 +3,7 @@ import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
 import { existsSync } from "node:fs"
 import { cleanupStaleCache, ensureCommentCheckerBinary, getCachedBinaryPath, getCommentCheckerVersion } from "./downloader"
+import { DEFAULT_CLI_TIMEOUT_MS } from "./constants"
 import type { CheckResult, HookInput } from "./types"
 
 const DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1"
@@ -103,6 +104,7 @@ export function startBackgroundInit(): void {
 export interface RunOptions {
   cliPath?: string
   prompt?: string
+  timeoutMs?: number
 }
 
 export async function runCommentChecker(input: HookInput, options: RunOptions = {}): Promise<CheckResult> {
@@ -132,7 +134,7 @@ export async function runCommentChecker(input: HookInput, options: RunOptions = 
     proc.stdin.write(jsonInput)
     proc.stdin.end()
 
-    const TIMEOUT_MS = 5_000
+    const TIMEOUT_MS = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_CLI_TIMEOUT_MS
     const outcome = await new Promise<{ stdout: string; stderr: string; exitCode: number } | "timeout">(resolve => {
       const timer = setTimeout(() => {
         debugLog("comment-checker timed out; killing")

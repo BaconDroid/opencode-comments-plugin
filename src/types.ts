@@ -4,7 +4,7 @@ export interface PendingCall {
   oldString?: string
   newString?: string
   edits?: Array<{ old_string: string; new_string: string }>
-  tool: "write" | "edit"
+  tool: string
   sessionID: string
   timestamp: number
 }

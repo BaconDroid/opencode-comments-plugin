@@ -7,7 +7,7 @@ export interface PendingCall {
         old_string: string;
         new_string: string;
     }>;
-    tool: "write" | "edit";
+    tool: string;
     sessionID: string;
     timestamp: number;
 }
