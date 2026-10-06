@@ -2,7 +2,6 @@ import { test, expect, beforeEach } from "bun:test"
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { PluginInput } from "@opencode-ai/plugin"
 import { APPLY_PATCH_TOOL_NAME } from "./constants"
 import { CommentCheckerPlugin } from "./index"
 import { getCommentCheckerVersion } from "./downloader"
@@ -16,12 +15,12 @@ if (!version) throw new Error("@code-yeongyu/comment-checker is not installed")
 
 const modePath = join(cacheRoot, "mode")
 const logPath = join(cacheRoot, "log")
-const binaryDir = join(cacheRoot, "opencode-comments-plugin", "bin", version)
+const cacheBase = join(cacheRoot, "opencode-comments-plugin", "bin")
+const binaryDir = join(cacheBase, version)
 const binaryPath = join(binaryDir, process.platform === "win32" ? "comment-checker.exe" : "comment-checker")
 
-const previousMaxWarnings = process.env.COMMENT_CHECKER_MAX_WARNINGS_PER_FILE
-
 mkdirSync(binaryDir, { recursive: true })
+writeFileSync(join(cacheBase, "latest.json"), JSON.stringify({ version, checkedAt: Date.now() }))
 writeFileSync(binaryPath, `#!/bin/sh
 {
   printf 'ARGS:'
@@ -57,8 +56,13 @@ interface Invocation {
 
 const TOOL_AFTER_INPUT = { tool: "write", sessionID: "session-1", callID: "call-1" }
 
-async function newSession(): Promise<CommentCheckerHooks> {
-  return (await CommentCheckerPlugin({} as unknown as PluginInput)) as CommentCheckerHooks
+const pluginFactory = CommentCheckerPlugin as unknown as (
+  input: unknown,
+  options?: unknown,
+) => Promise<CommentCheckerHooks>
+
+async function newSession(options?: unknown): Promise<CommentCheckerHooks> {
+  return await pluginFactory({}, options)
 }
 
 async function cliInvocations(): Promise<Invocation[]> {
@@ -92,11 +96,17 @@ function editArgs(
   return { args: { filePath, oldString, newString } }
 }
 
+const ENV_KEYS = [
+  "COMMENT_CHECKER_CUSTOM_PROMPT",
+  "COMMENT_CHECKER_MAX_WARNINGS_PER_FILE",
+  "COMMENT_CHECKER_TOOLS",
+  "COMMENT_CHECKER_TIMEOUT_MS",
+] as const
+
 beforeEach(() => {
   writeFileSync(logPath, "")
   writeFileSync(modePath, "comment")
-  if (previousMaxWarnings === undefined) delete process.env.COMMENT_CHECKER_MAX_WARNINGS_PER_FILE
-  else process.env.COMMENT_CHECKER_MAX_WARNINGS_PER_FILE = previousMaxWarnings
+  for (const key of ENV_KEYS) delete process.env[key]
 })
 
 test("appends the comment warning to the output of a write that added comments", async () => {
@@ -378,3 +388,75 @@ test("reports the edit arguments of an edit tool call", async () => {
     tool_input: { file_path: "/work/src/a.ts", old_string: "const a = 1", new_string: "// added\nconst a = 1" },
   })
 })
+
+test("reads the custom prompt from the plugin options", async () => {
+  const hooks = await newSession({ comment_checker: { custom_prompt: "FROM OPTIONS" } })
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// explain\n"))
+  await hooks["tool.execute.after"](TOOL_AFTER_INPUT, output)
+
+  expect((await cliInvocations())[0]!.args).toContain("FROM OPTIONS")
+})
+
+test("lets an environment variable override the plugin options", async () => {
+  process.env.COMMENT_CHECKER_CUSTOM_PROMPT = "FROM ENV"
+  const hooks = await newSession({ comment_checker: { custom_prompt: "FROM OPTIONS" } })
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// explain\n"))
+  await hooks["tool.execute.after"](TOOL_AFTER_INPUT, output)
+
+  const calls = await cliInvocations()
+  expect(calls[0]!.args).toContain("FROM ENV")
+  expect(calls[0]!.args).not.toContain("FROM OPTIONS")
+})
+
+test("reads max_warnings_per_file from the plugin options", async () => {
+  const hooks = await newSession({ comment_checker: { max_warnings_per_file: 1 } })
+  const session = "session-options-capped"
+
+  const first = writeOutput("Wrote file successfully.")
+  await hooks["tool.execute.before"]({ tool: "write", sessionID: session, callID: "opt-1" }, writeArgs("// explain\n"))
+  await hooks["tool.execute.after"]({ tool: "write", sessionID: session, callID: "opt-1" }, first)
+  expect(first.output).toContain("COMMENT/DOCSTRING DETECTED")
+
+  const second = writeOutput("Wrote file successfully.")
+  await hooks["tool.execute.before"]({ tool: "write", sessionID: session, callID: "opt-2" }, writeArgs("// explain\n"))
+  await hooks["tool.execute.after"]({ tool: "write", sessionID: session, callID: "opt-2" }, second)
+  expect(second.output).toBe("Wrote file successfully.")
+})
+
+test("restricts the checked tools with the tools option", async () => {
+  const hooks = await newSession({ comment_checker: { tools: ["write"] } })
+
+  const editOutput = writeOutput("The file has been updated.")
+  await hooks["tool.execute.before"]({ tool: "edit", sessionID: "s", callID: "e1" }, editArgs("/tmp/file.ts", "a", "// b"))
+  await hooks["tool.execute.after"]({ tool: "edit", sessionID: "s", callID: "e1" }, editOutput)
+  expect(editOutput.output).toBe("The file has been updated.")
+
+  const patchOutput = writeOutput("Success. Updated the following files:")
+  patchOutput.metadata = { files: [{ type: "add", filePath: "/tmp/file.ts", patch: "@@ -0,0 +1 @@\n+// header\n" }] }
+  await hooks["tool.execute.after"]({ tool: APPLY_PATCH_TOOL_NAME, sessionID: "s", callID: "p1" }, patchOutput)
+  expect(patchOutput.output).toBe("Success. Updated the following files:")
+  expect(await cliInvocations()).toHaveLength(0)
+
+  const writeResult = writeOutput("Wrote file successfully.")
+  await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// explain\n"))
+  await hooks["tool.execute.after"](TOOL_AFTER_INPUT, writeResult)
+  expect(writeResult.output).toContain("COMMENT/DOCSTRING DETECTED")
+  expect(await cliInvocations()).toHaveLength(1)
+})
+
+test("accepts a comma separated tool list from the environment", async () => {
+  process.env.COMMENT_CHECKER_TOOLS = "write,edit"
+  const hooks = await newSession()
+
+  const patchOutput = writeOutput("Success. Updated the following files:")
+  patchOutput.metadata = { files: [{ type: "add", filePath: "/tmp/file.ts", patch: "@@ -0,0 +1 @@\n+// header\n" }] }
+  await hooks["tool.execute.after"]({ tool: APPLY_PATCH_TOOL_NAME, sessionID: "s", callID: "p2" }, patchOutput)
+
+  expect(patchOutput.output).toBe("Success. Updated the following files:")
+  expect(await cliInvocations()).toHaveLength(0)
+})
+
