@@ -123,18 +123,16 @@ export async function runCommentChecker(input: HookInput, options: RunOptions = 
       args.push("--prompt", options.prompt)
     }
 
-    const proc = spawn(args, {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    })
+    const proc = spawn(args, { stdin: "pipe", stdout: "pipe", stderr: "pipe" })
 
     proc.stdin.write(jsonInput)
     proc.stdin.end()
 
+    const watchdog = setTimeout(() => proc.kill(), 5_000)
     const stdout = await new Response(proc.stdout).text()
     const stderr = await new Response(proc.stderr).text()
     const exitCode = await proc.exited
+    clearTimeout(watchdog)
 
     debugLog("exit code:", exitCode, "stdout length:", stdout.length, "stderr length:", stderr.length)
 

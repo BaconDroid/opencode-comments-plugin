@@ -3,7 +3,7 @@ import { existsSync } from "node:fs"
 import { appendFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { COMMENT_CHECKER_EVENT, OUTPUT_FAILURE_PATTERNS, TOOL_NAMES } from "./constants"
+import { COMMENT_CHECKER_EVENT, TOOL_NAMES } from "./constants"
 import { getCommentCheckerPath, runCommentChecker, startBackgroundInit } from "./cli"
 import type { PendingCall } from "./types"
 
@@ -19,7 +19,6 @@ function debugLog(...args: unknown[]) {
 const pendingCalls = new Map<string, PendingCall>()
 const PENDING_CALL_TTL = 60_000
 
-let cliPathPromise: Promise<string | null> | null = null
 let customPrompt: string | undefined
 
 function cleanupOldPendingCalls(): void {
@@ -38,16 +37,10 @@ function resolveCustomPrompt(config: unknown): string | undefined {
   return typeof prompt === "string" && prompt.trim().length > 0 ? prompt : undefined
 }
 
-setInterval(cleanupOldPendingCalls, 10_000)
+setInterval(cleanupOldPendingCalls, 10_000).unref()
 
 export const CommentCheckerPlugin: Plugin = async () => {
   startBackgroundInit()
-  cliPathPromise = getCommentCheckerPath()
-  cliPathPromise.then(path => {
-    debugLog("CLI path resolved:", path || "disabled (no binary)")
-  }).catch(err => {
-    debugLog("CLI path resolution error:", err)
-  })
 
   return {
     config: async (config: unknown) => {
@@ -92,9 +85,7 @@ export const CommentCheckerPlugin: Plugin = async () => {
 
       pendingCalls.delete(input.callID)
 
-      const outputLower = output.output.toLowerCase()
-      const isToolFailure = outputLower.startsWith("error")
-        || OUTPUT_FAILURE_PATTERNS.some(pattern => outputLower.includes(pattern))
+      const isToolFailure = output.output.toLowerCase().startsWith("error")
 
       if (isToolFailure) {
         debugLog("skipping due to tool failure in output")
@@ -102,7 +93,7 @@ export const CommentCheckerPlugin: Plugin = async () => {
       }
 
       try {
-        const cliPath = await cliPathPromise
+        const cliPath = await getCommentCheckerPath()
         if (!cliPath || !existsSync(cliPath)) {
           debugLog("CLI not available, skipping comment check")
           return
