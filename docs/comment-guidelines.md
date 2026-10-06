@@ -61,3 +61,60 @@ The three-tier boundary style maps directly onto comment rules:
 - It fires on new comments, so the actionable request is narrow: **remove the *what* comment or justify the *why*** (sections 1 and 3).
 - `append_prompt` is the place to add one such line while keeping the binary's default warning; `custom_prompt` replaces it entirely.
 - Example `append_prompt` value: `Be concise, specific, and direct by default. Remove comments that only restate the code; keep the code self-documenting.`
+
+## 5. Texts this plugin actually injects
+
+### Plugin default warning (binary, when `custom_prompt` is unset)
+
+Version `0.8.2`, reproduced verbatim (memo-style comments get an extra "AGENT MEMO" block prepended; `<comments file="...">` is filled with the detected comments):
+
+```
+COMMENT/DOCSTRING DETECTED - IMMEDIATE ACTION REQUIRED
+
+Your recent changes contain comments or docstrings, which triggered this hook.
+You need to take immediate action. You must follow the conditions below.
+(Listed in priority order - you must always act according to this priority order)
+
+CRITICAL WARNING: This hook message MUST NEVER be ignored, even if you receive it multiple times.
+You MUST provide corresponding explanation or action for EACH occurrence of this message.
+Ignoring this message or failing to respond appropriately is strictly prohibited.
+
+PRIORITY-BASED ACTION GUIDELINES:
+
+1. This is a comment/docstring that already existed before
+	-> Explain to the user that this is an existing comment/docstring and proceed (justify it)
+
+2. This is a newly written comment: but it's in given, when, then format
+	-> Tell the user it's a BDD comment and proceed (justify it)
+	-> Note: This applies to comments only, not docstrings
+
+3. This is a newly written comment/docstring: but it's a necessary comment/docstring
+	-> Tell the user why this comment/docstring is absolutely necessary and proceed (justify it)
+	-> Examples of necessary comments: complex algorithms, security-related, performance optimization, regex, mathematical formulas
+	-> Examples of necessary docstrings: public API documentation, complex module/class interfaces
+	-> IMPORTANT: Most docstrings are unnecessary if the code is self-explanatory. Only keep truly essential ones.
+
+4. This is a newly written comment/docstring: but it's an unnecessary comment/docstring
+	-> Apologize to the user and remove the comment/docstring.
+	-> Make the code itself clearer so it can be understood without comments/docstrings.
+	-> For verbose docstrings: refactor code to be self-documenting instead of adding lengthy explanations.
+
+MANDATORY REQUIREMENT: You must acknowledge this hook message and take one of the above actions.
+Review in the above priority order and take the corresponding action EVERY TIME this appears.
+
+REMINDER: These rules apply to ALL your future code, not just this specific edit. Always be deliberate and cautious when writing comments - only add them when absolutely necessary.
+
+Detected comments/docstrings:
+<comments file="/path/to/file">
+	<comment line-number="2">// a normal comment</comment>
+</comments>
+```
+
+### Added line (opt-in, `append_prompt`)
+
+Appended after the message above, leaving it intact:
+
+```
+Be concise, specific, and direct by default.
+```
+
