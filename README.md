@@ -47,16 +47,37 @@ You can override the CLI warning message using `comment_checker.custom_prompt`:
 }
 ```
 
+`comment_checker.max_warnings_per_file` stops warning after N warnings about the same file in the same session. `0` (the default) keeps warning every time:
+
+```json
+{
+  "comment_checker": {
+    "max_warnings_per_file": 2
+  }
+}
+```
+
+opencode validates its config against a fixed schema and drops unknown top-level keys, so `comment_checker` may never reach the plugin. When it does not, set the same limit through the environment instead:
+
+```bash
+COMMENT_CHECKER_MAX_WARNINGS_PER_FILE=2 opencode
+```
+
 ## Behavior
 
-- Runs on `Write`, `Edit`, and `MultiEdit` tool calls.
+- Runs on `Write`, `Edit`, and `apply_patch` tool calls.
 - If the CLI detects comments, it appends the warning message to tool output.
 - If the CLI binary is missing, the plugin auto-downloads the correct release.
+
+## Debug
+
+Set `COMMENT_CHECKER_DEBUG=1` to log what the plugin and the CLI do to stderr. Nothing is logged without it.
 
 ## Development
 
 ```bash
 bun install
 bun run build
+bun test
 bun run typecheck
 ```
