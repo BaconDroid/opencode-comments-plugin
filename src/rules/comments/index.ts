@@ -5,10 +5,12 @@
 import { existsSync } from "node:fs"
 import { APPLY_PATCH_TOOL_NAME, COMMENT_CHECKER_EVENT } from "../../constants"
 import { getCommentCheckerPath, runCommentChecker } from "../../cli"
+import { AnalyzerRegistry, type Analyzer } from "../../core/analyzer"
 import { GuardBudget } from "../../core/budget"
 import { bypassMatchers, collectBypasses, withinAllowWindow, type Bypass } from "../../core/bypass"
 import { detectLanguage, diffLines, extractPatchChanges, isCommentLine, readPreimage } from "../../core/diff"
 import { matchesAnyGlob } from "../../core/glob"
+import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "../../core/result-pipeline"
 import type { HookInput, PendingCall } from "../../types"
 
 const DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1"
@@ -49,9 +51,8 @@ function bypassState(
   return { suppress: true, notes }
 }
 
-function renderBypassFooter(filePath: string, notes: Bypass[]): string {
-  const lines = notes.map(note => `- ${filePath}:${note.line} ${note.kind}${note.reason ? ` (${note.reason})` : ""}`)
-  return `Comment guard bypass recorded:\n${lines.join("\n")}`
+function commentBypassFooter(filePath: string, notes: Bypass[]): string {
+  return renderBypassFooter("Comment guard bypass recorded", notes.map(note => formatBypassNote(filePath, note)))
 }
 
 // The old/new text a pending call represents, for the bypass check.
@@ -84,6 +85,36 @@ function isCheckedPath(filePath: string, paths: string[]): boolean {
   return paths.length === 0 || matchesAnyGlob(paths, filePath)
 }
 
+// Wraps the comment-checker binary as an analyzer. It only produces the raw CLI
+// message; the guard keeps its budget, bypass handling and raw append.
+export function createCommentBinaryAnalyzer(getConfig: () => ResolvedCommentConfig): Analyzer {
+  return {
+    id: "comment-binary",
+    trigger: "after",
+    isEnabled: () => getConfig().enabled,
+    analyze: async ctx => {
+      const config = getConfig()
+      const cliPath = await getCommentCheckerPath()
+      if (!cliPath || !existsSync(cliPath)) {
+        debugLog("CLI not available, skipping comment check")
+        return {}
+      }
+
+      const hookInput: HookInput = {
+        session_id: ctx.sessionID,
+        tool_name: ctx.tool,
+        transcript_path: "",
+        cwd: process.cwd(),
+        hook_event_name: COMMENT_CHECKER_EVENT,
+        tool_input: (ctx.args ?? {}) as HookInput["tool_input"],
+      }
+
+      const result = await runCommentChecker(hookInput, { prompt: config.customPrompt, timeoutMs: config.timeoutMs })
+      return result.hasComments && result.message ? { raw: result.message } : {}
+    },
+  }
+}
+
 interface BeforeInput {
   tool: string
   sessionID: string
@@ -104,6 +135,8 @@ export interface CommentGuard {
 export function createCommentGuard(getConfig: () => ResolvedCommentConfig): CommentGuard {
   const pendingCalls = new Map<string, PendingCall>()
   const budget = new GuardBudget({ dedupWindowMs: 0 })
+  const registry = new AnalyzerRegistry()
+  registry.register(createCommentBinaryAnalyzer(getConfig))
 
   function prunePending(now = Date.now()): void {
     for (const [callID, call] of pendingCalls) {
@@ -127,13 +160,13 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
     change: { oldText: string; newText: string },
   ): Promise<void> {
     try {
-      const { customPrompt, appendPrompt, timeoutMs, maxWarningsPerFile, dedupWindowMs } = getConfig()
+      const { appendPrompt, maxWarningsPerFile, dedupWindowMs } = getConfig()
       const filePath = toolInput.file_path ?? ""
 
       const bypass = bypassState(change.newText, change.oldText, detectLanguage(filePath))
       if (bypass.suppress) {
         debugLog("comment guard bypassed for", filePath)
-        if (bypass.notes.length > 0) output.output += `\n\n${renderBypassFooter(filePath, bypass.notes)}`
+        if (bypass.notes.length > 0) output.output += `\n\n${commentBypassFooter(filePath, bypass.notes)}`
         return
       }
 
@@ -144,27 +177,17 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
         return
       }
 
-      const cliPath = await getCommentCheckerPath()
-      if (!cliPath || !existsSync(cliPath)) {
-        debugLog("CLI not available, skipping comment check")
-        return
-      }
-
-      const hookInput = {
-        session_id: sessionID,
-        tool_name: toolName,
-        transcript_path: "",
-        cwd: process.cwd(),
-        hook_event_name: COMMENT_CHECKER_EVENT,
-        tool_input: toolInput,
-      }
-
-      const result = await runCommentChecker(hookInput, { prompt: customPrompt, timeoutMs })
-      if (result.hasComments && result.message) {
+      const results = await registry.run("after", {
+        tool: toolName,
+        sessionID,
+        args: toolInput as Record<string, unknown>,
+        directory: process.cwd(),
+      })
+      const message = renderAnalyzerResults(results, { appendPrompt })
+      if (message.length > 0) {
         budget.record(sessionID, COMMENT_RULE, filePath)
-        const message = appendPrompt ? `${result.message}\n\n${appendPrompt}` : result.message
         output.output += `\n\n${message}`
-        if (bypass.notes.length > 0) output.output += `\n\n${renderBypassFooter(filePath, bypass.notes)}`
+        if (bypass.notes.length > 0) output.output += `\n\n${commentBypassFooter(filePath, bypass.notes)}`
       }
     } catch (err) {
       debugLog("comment check failed:", err)

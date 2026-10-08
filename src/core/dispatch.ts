@@ -9,7 +9,8 @@ import { GuardBudget } from "./budget"
 import type { Bypass } from "./bypass"
 import type { Severity } from "./config"
 import { extractPatchChanges, extractToolChange, firstString, readPreimage, type ExtractedChange } from "./diff"
-import { appendFeedback, renderFeedback, type Finding } from "./feedback"
+import { appendFeedback, type Finding } from "./feedback"
+import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "./result-pipeline"
 import { isTestPath } from "../rules/tests/patterns"
 import { runTestRules } from "../rules/tests"
 
@@ -292,7 +293,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
 
           for (const bypass of changeBypasses) {
             debugLog("bypass", change.filePath, bypass)
-            bypassNotes.push(`${change.filePath}:${bypass.line} ${bypass.kind}${bypass.reason ? ` (${bypass.reason})` : ""}`)
+            bypassNotes.push(formatBypassNote(change.filePath, bypass))
           }
 
           const grouped = new Map<string, Finding[]>()
@@ -311,16 +312,17 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
           }
         }
 
-        let message = findings.length > 0
-          ? renderFeedback(findings, { customPrompt: resolved.customPrompt, appendPrompt: resolved.appendPrompt })
-          : ""
+        let message = renderAnalyzerResults([{ findings }], {
+          customPrompt: resolved.customPrompt,
+          appendPrompt: resolved.appendPrompt,
+        })
         // A block-configured rule reached the after hook: `before` did not stop
         // this change (e.g. a sub-agent bypassed it, #5894).
         if (findings.some(finding => finding.severity === "block")) {
           message = `BLOCK BYPASSED — a rule configured as "block" reached the after hook; the change was not stopped.\n\n${message}`
         }
         if (bypassNotes.length > 0) {
-          const footer = `Test guard bypass recorded:\n${bypassNotes.map(note => `- ${note}`).join("\n")}`
+          const footer = renderBypassFooter("Test guard bypass recorded", bypassNotes)
           message = message.length > 0 ? `${message}\n\n${footer}` : footer
         }
         if (message.length > 0) parts.push(message)
