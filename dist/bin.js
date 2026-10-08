@@ -21,8 +21,7 @@ var EXTENSION_LANGUAGE = {
   ".py": "python",
   ".pyi": "python",
   ".go": "go",
-  ".rs": "rust",
-  ".java": "java"
+  ".rs": "rust"
 };
 function detectLanguage(filePath) {
   const match = filePath.toLowerCase().match(/\.[a-z0-9]+$/);
@@ -77,7 +76,6 @@ var LINE_COMMENT = {
   python: ["#"],
   go: ["//"],
   rust: ["//"],
-  java: ["//"],
   unknown: ["//", "#"]
 };
 function stripComments(text, language) {
@@ -266,9 +264,7 @@ var DEFAULT_TEST_PATTERNS = [
   "**/test_*.py",
   "**/tests/**",
   "**/__tests__/**",
-  "**/*.spec.*",
-  "**/Test*.java",
-  "**/*Test.java"
+  "**/*.spec.*"
 ];
 function isTestPath(filePath, patterns) {
   return matchesAnyGlob(patterns.length > 0 ? patterns : DEFAULT_TEST_PATTERNS, filePath);
@@ -283,8 +279,7 @@ var SKIP_FOCUS_PATTERNS = {
     /\.skipIf\s*\(/
   ],
   go: [/\bt\.Skip(?:f|Now)?\s*\(/],
-  rust: [/#\[ignore\]/],
-  java: [/@Disabled\b/, /@Ignore\b/]
+  rust: [/#\[ignore\]/]
 };
 var CONDITIONAL_SKIP_PATTERNS = [
   /skipif/i,
@@ -339,8 +334,7 @@ var SWALLOWED_ERROR_PATTERNS = {
   js: [/catch\s*(?:\([^)]*\))?\s*\{\s*\}/],
   ts: [/catch\s*(?:\([^)]*\))?\s*\{\s*\}/],
   python: [/except\s+(?:Exception|BaseException)?\s*:\s*pass\b/],
-  rust: [/Err\(_\)\s*=>\s*(?:\{\s*\}|\(\))/],
-  java: [/catch\s*\([^)]*\)\s*\{\s*\}/]
+  rust: [/Err\(_\)\s*=>\s*(?:\{\s*\}|\(\))/]
 };
 var MOCK_IDENTIFIER_PATTERNS = [
   /\b(?:dummy|stub|mock|spy|fake)[A-Za-z0-9_]*\b/i,
@@ -369,8 +363,7 @@ var TEST_DECLARATION_PATTERNS = {
   ts: /(?:^|[^\w.])(?:it|test|describe)(?:\.(?:skip|only|todo|each|concurrent))?\s*\(/,
   python: /^\s*(?:async\s+)?def\s+test_\w*\s*\(/,
   go: /^\s*func\s+Test\w*\s*\(/,
-  rust: /#\[test\]/,
-  java: /@Test\b/
+  rust: /#\[test\]/
 };
 var HELPER_DECLARATION_PATTERNS = [
   /^\s*def\s+(?!test_)\w+\s*\(/,

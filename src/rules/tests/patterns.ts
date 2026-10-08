@@ -9,7 +9,6 @@
 //   not be used.
 // - Linter rule ids reused: jest/no-disabled-tests, jest/expect-expect,
 //   ruff/flake8-pytest-style PT015/PT018/B011, SonarJS S1607, SonarQube S2699.
-// Java patterns are home-grown and unvalidated (prior art does not cover Java).
 
 import type { Language } from "../../core/diff"
 import { matchesAnyGlob } from "../../core/glob"
@@ -21,8 +20,6 @@ export const DEFAULT_TEST_PATTERNS = [
   "**/tests/**",
   "**/__tests__/**",
   "**/*.spec.*",
-  "**/Test*.java",
-  "**/*Test.java",
 ]
 
 export function isTestPath(filePath: string, patterns: string[]): boolean {
@@ -41,7 +38,6 @@ export const SKIP_FOCUS_PATTERNS: Partial<Record<Language, RegExp[]>> = {
   ],
   go: [/\bt\.Skip(?:f|Now)?\s*\(/],
   rust: [/#\[ignore\]/],
-  java: [/@Disabled\b/, /@Ignore\b/],
 }
 
 // Conditional skips that must NOT be flagged: skipif / skipIf / skipIfUnless,
@@ -114,7 +110,6 @@ export const SWALLOWED_ERROR_PATTERNS: Partial<Record<Language, RegExp[]>> = {
   ts: [/catch\s*(?:\([^)]*\))?\s*\{\s*\}/],
   python: [/except\s+(?:Exception|BaseException)?\s*:\s*pass\b/],
   rust: [/Err\(_\)\s*=>\s*(?:\{\s*\}|\(\))/],
-  java: [/catch\s*\([^)]*\)\s*\{\s*\}/],
 }
 
 export const MOCK_IDENTIFIER_PATTERNS: RegExp[] = [
@@ -148,7 +143,6 @@ export const TEST_DECLARATION_PATTERNS: Partial<Record<Language, RegExp>> = {
   python: /^\s*(?:async\s+)?def\s+test_\w*\s*\(/,
   go: /^\s*func\s+Test\w*\s*\(/,
   rust: /#\[test\]/,
-  java: /@Test\b/,
 }
 
 export const HELPER_DECLARATION_PATTERNS: RegExp[] = [
