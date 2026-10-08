@@ -25,6 +25,7 @@ export interface ResolvedTestGuard {
   testCommand?: string | null
   checks: Record<string, Severity>
   maxWarningsPerFile: number
+  netAssertionLossThreshold: number
   customPrompt?: string
   appendPrompt?: string
 }
@@ -51,6 +52,7 @@ const DEFAULT_TEST_GUARD: ResolvedTestGuard = {
   testPatterns: [],
   checks: {},
   maxWarningsPerFile: 0,
+  netAssertionLossThreshold: 2,
 }
 
 export interface TestGuard {

@@ -1046,6 +1046,21 @@ function blocksOf(ctx) {
 function countAssertionsCode(lines, language) {
   return countAssertions(lines.map((line) => codeText(line, language)));
 }
+function normalizeAssertion(code) {
+  return code.replace(/\s+/g, "").replace(/self\.(?=assert)/g, "").replace(/assertEqual/gi, "assertEquals").replace(/\.toBe\b/g, ".toEqual");
+}
+function uniqueAssertions(lines, language) {
+  const set = new Set;
+  for (const line of lines) {
+    const code = codeText(line, language).trim();
+    if (code.length === 0)
+      continue;
+    if (!ASSERTION_COUNT_PATTERNS.some((pattern) => pattern.test(code)))
+      continue;
+    set.add(normalizeAssertion(code));
+  }
+  return [...set];
+}
 function multiset(lines) {
   const map = new Map;
   for (const line of lines)
@@ -1159,9 +1174,10 @@ var netAssertionLossRule = {
   run(ctx) {
     if (ctx.change.removedLines.length === 0)
       return [];
-    const removed = countAssertionsCode(ctx.change.removedLines, ctx.change.language);
-    const added = countAssertionsCode(ctx.change.addedLines, ctx.change.language);
-    if (removed - added < 2)
+    const removed = uniqueAssertions(ctx.change.removedLines, ctx.change.language).length;
+    const added = uniqueAssertions(ctx.change.addedLines, ctx.change.language).length;
+    const threshold = ctx.config.netAssertionLossThreshold ?? 2;
+    if (removed - added < threshold)
       return [];
     const learned = ctx.change.addedLines.some((line) => HELPER_DECLARATION_PATTERNS.some((p) => p.test(codeText(line, ctx.change.language))));
     if (learned)
@@ -1186,8 +1202,8 @@ var netAssertionLossRule = {
 var guttedTestRule = {
   id: "gutted-test",
   run(ctx) {
-    const removed = countAssertionsCode(ctx.change.removedLines, ctx.change.language);
-    const added = countAssertionsCode(ctx.change.addedLines, ctx.change.language);
+    const removed = uniqueAssertions(ctx.change.removedLines, ctx.change.language).length;
+    const added = uniqueAssertions(ctx.change.addedLines, ctx.change.language).length;
     if (removed <= 0 || added !== 0)
       return [];
     const declarations = TEST_DECLARATION_PATTERNS[ctx.change.language];
@@ -1629,7 +1645,8 @@ var DEFAULT_TEST_GUARD = {
   enabled: true,
   testPatterns: [],
   checks: {},
-  maxWarningsPerFile: 0
+  maxWarningsPerFile: 0,
+  netAssertionLossThreshold: 2
 };
 var PATCH_ENTRY = /^\*\*\* (Add|Update|Delete) File:\s*(.+?)\s*$/gm;
 function extractPatchEntries(patchText) {
@@ -2387,7 +2404,8 @@ var resolvedTestGuard = {
   testPatterns: [...DEFAULT_TEST_PATTERNS],
   testCommand: null,
   checks: { ...DEFAULT_TEST_CHECKS },
-  maxWarningsPerFile: 0
+  maxWarningsPerFile: 0,
+  netAssertionLossThreshold: 2
 };
 function resolveTestGuardConfiguration(config) {
   const options = optionContainer(pluginOptions, "test_guard");
@@ -2401,6 +2419,7 @@ function resolveTestGuardConfiguration(config) {
   resolvedTestGuard.customPrompt = resolveOption(asString, "TEST_GUARD_CUSTOM_PROMPT", "custom_prompt", { options, config: fromConfig });
   resolvedTestGuard.appendPrompt = resolveOption(asString, "TEST_GUARD_APPEND_PROMPT", "append_prompt", { options, config: fromConfig });
   resolvedTestGuard.testCommand = resolveOption(asString, "TEST_GUARD_TEST_COMMAND", "test_command", { options, config: fromConfig }) ?? detectTestCommand(projectDirectory);
+  resolvedTestGuard.netAssertionLossThreshold = resolveOption((value) => asCount(value, 1), "TEST_GUARD_NET_ASSERTION_LOSS_THRESHOLD", "net_assertion_loss_threshold", { options, config: fromConfig }) ?? 2;
   resolvedTestGuard.checks = resolveRuleConfig(DEFAULT_TEST_CHECKS, {
     envPrefix: "TEST_GUARD_",
     options,
