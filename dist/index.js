@@ -1615,6 +1615,7 @@ function debugLog3(...args) {
 `;
   process.stderr.write(msg);
 }
+var DEFAULT_TEST_TRIGGER_TOOLS = new Set(DEFAULT_TRIGGER_TOOLS);
 var DEFAULT_TEST_GUARD = {
   enabled: true,
   testPatterns: [],
@@ -1655,6 +1656,9 @@ function createTestGuard(getResolved) {
   function isProtectedPath(filePath, patterns) {
     return isTestPath(filePath, patterns);
   }
+  function triggersTool(resolved, toolLower) {
+    return (resolved.triggerTools ?? DEFAULT_TEST_TRIGGER_TOOLS).has(toolLower);
+  }
   function pathExists(filePath) {
     try {
       return existsSync3(filePath) || existsSync3(join3(process.cwd(), filePath));
@@ -1694,6 +1698,8 @@ function createTestGuard(getResolved) {
       const toolLower = input.tool.toLowerCase();
       const args = output.args ?? {};
       const patterns = resolved.testPatterns.length > 0 ? resolved.testPatterns : [];
+      if (!triggersTool(resolved, toolLower))
+        return;
       if (isBlocking()) {
         if (toolLower === APPLY_PATCH_TOOL_NAME) {
           const patchText = firstString(args, "patchText", "patch", "patch_text") ?? "";
@@ -1738,9 +1744,9 @@ function createTestGuard(getResolved) {
       let changes = [];
       const failed = output.output.toLowerCase().startsWith("error");
       if (toolLower === APPLY_PATCH_TOOL_NAME) {
-        if (!failed)
+        if (triggersTool(resolved, APPLY_PATCH_TOOL_NAME) && !failed)
           changes = extractPatchChanges(output.metadata);
-      } else {
+      } else if (triggersTool(resolved, toolLower)) {
         const call = pending.get(input.callID);
         pending.delete(input.callID);
         if (call && !failed) {
@@ -1748,6 +1754,8 @@ function createTestGuard(getResolved) {
           if (change)
             changes.push(change);
         }
+      } else {
+        pending.delete(input.callID);
       }
       const parts = [];
       if (changes.length > 0) {
@@ -2886,7 +2894,8 @@ var resolvedTestGuard = {
   testPatterns: [...DEFAULT_TEST_PATTERNS],
   testCommand: null,
   checks: { ...DEFAULT_TEST_CHECKS },
-  maxWarningsPerFile: 0
+  maxWarningsPerFile: 0,
+  triggerTools: new Set(DEFAULT_TRIGGER_TOOLS)
 };
 var resolvedMutation = { enabled: false };
 var resolvedJudge = { enabled: false };
@@ -2900,6 +2909,8 @@ function resolveTestGuardConfiguration(config) {
     options,
     config: fromConfig
   }) ?? 0;
+  const testTools = resolveOption(asTools, "TEST_GUARD_TOOLS", "tools", { options, config: fromConfig });
+  resolvedTestGuard.triggerTools = new Set(testTools ?? DEFAULT_TRIGGER_TOOLS);
   resolvedTestGuard.customPrompt = resolveOption(asString, "TEST_GUARD_CUSTOM_PROMPT", "custom_prompt", { options, config: fromConfig });
   resolvedTestGuard.appendPrompt = resolveOption(asString, "TEST_GUARD_APPEND_PROMPT", "append_prompt", { options, config: fromConfig });
   resolvedTestGuard.testCommand = resolveOption(asString, "TEST_GUARD_TEST_COMMAND", "test_command", { options, config: fromConfig }) ?? detectTestCommand(projectDirectory);

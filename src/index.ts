@@ -81,6 +81,7 @@ const resolvedTestGuard: ResolvedTestGuard = {
   testCommand: null,
   checks: { ...DEFAULT_TEST_CHECKS },
   maxWarningsPerFile: 0,
+  triggerTools: new Set(DEFAULT_TRIGGER_TOOLS),
 }
 
 const resolvedMutation: MutationConfig = { enabled: false }
@@ -108,6 +109,9 @@ function resolveTestGuardConfiguration(config?: unknown): void {
       options,
       config: fromConfig,
     }) ?? 0
+
+  const testTools = resolveOption(asTools, "TEST_GUARD_TOOLS", "tools", { options, config: fromConfig })
+  resolvedTestGuard.triggerTools = new Set(testTools ?? DEFAULT_TRIGGER_TOOLS)
 
   resolvedTestGuard.customPrompt = resolveOption(
     asString,
