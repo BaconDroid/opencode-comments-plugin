@@ -138,4 +138,5 @@ test("judge controller does nothing when disabled", async () => {
     runner: async () => "[]",
   })
   expect(await judge.onIdle("s1")).toBeNull()
+  expect(await judge.judgeNow()).toContain("disabled")
 })
