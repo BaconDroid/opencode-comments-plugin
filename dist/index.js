@@ -854,11 +854,6 @@ ${message}`;
 }
 
 // src/core/mutation.ts
-function asRecord2(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    return;
-  return value;
-}
 function isSurvivor(status) {
   const normalized = status.toLowerCase();
   return normalized === "survived" || normalized === "nocoverage" || normalized === "no coverage" || normalized === "timeout";
@@ -870,26 +865,26 @@ function parseMutationReport(raw) {
   } catch {
     return [];
   }
-  const root = asRecord2(parsed);
+  const root = asRecord(parsed);
   if (!root)
     return [];
   const files = root.files;
-  if (Array.isArray(files) || asRecord2(files)) {
+  if (Array.isArray(files) || asRecord(files)) {
     const survivors = [];
-    const entries = Array.isArray(files) ? files.map((file) => [asRecord2(file)?.file, file]) : Object.entries(asRecord2(files));
+    const entries = Array.isArray(files) ? files.map((file) => [asRecord(file)?.file, file]) : Object.entries(asRecord(files));
     for (const [name, file] of entries) {
-      const entry = asRecord2(file);
+      const entry = asRecord(file);
       if (!entry || !Array.isArray(entry.mutants))
         continue;
       for (const mutant of entry.mutants) {
-        const record = asRecord2(mutant);
+        const record = asRecord(mutant);
         if (!record)
           continue;
         const status = typeof record.status === "string" ? record.status : "";
         if (!isSurvivor(status))
           continue;
-        const location = asRecord2(record.location);
-        const start = location ? asRecord2(location.start) : undefined;
+        const location = asRecord(record.location);
+        const start = location ? asRecord(location.start) : undefined;
         survivors.push({
           file: typeof entry.file === "string" ? entry.file : name,
           line: start && typeof start.line === "number" ? start.line : undefined,
@@ -903,7 +898,7 @@ function parseMutationReport(raw) {
   if (Array.isArray(root.survivors)) {
     const survivors = [];
     for (const item of root.survivors) {
-      const record = asRecord2(item);
+      const record = asRecord(item);
       if (!record)
         continue;
       survivors.push({
@@ -1697,6 +1692,14 @@ var ADVISORY_RULES = [
 
 // src/rules/tests/index.ts
 var ALL_TEST_RULES = [...DETERMINISTIC_RULES, ...ADVISORY_RULES];
+function buildRuleChecks(includeAdvisory) {
+  const checks = {};
+  for (const rule of DETERMINISTIC_RULES)
+    checks[rule.id] = "warn";
+  for (const rule of ADVISORY_RULES)
+    checks[rule.id] = includeAdvisory ? "warn" : "off";
+  return checks;
+}
 function runTestRules(ctx) {
   if (!ctx.isTestFile)
     return { findings: [], bypassed: false, bypasses: [] };
@@ -1884,7 +1887,7 @@ function createTestGuard(getResolved) {
           const ctx = {
             change,
             isTestFile,
-            config: { ...resolved, testPatterns: resolved.testPatterns, testCommand: resolved.testCommand ?? null }
+            config: { ...resolved, testCommand: resolved.testCommand ?? null }
           };
           const result = runTestRules(ctx);
           for (const bypass of result.bypasses) {
@@ -2309,11 +2312,7 @@ function auditTestFile(file, includeAdvisory) {
     isNew: true,
     isDelete: false
   });
-  const checks = {};
-  for (const rule of ALL_TEST_RULES) {
-    const advisory = rule.id === "over-mocking" || rule.id === "assertion-roulette" || rule.id === "weakened-config" || rule.id === "redundant-assertion" || rule.id === "tests-not-run";
-    checks[rule.id] = advisory && !includeAdvisory ? "off" : "warn";
-  }
+  const checks = buildRuleChecks(includeAdvisory);
   const ctx = {
     change,
     isTestFile: true,

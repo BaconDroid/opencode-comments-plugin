@@ -239,42 +239,42 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
         const findings: Finding[] = []
         const bypassNotes: string[] = []
         for (const change of changes) {
-        const isTestFile = isProtectedPath(change.filePath, resolved.testPatterns)
-        const ctx: RuleContext = {
-          change,
-          isTestFile,
-          config: { ...resolved, testPatterns: resolved.testPatterns, testCommand: resolved.testCommand ?? null },
-        }
-        const result = runTestRules(ctx)
-        for (const bypass of result.bypasses) {
-          debugLog("bypass", change.filePath, bypass)
-          bypassNotes.push(`${change.filePath}:${bypass.line} ${bypass.kind}${bypass.reason ? ` (${bypass.reason})` : ""}`)
-        }
+          const isTestFile = isProtectedPath(change.filePath, resolved.testPatterns)
+          const ctx: RuleContext = {
+            change,
+            isTestFile,
+            config: { ...resolved, testCommand: resolved.testCommand ?? null },
+          }
+          const result = runTestRules(ctx)
+          for (const bypass of result.bypasses) {
+            debugLog("bypass", change.filePath, bypass)
+            bypassNotes.push(`${change.filePath}:${bypass.line} ${bypass.kind}${bypass.reason ? ` (${bypass.reason})` : ""}`)
+          }
 
-        const grouped = new Map<string, typeof result.findings>()
-        for (const finding of result.findings) {
-          const list = grouped.get(finding.rule) ?? []
-          list.push(finding)
-          grouped.set(finding.rule, list)
-        }
+          const grouped = new Map<string, typeof result.findings>()
+          for (const finding of result.findings) {
+            const list = grouped.get(finding.rule) ?? []
+            list.push(finding)
+            grouped.set(finding.rule, list)
+          }
 
-        for (const [rule, ruleFindings] of grouped) {
-          const level = resolved.checks[rule] ?? "off"
-          if (level === "off") continue
-          if (!budget.shouldEmit(input.sessionID, rule, change.filePath)) continue
-          budget.record(input.sessionID, change.filePath)
-          for (const finding of ruleFindings) {
-            findings.push({
-              rule: finding.rule,
-              filePath: change.filePath,
-              line: finding.line,
-              message: finding.message,
-              severity: level,
-              excerpt: finding.excerpt,
-            })
+          for (const [rule, ruleFindings] of grouped) {
+            const level = resolved.checks[rule] ?? "off"
+            if (level === "off") continue
+            if (!budget.shouldEmit(input.sessionID, rule, change.filePath)) continue
+            budget.record(input.sessionID, change.filePath)
+            for (const finding of ruleFindings) {
+              findings.push({
+                rule: finding.rule,
+                filePath: change.filePath,
+                line: finding.line,
+                message: finding.message,
+                severity: level,
+                excerpt: finding.excerpt,
+              })
+            }
           }
         }
-      }
 
         let message = findings.length > 0
           ? renderFeedback(findings, { customPrompt: resolved.customPrompt, appendPrompt: resolved.appendPrompt })

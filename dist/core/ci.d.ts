@@ -1,4 +1,3 @@
-import type { Severity } from "./config";
 import { type ExtractedChange } from "./diff";
 import { type Finding } from "./feedback";
 export declare function diffChanges(directory: string, base: string): ExtractedChange[];
@@ -13,5 +12,4 @@ export interface DiffCheckResult {
     output: string;
     findings: Finding[];
 }
-export declare function buildChecks(includeAdvisory: boolean): Record<string, Severity>;
 export declare function runDiffCheck(options: DiffCheckOptions): DiffCheckResult;

@@ -2,6 +2,7 @@
 // mutation engine: it runs a user-configured command and parses its report.
 // Opt-in, fail-open, never destructive.
 
+import { asRecord } from "./config"
 import { runProcess } from "./runner"
 
 export interface MutationSurvivor {
@@ -15,11 +16,6 @@ export interface MutationRun {
   ran: boolean
   survivors: MutationSurvivor[]
   error?: string
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
-  return value as Record<string, unknown>
 }
 
 function isSurvivor(status: string): boolean {

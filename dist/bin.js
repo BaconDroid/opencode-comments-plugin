@@ -967,6 +967,14 @@ var ADVISORY_RULES = [
 
 // src/rules/tests/index.ts
 var ALL_TEST_RULES = [...DETERMINISTIC_RULES, ...ADVISORY_RULES];
+function buildRuleChecks(includeAdvisory) {
+  const checks = {};
+  for (const rule of DETERMINISTIC_RULES)
+    checks[rule.id] = "warn";
+  for (const rule of ADVISORY_RULES)
+    checks[rule.id] = includeAdvisory ? "warn" : "off";
+  return checks;
+}
 function runTestRules(ctx) {
   if (!ctx.isTestFile)
     return { findings: [], bypassed: false, bypasses: [] };
@@ -1066,19 +1074,11 @@ function isMovedTest(change, addedByFile) {
       return false;
   return true;
 }
-function buildChecks(includeAdvisory) {
-  const checks = {};
-  for (const rule of DETERMINISTIC_RULES)
-    checks[rule.id] = "warn";
-  for (const rule of ADVISORY_RULES)
-    checks[rule.id] = includeAdvisory ? "warn" : "off";
-  return checks;
-}
 function runDiffCheck(options) {
   const directory = options.directory;
   const base = options.base ?? "HEAD";
   const testPatterns = options.testPatterns && options.testPatterns.length > 0 ? options.testPatterns : [...DEFAULT_TEST_PATTERNS];
-  const checks = buildChecks(options.includeAdvisory ?? false);
+  const checks = buildRuleChecks(options.includeAdvisory ?? false);
   const changes = diffChanges(directory, base).filter((change) => isSupportedLanguage(change.language) && isTestPath(change.filePath, testPatterns));
   const addedByFile = new Map;
   for (const change of changes)
@@ -1814,11 +1814,7 @@ function auditTestFile(file, includeAdvisory) {
     isNew: true,
     isDelete: false
   });
-  const checks = {};
-  for (const rule of ALL_TEST_RULES) {
-    const advisory = rule.id === "over-mocking" || rule.id === "assertion-roulette" || rule.id === "weakened-config" || rule.id === "redundant-assertion" || rule.id === "tests-not-run";
-    checks[rule.id] = advisory && !includeAdvisory ? "off" : "warn";
-  }
+  const checks = buildRuleChecks(includeAdvisory);
   const ctx = {
     change,
     isTestFile: true,
