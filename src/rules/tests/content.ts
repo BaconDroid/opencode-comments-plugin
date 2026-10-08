@@ -23,8 +23,8 @@ import {
 } from "./patterns"
 import type { RuleContext, RuleFinding, TestBlock, TestRule } from "./types"
 
-export const ALLOW_MARKER = /test-guard:\s*allow\b/i
-export const DISABLE_FILE_MARKER = /test-guard-disable-file\b/i
+const ALLOW_MARKER = /test-guard:\s*allow\b/i
+const DISABLE_FILE_MARKER = /test-guard-disable-file\b/i
 const BYPASS_WINDOW = 2
 
 function codeText(line: string, language: Language): string {

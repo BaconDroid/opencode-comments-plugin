@@ -1,81 +1,9 @@
-// JSON schema for the plugin tuple options plus a tiny zero-dependency
-// validator used by `guard validate-config`.
+// Zero-dependency validator for the plugin tuple options, used by
+// `guard validate-config`.
 
 import { asCount, asLevel, asPatterns, asString, asTools } from "./config"
 
 const SEVERITY = ["off", "warn", "block"]
-
-export const TUPLE_OPTIONS_SCHEMA = {
-  $schema: "http://json-schema.org/draft-07/schema#",
-  title: "opencode-comments-plugin options",
-  type: "object",
-  properties: {
-    comment_checker: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        custom_prompt: { type: "string" },
-        append_prompt: { type: "string" },
-        max_warnings_per_file: { type: "integer", minimum: 0 },
-        tools: { oneOf: [{ type: "array", items: { type: "string" } }, { type: "string" }] },
-        timeout_ms: { type: "integer", minimum: 1 },
-        judge: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            enabled: { type: "boolean" },
-            model: { type: "string" },
-            timeout_ms: { type: "integer", minimum: 1 },
-          },
-        },
-      },
-    },
-    test_guard: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        enabled: { type: "boolean" },
-        test_patterns: { oneOf: [{ type: "array", items: { type: "string" } }, { type: "string" }] },
-        test_command: { type: ["string", "null"] },
-        checks: {
-          type: "object",
-          additionalProperties: { type: "string", enum: SEVERITY },
-        },
-        max_warnings_per_file: { type: "integer", minimum: 0 },
-        custom_prompt: { type: "string" },
-        append_prompt: { type: "string" },
-        tools: { oneOf: [{ type: "array", items: { type: "string" } }, { type: "string" }] },
-        mutation: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            enabled: { type: "boolean" },
-            command: { type: "string" },
-            timeout_ms: { type: "integer", minimum: 1 },
-          },
-        },
-        judge: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            enabled: { type: "boolean" },
-            model: { type: "string" },
-            timeout_ms: { type: "integer", minimum: 1 },
-          },
-        },
-        parser: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            enabled: { type: "boolean" },
-            command: { type: "string" },
-            timeout_ms: { type: "integer", minimum: 1 },
-          },
-        },
-      },
-    },
-  },
-} as const
 
 export interface ValidationResult {
   valid: boolean

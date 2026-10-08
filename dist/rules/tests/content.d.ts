@@ -1,7 +1,5 @@
 import { type ExtractedChange, type Language } from "../../core/diff";
 import type { TestBlock, TestRule } from "./types";
-export declare const ALLOW_MARKER: RegExp;
-export declare const DISABLE_FILE_MARKER: RegExp;
 export declare function isFileDisabled(change: ExtractedChange): boolean;
 export interface Bypass {
     kind: "allow" | "disable-file";
