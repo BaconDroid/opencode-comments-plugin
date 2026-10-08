@@ -11,10 +11,18 @@ export interface TestGuardConfig {
   appendPrompt?: string
 }
 
+export interface TestBlock {
+  startLine: number
+  endLine: number
+  lines: string[]
+}
+
 export interface RuleContext {
   change: ExtractedChange
   isTestFile: boolean
   config: TestGuardConfig
+  // Computed once per file by runTestRules so whole-body rules do not re-parse.
+  blocks?: TestBlock[]
 }
 
 export interface RuleFinding {

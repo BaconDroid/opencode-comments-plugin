@@ -9,10 +9,16 @@ export interface TestGuardConfig {
     customPrompt?: string;
     appendPrompt?: string;
 }
+export interface TestBlock {
+    startLine: number;
+    endLine: number;
+    lines: string[];
+}
 export interface RuleContext {
     change: ExtractedChange;
     isTestFile: boolean;
     config: TestGuardConfig;
+    blocks?: TestBlock[];
 }
 export interface RuleFinding {
     rule: string;

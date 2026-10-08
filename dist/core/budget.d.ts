@@ -9,7 +9,6 @@ export declare class GuardBudget {
     private maxWarningsPerFile;
     private readonly seen;
     private readonly perFile;
-    private readonly inFlight;
     constructor(options?: BudgetOptions);
     setMaxWarningsPerFile(value: number): void;
     private key;
@@ -17,5 +16,4 @@ export declare class GuardBudget {
     cleanup(now?: number): void;
     shouldEmit(sessionID: string, ruleID: string, filePath: string, now?: number): boolean;
     record(sessionID: string, filePath: string): void;
-    singleFlight<T>(sessionID: string, ruleID: string, filePath: string, fn: () => Promise<T>): Promise<T>;
 }

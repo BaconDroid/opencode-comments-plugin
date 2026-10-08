@@ -20,7 +20,6 @@ export class GuardBudget {
   private maxWarningsPerFile: number
   private readonly seen = new Map<string, number>()
   private readonly perFile = new Map<string, Counter>()
-  private readonly inFlight = new Map<string, Promise<unknown>>()
 
   constructor(options: BudgetOptions = {}) {
     this.dedupWindowMs = options.dedupWindowMs ?? 30_000
@@ -74,17 +73,5 @@ export class GuardBudget {
     } else {
       this.perFile.set(key, { count: 1, lastSeen: Date.now() })
     }
-  }
-
-  // Single-flight: concurrent calls for the same key share one promise.
-  async singleFlight<T>(sessionID: string, ruleID: string, filePath: string, fn: () => Promise<T>): Promise<T> {
-    const key = this.key(sessionID, ruleID, filePath)
-    const existing = this.inFlight.get(key)
-    if (existing) return existing as Promise<T>
-    const promise = fn().finally(() => {
-      this.inFlight.delete(key)
-    })
-    this.inFlight.set(key, promise)
-    return promise
   }
 }

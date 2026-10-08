@@ -67,10 +67,6 @@ export function asLevel(value: unknown): Severity | undefined {
   return undefined
 }
 
-export function envName(prefix: string, suffix: string): string {
-  return `${prefix}${suffix}`
-}
-
 export interface ResolveInputs {
   options?: Record<string, unknown>
   config?: Record<string, unknown>
