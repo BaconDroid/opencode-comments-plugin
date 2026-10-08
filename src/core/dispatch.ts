@@ -75,8 +75,10 @@ export interface TestGuard {
   before(input: BeforeInput, output: { args: Record<string, unknown> }): void
   after(input: BeforeInput, output: AfterOutput): Promise<void>
   permission(input: PermissionLike, output: PermissionDecision): void
-  onIdle(): Promise<void>
+  onIdle(sessionID?: string): Promise<void>
 }
+
+const MUTATION_COOLDOWN_MS = 60_000
 
 const PATCH_ENTRY = /^\*\*\* (Add|Update|Delete) File:\s*(.+?)\s*$/gm
 
@@ -94,6 +96,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
   const budget = new GuardBudget()
   const pending = new Map<string, PendingGuardCall>()
   let pendingMutation = ""
+  const lastMutation = new Map<string, number>()
 
   function consumePendingMutation(): string {
     const message = pendingMutation
@@ -151,10 +154,14 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
 
   // Runs the opt-in mutation adapter on session.idle and queues the survivors
   // for the next tool call's output (there is no output channel on idle).
-  async function onIdle(): Promise<void> {
+  // Cooldown per session so a burst of idle events does not rerun the tool.
+  async function onIdle(sessionID = ""): Promise<void> {
     try {
       const resolved = resolve()
       if (!resolved.enabled || !resolved.mutationEnabled || !resolved.mutationCommand) return
+      const now = Date.now()
+      if (now - (lastMutation.get(sessionID) ?? 0) < MUTATION_COOLDOWN_MS) return
+      lastMutation.set(sessionID, now)
       const run = await runMutationCheck(resolved.mutationCommand, { timeoutMs: resolved.mutationTimeoutMs })
       if (!run.ran || run.survivors.length === 0) return
       debugLog("mutation survivors:", run.survivors.length)

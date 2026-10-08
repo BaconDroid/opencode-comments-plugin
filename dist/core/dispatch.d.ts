@@ -35,7 +35,7 @@ export interface TestGuard {
     }): void;
     after(input: BeforeInput, output: AfterOutput): Promise<void>;
     permission(input: PermissionLike, output: PermissionDecision): void;
-    onIdle(): Promise<void>;
+    onIdle(sessionID?: string): Promise<void>;
 }
 export declare function extractPatchEntries(patchText: string): Array<{
     kind: string;

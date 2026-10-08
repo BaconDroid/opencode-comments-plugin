@@ -172,10 +172,11 @@ Env vars mirror the comment guard: `TEST_GUARD_ENABLED`,
 ### Mutation (opt-in, phase 2)
 
 The plugin does not bundle a mutation engine. If `mutation.enabled` is set with
-a `mutation.command` (Stryker, mutmut, PIT, …), it runs on `session.idle`,
-parses the report (Stryker JSON `files[].mutants[]` or a generic
-`{ "survivors": [...] }`) and queues the survivors for the next tool call's
-output. Disabled by default, fail-open, never runs a destructive command.
+a `mutation.command` (Stryker, mutmut, PIT, …), it runs on `session.idle`
+(at most once per minute per session), parses the report (Stryker JSON
+`files[].mutants[]` or a generic `{ "survivors": [...] }`) and queues the
+survivors for the next tool call's output. Disabled by default, fail-open,
+never runs a destructive command.
 
 ### Audit
 

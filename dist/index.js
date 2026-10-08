@@ -1737,6 +1737,7 @@ var DEFAULT_TEST_GUARD = {
   netAssertionLossThreshold: 2,
   mutationEnabled: false
 };
+var MUTATION_COOLDOWN_MS = 60000;
 var PATCH_ENTRY = /^\*\*\* (Add|Update|Delete) File:\s*(.+?)\s*$/gm;
 function extractPatchEntries(patchText) {
   const entries = [];
@@ -1751,6 +1752,7 @@ function createTestGuard(getResolved) {
   const budget = new GuardBudget;
   const pending = new Map;
   let pendingMutation = "";
+  const lastMutation = new Map;
   function consumePendingMutation() {
     const message = pendingMutation;
     pendingMutation = "";
@@ -1800,11 +1802,15 @@ function createTestGuard(getResolved) {
       debugLog3("permission failed (fail-open):", err);
     }
   }
-  async function onIdle() {
+  async function onIdle(sessionID = "") {
     try {
       const resolved = resolve();
       if (!resolved.enabled || !resolved.mutationEnabled || !resolved.mutationCommand)
         return;
+      const now = Date.now();
+      if (now - (lastMutation.get(sessionID) ?? 0) < MUTATION_COOLDOWN_MS)
+        return;
+      lastMutation.set(sessionID, now);
       const run = await runMutationCheck(resolved.mutationCommand, { timeoutMs: resolved.mutationTimeoutMs });
       if (!run.ran || run.survivors.length === 0)
         return;
@@ -2617,7 +2623,7 @@ var CommentCheckerPlugin = async (input, options) => {
     },
     event: async ({ event }) => {
       if (event.type === "session.idle")
-        await testGuard.onIdle();
+        await testGuard.onIdle(event.properties?.sessionID);
     },
     "permission.ask": async (input, output) => {
       testGuard.permission(input, output);

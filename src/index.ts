@@ -191,7 +191,7 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
       guard_audit: auditTool,
     },
     event: async ({ event }) => {
-      if (event.type === "session.idle") await testGuard.onIdle()
+      if (event.type === "session.idle") await testGuard.onIdle(event.properties?.sessionID)
     },
     "permission.ask": async (input, output) => {
       testGuard.permission(input, output)
