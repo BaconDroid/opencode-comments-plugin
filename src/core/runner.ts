@@ -13,6 +13,11 @@ export interface RunnerOptions {
   stdin?: string
 }
 
+// Runs a shell command string through the platform shell.
+export function runShellCommand(command: string, options: RunnerOptions = {}): Promise<RunOutcome> {
+  return runProcess(["/bin/sh", "-c", command], options)
+}
+
 export async function runProcess(args: string[], options: RunnerOptions = {}): Promise<RunOutcome> {
   const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_CLI_TIMEOUT_MS
 

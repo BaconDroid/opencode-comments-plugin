@@ -6,7 +6,7 @@ import { changedTestChanges } from "./ci"
 import type { ExtractedChange } from "./diff"
 import { createAdvisoryTool, createIdleAdvisory, type IdleAdvisoryController } from "./idle-advisory"
 import { PLACEHOLDER_PATTERN } from "../rules/tests/patterns"
-import { runProcess } from "./runner"
+import { runShellCommand } from "./runner"
 
 export interface ParserAdapterConfig {
   enabled: boolean
@@ -100,7 +100,7 @@ export function formatParserFindings(findings: ParserFinding[]): string {
 }
 
 async function defaultRun(command: string, payload: string, timeoutMs: number): Promise<string> {
-  const outcome = await runProcess(["/bin/sh", "-c", command], { stdin: payload, timeoutMs })
+  const outcome = await runShellCommand(command, { stdin: payload, timeoutMs })
   return outcome === "timeout" ? "" : outcome.stdout
 }
 
