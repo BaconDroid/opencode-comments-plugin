@@ -7,6 +7,7 @@ export interface ResolvedTestGuard {
     maxWarningsPerFile: number;
     customPrompt?: string;
     appendPrompt?: string;
+    triggerTools?: Set<string>;
 }
 interface BeforeInput {
     tool: string;

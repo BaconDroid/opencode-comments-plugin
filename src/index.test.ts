@@ -557,6 +557,22 @@ test("test guard warns on a focused test without clobbering the output", async (
   expect(output.output.split(TEST_GUARD_MARKER).length - 1).toBe(1)
 })
 
+test("restricts the test guard to the configured tools", async () => {
+  const hooks = await newSession({ comment_checker: { tools: ["none"] }, test_guard: { tools: ["write"] } })
+
+  const editOutput = writeOutput("The file has been updated.")
+  await hooks["tool.execute.before"]({ tool: "edit", sessionID: "s", callID: "tg-tools-e" }, editArgs("/work/a.test.ts", "const a = 1", "it.only('a', () => {})"))
+  await hooks["tool.execute.after"]({ tool: "edit", sessionID: "s", callID: "tg-tools-e" }, editOutput)
+  expect(editOutput.output).toBe("The file has been updated.")
+
+  const writeResult = writeOutput("Wrote file successfully.")
+  await hooks["tool.execute.before"]({ tool: "write", sessionID: "s", callID: "tg-tools-w" }, {
+    args: { filePath: "/work/a.test.ts", content: "it.only('a', () => {\n  expect(1).toBe(1)\n})\n" },
+  })
+  await hooks["tool.execute.after"]({ tool: "write", sessionID: "s", callID: "tg-tools-w" }, writeResult)
+  expect(writeResult.output).toContain("skip-focus-added")
+})
+
 test("denies permission for an existing test file when protected-paths is block", async () => {
   const filePath = join(cacheRoot, "permission.test.ts")
   writeFileSync(filePath, "it('a', () => {})\n")

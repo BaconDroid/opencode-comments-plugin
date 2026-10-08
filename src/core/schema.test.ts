@@ -4,9 +4,15 @@ import { validateTupleOptions } from "./schema"
 test("accepts a valid tuple", () => {
   const result = validateTupleOptions({
     comment_checker: { custom_prompt: "x", max_warnings_per_file: 2 },
-    test_guard: { enabled: true, checks: { "skip-focus-added": "block" } },
+    test_guard: { enabled: true, checks: { "skip-focus-added": "block" }, tools: ["write", "edit"] },
   })
   expect(result).toEqual({ valid: true, errors: [] })
+})
+
+test("rejects a bad test_guard.tools value", () => {
+  const result = validateTupleOptions({ test_guard: { tools: 3 } })
+  expect(result.valid).toBe(false)
+  expect(result.errors.join()).toContain("tools")
 })
 
 test("accepts a null test_command", () => {

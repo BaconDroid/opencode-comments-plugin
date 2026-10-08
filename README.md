@@ -162,8 +162,13 @@ Only added (`+`) lines trigger a finding; comments are stripped before
 counting. Inline bypass: `// test-guard: allow <reason>` (within +/-2 lines) or
 file-level `// test-guard-disable-file`.
 
+`tools` restricts which tools the guard reacts to (default
+`["write","edit","apply_patch"]`), mirroring `comment_checker.tools`. Queued
+advisory notes still surface on the next tool call regardless of this filter.
+
 Env vars mirror the comment guard: `TEST_GUARD_ENABLED`,
-`TEST_GUARD_TEST_PATTERNS`, `TEST_GUARD_MAX_WARNINGS_PER_FILE`,
+`TEST_GUARD_TEST_PATTERNS`, `TEST_GUARD_TOOLS`,
+`TEST_GUARD_MAX_WARNINGS_PER_FILE`,
 `TEST_GUARD_CUSTOM_PROMPT`,
 `TEST_GUARD_APPEND_PROMPT`, `TEST_GUARD_MUTATION_ENABLED`,
 `TEST_GUARD_MUTATION_COMMAND`, `TEST_GUARD_MUTATION_TIMEOUT_MS`,

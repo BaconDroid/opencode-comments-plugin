@@ -70,6 +70,16 @@ export declare const TUPLE_OPTIONS_SCHEMA: {
                 readonly append_prompt: {
                     readonly type: "string";
                 };
+                readonly tools: {
+                    readonly oneOf: readonly [{
+                        readonly type: "array";
+                        readonly items: {
+                            readonly type: "string";
+                        };
+                    }, {
+                        readonly type: "string";
+                    }];
+                };
                 readonly mutation: {
                     readonly type: "object";
                     readonly additionalProperties: false;

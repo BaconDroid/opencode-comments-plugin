@@ -3,7 +3,7 @@
 
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { APPLY_PATCH_TOOL_NAME } from "../constants"
+import { APPLY_PATCH_TOOL_NAME, DEFAULT_TRIGGER_TOOLS } from "../constants"
 import { GuardBudget } from "./budget"
 import type { Severity } from "./config"
 import { extractPatchChanges, extractToolChange, firstString, type ExtractedChange } from "./diff"
@@ -28,7 +28,12 @@ export interface ResolvedTestGuard {
   maxWarningsPerFile: number
   customPrompt?: string
   appendPrompt?: string
+  triggerTools?: Set<string>
 }
+
+// Mirrors `comment_checker.tools`: which tools may produce test-guard findings.
+// Omitted, the guard reacts to every supported tool (legacy behavior).
+const DEFAULT_TEST_TRIGGER_TOOLS = new Set(DEFAULT_TRIGGER_TOOLS)
 
 interface BeforeInput {
   tool: string
@@ -111,6 +116,10 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
     return isTestPath(filePath, patterns)
   }
 
+  function triggersTool(resolved: ResolvedTestGuard, toolLower: string): boolean {
+    return (resolved.triggerTools ?? DEFAULT_TEST_TRIGGER_TOOLS).has(toolLower)
+  }
+
   function pathExists(filePath: string): boolean {
     try {
       return existsSync(filePath) || existsSync(join(process.cwd(), filePath))
@@ -151,6 +160,8 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       const toolLower = input.tool.toLowerCase()
       const args = output.args ?? {}
       const patterns = resolved.testPatterns.length > 0 ? resolved.testPatterns : []
+
+      if (!triggersTool(resolved, toolLower)) return
 
       if (isBlocking()) {
         if (toolLower === APPLY_PATCH_TOOL_NAME) {
@@ -202,14 +213,16 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       const failed = output.output.toLowerCase().startsWith("error")
 
       if (toolLower === APPLY_PATCH_TOOL_NAME) {
-        if (!failed) changes = extractPatchChanges(output.metadata)
-      } else {
+        if (triggersTool(resolved, APPLY_PATCH_TOOL_NAME) && !failed) changes = extractPatchChanges(output.metadata)
+      } else if (triggersTool(resolved, toolLower)) {
         const call = pending.get(input.callID)
         pending.delete(input.callID)
         if (call && !failed) {
           const change = extractToolChange(toolLower, call.args, call.preimage)
           if (change) changes.push(change)
         }
+      } else {
+        pending.delete(input.callID)
       }
 
       const parts: string[] = []

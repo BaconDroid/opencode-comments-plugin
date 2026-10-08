@@ -248,3 +248,37 @@ test("coexists with another plugin without clobbering or duplicating output", as
   expect(output.output).toContain("skip-focus-added")
   expect(output.output.split(TEST_GUARD_MARKER).length - 1).toBe(1)
 })
+
+test("restricts the checked tools with the tools option", async () => {
+  const guard = guarded(config({ triggerTools: new Set(["write"]) }))
+  const editCall = freshCallID()
+  guard.before({ tool: "edit", sessionID: "s1", callID: editCall }, { args: { filePath: "/work/a.test.ts", oldString: "a", newString: "it.only('a', () => {})" } })
+  const editOutput: Output = { title: "", output: "The file has been updated.", metadata: {} }
+  await guard.after({ tool: "edit", sessionID: "s1", callID: editCall }, editOutput)
+  expect(editOutput.output).toBe("The file has been updated.")
+
+  const writeCall = freshCallID()
+  guard.before({ ...INPUT, callID: writeCall }, { args: { filePath: "/work/a.test.ts", content: "it.only('a', () => {\n  expect(1).toBe(1)\n})\n" } })
+  const writeOutput: Output = { title: "", output: "Wrote file successfully.", metadata: {} }
+  await guard.after({ ...INPUT, callID: writeCall }, writeOutput)
+  expect(writeOutput.output).toContain("skip-focus-added")
+})
+
+test("restricts apply_patch when apply_patch is not in the tools option", async () => {
+  const guard = guarded(config({ triggerTools: new Set(["write"]) }))
+  const output: Output = {
+    title: "",
+    output: "Success. Updated the following files:",
+    metadata: { files: [{ type: "update", filePath: "/work/src/a.test.ts", patch: "@@ -1 +1 @@\n-// old\n+it.only('x', () => {})\n" }] },
+  }
+  await guard.after({ tool: "apply_patch", sessionID: "s", callID: freshCallID() }, output)
+  expect(output.output).toBe("Success. Updated the following files:")
+})
+
+test("still surfaces queued notes when the tool is filtered out", async () => {
+  const guard = guarded(config({ triggerTools: new Set(["write"]) }))
+  guard.queueNote("queued advisory")
+  const output: Output = { title: "", output: "bash output", metadata: {} }
+  await guard.after({ tool: "bash", sessionID: "s", callID: freshCallID() }, output)
+  expect(output.output).toContain("queued advisory")
+})

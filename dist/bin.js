@@ -1163,6 +1163,9 @@ function validateTestGuard(record, path, errors) {
   if (record.max_warnings_per_file !== undefined && asCount(record.max_warnings_per_file, 0) === undefined) {
     errors.push(`${path}.max_warnings_per_file must be an integer >= 0`);
   }
+  if (record.tools !== undefined && asTools(record.tools) === undefined) {
+    errors.push(`${path}.tools must be a string array or a comma separated string`);
+  }
   if (record.checks !== undefined) {
     if (!isRecord(record.checks))
       errors.push(`${path}.checks must be an object`);
@@ -1205,6 +1208,7 @@ function validateTestGuard(record, path, errors) {
     "max_warnings_per_file",
     "custom_prompt",
     "append_prompt",
+    "tools",
     "mutation",
     "judge",
     "parser"
