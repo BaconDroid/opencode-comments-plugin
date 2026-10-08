@@ -39,7 +39,11 @@ export const TUPLE_OPTIONS_SCHEMA = {
         mutation: {
           type: "object",
           additionalProperties: false,
-          properties: { enabled: { type: "boolean" } },
+          properties: {
+            enabled: { type: "boolean" },
+            command: { type: "string" },
+            timeout_ms: { type: "integer", minimum: 1 },
+          },
         },
       },
     },
@@ -117,7 +121,10 @@ function validateTestGuard(record: Record<string, unknown>, path: string, errors
   if (record.append_prompt !== undefined && asString(record.append_prompt) === undefined) {
     errors.push(`${path}.append_prompt must be a non-empty string`)
   }
-  if (record.mutation !== undefined && !isRecord(record.mutation)) errors.push(`${path}.mutation must be an object`)
+  if (record.mutation !== undefined) {
+    if (!isRecord(record.mutation)) errors.push(`${path}.mutation must be an object`)
+    else validateMutation(record.mutation, `${path}.mutation`, errors)
+  }
   rejectUnknown(
     record,
     [
@@ -134,6 +141,15 @@ function validateTestGuard(record: Record<string, unknown>, path: string, errors
     path,
     errors,
   )
+}
+
+function validateMutation(record: Record<string, unknown>, path: string, errors: string[]): void {
+  if (record.enabled !== undefined && typeof record.enabled !== "boolean") errors.push(`${path}.enabled must be a boolean`)
+  if (record.command !== undefined && asString(record.command) === undefined) errors.push(`${path}.command must be a non-empty string`)
+  if (record.timeout_ms !== undefined && asCount(record.timeout_ms, 1) === undefined) {
+    errors.push(`${path}.timeout_ms must be an integer >= 1`)
+  }
+  rejectUnknown(record, ["enabled", "command", "timeout_ms"], path, errors)
 }
 
 function rejectUnknown(record: Record<string, unknown>, known: string[], path: string, errors: string[]): void {

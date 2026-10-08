@@ -8,6 +8,7 @@ import { GuardBudget } from "./budget"
 import type { Severity } from "./config"
 import { extractPatchChanges, extractToolChange, firstString, type ExtractedChange } from "./diff"
 import { appendFeedback, renderFeedback, type Finding } from "./feedback"
+import { formatSurvivors, runMutationCheck } from "./mutation"
 import { isTestPath } from "../rules/tests/patterns"
 import { runTestRules } from "../rules/tests"
 import type { RuleContext } from "../rules/tests/types"
@@ -27,6 +28,9 @@ export interface ResolvedTestGuard {
   checks: Record<string, Severity>
   maxWarningsPerFile: number
   netAssertionLossThreshold: number
+  mutationEnabled: boolean
+  mutationCommand?: string
+  mutationTimeoutMs?: number
   customPrompt?: string
   appendPrompt?: string
 }
@@ -54,6 +58,7 @@ const DEFAULT_TEST_GUARD: ResolvedTestGuard = {
   checks: {},
   maxWarningsPerFile: 0,
   netAssertionLossThreshold: 2,
+  mutationEnabled: false,
 }
 
 // Minimal shape of the `permission.ask` hook payload we consume.
@@ -70,6 +75,7 @@ export interface TestGuard {
   before(input: BeforeInput, output: { args: Record<string, unknown> }): void
   after(input: BeforeInput, output: AfterOutput): Promise<void>
   permission(input: PermissionLike, output: PermissionDecision): void
+  onIdle(): Promise<void>
 }
 
 const PATCH_ENTRY = /^\*\*\* (Add|Update|Delete) File:\s*(.+?)\s*$/gm
@@ -87,6 +93,13 @@ export function extractPatchEntries(patchText: string): Array<{ kind: string; pa
 export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard {
   const budget = new GuardBudget()
   const pending = new Map<string, PendingGuardCall>()
+  let pendingMutation = ""
+
+  function consumePendingMutation(): string {
+    const message = pendingMutation
+    pendingMutation = ""
+    return message
+  }
 
   function resolve(): ResolvedTestGuard {
     try {
@@ -133,6 +146,21 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       }
     } catch (err) {
       debugLog("permission failed (fail-open):", err)
+    }
+  }
+
+  // Runs the opt-in mutation adapter on session.idle and queues the survivors
+  // for the next tool call's output (there is no output channel on idle).
+  async function onIdle(): Promise<void> {
+    try {
+      const resolved = resolve()
+      if (!resolved.enabled || !resolved.mutationEnabled || !resolved.mutationCommand) return
+      const run = await runMutationCheck(resolved.mutationCommand, { timeoutMs: resolved.mutationTimeoutMs })
+      if (!run.ran || run.survivors.length === 0) return
+      debugLog("mutation survivors:", run.survivors.length)
+      pendingMutation = formatSurvivors(run.survivors)
+    } catch (err) {
+      debugLog("onIdle failed (fail-open):", err)
     }
   }
 
@@ -188,28 +216,29 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       const resolved = resolve()
       if (!resolved.enabled) return
 
+      const mutationFeedback = consumePendingMutation()
       const toolLower = input.tool.toLowerCase()
       let changes: ExtractedChange[] = []
+      const failed = output.output.toLowerCase().startsWith("error")
 
       if (toolLower === APPLY_PATCH_TOOL_NAME) {
-        if (output.output.toLowerCase().startsWith("error")) return
-        changes = extractPatchChanges(output.metadata)
+        if (!failed) changes = extractPatchChanges(output.metadata)
       } else {
         const call = pending.get(input.callID)
         pending.delete(input.callID)
-        if (!call) return
-        if (output.output.toLowerCase().startsWith("error")) return
-        const change = extractToolChange(toolLower, call.args, call.preimage)
-        if (change) changes.push(change)
+        if (call && !failed) {
+          const change = extractToolChange(toolLower, call.args, call.preimage)
+          if (change) changes.push(change)
+        }
       }
 
-      if (changes.length === 0) return
+      const parts: string[] = []
+      if (changes.length > 0) {
+        budget.setMaxWarningsPerFile(resolved.maxWarningsPerFile)
 
-      budget.setMaxWarningsPerFile(resolved.maxWarningsPerFile)
-
-      const findings: Finding[] = []
-      const bypassNotes: string[] = []
-      for (const change of changes) {
+        const findings: Finding[] = []
+        const bypassNotes: string[] = []
+        for (const change of changes) {
         const isTestFile = isProtectedPath(change.filePath, resolved.testPatterns)
         const ctx: RuleContext = {
           change,
@@ -247,24 +276,28 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
         }
       }
 
-      let message = findings.length > 0
-        ? renderFeedback(findings, { customPrompt: resolved.customPrompt, appendPrompt: resolved.appendPrompt })
-        : ""
-      // A block-configured rule reached the after hook: `before` did not stop
-      // this change (e.g. a sub-agent bypassed it, #5894).
-      if (findings.some(finding => finding.severity === "block")) {
-        message = `BLOCK BYPASSED — a rule configured as "block" reached the after hook; the change was not stopped.\n\n${message}`
+        let message = findings.length > 0
+          ? renderFeedback(findings, { customPrompt: resolved.customPrompt, appendPrompt: resolved.appendPrompt })
+          : ""
+        // A block-configured rule reached the after hook: `before` did not stop
+        // this change (e.g. a sub-agent bypassed it, #5894).
+        if (findings.some(finding => finding.severity === "block")) {
+          message = `BLOCK BYPASSED — a rule configured as "block" reached the after hook; the change was not stopped.\n\n${message}`
+        }
+        if (bypassNotes.length > 0) {
+          const footer = `Test guard bypass recorded:\n${bypassNotes.map(note => `- ${note}`).join("\n")}`
+          message = message.length > 0 ? `${message}\n\n${footer}` : footer
+        }
+        if (message.length > 0) parts.push(message)
       }
-      if (bypassNotes.length > 0) {
-        const footer = `Test guard bypass recorded:\n${bypassNotes.map(note => `- ${note}`).join("\n")}`
-        message = message.length > 0 ? `${message}\n\n${footer}` : footer
-      }
-      if (message.length === 0) return
-      appendFeedback(output, message)
+
+      if (mutationFeedback.length > 0) parts.push(mutationFeedback)
+      if (parts.length === 0) return
+      appendFeedback(output, parts.join("\n\n"))
     } catch (err) {
       debugLog("after failed (fail-open):", err)
     }
   }
 
-  return { before, after, permission }
+  return { before, after, permission, onIdle }
 }

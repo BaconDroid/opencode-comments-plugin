@@ -83,6 +83,7 @@ async function auditCommand(parsed: ParsedArgs): Promise<number> {
       checks: {},
       maxWarningsPerFile: 0,
       netAssertionLossThreshold: 2,
+      mutationEnabled: false,
     }),
   })
   process.stdout.write(`${output}\n`)

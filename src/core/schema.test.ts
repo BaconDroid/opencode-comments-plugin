@@ -33,6 +33,16 @@ test("rejects a zero net_assertion_loss_threshold", () => {
   expect(validateTupleOptions({ test_guard: { net_assertion_loss_threshold: 0 } }).valid).toBe(false)
 })
 
+test("accepts a valid mutation block", () => {
+  expect(
+    validateTupleOptions({ test_guard: { mutation: { enabled: true, command: "npx stryker run", timeout_ms: 60000 } } }).valid,
+  ).toBe(true)
+})
+
+test("rejects an unknown mutation key", () => {
+  expect(validateTupleOptions({ test_guard: { mutation: { nope: 1 } } }).valid).toBe(false)
+})
+
 test("rejects a non-object options value", () => {
   expect(validateTupleOptions([]).valid).toBe(false)
 })

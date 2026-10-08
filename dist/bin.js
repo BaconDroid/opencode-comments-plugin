@@ -1217,8 +1217,12 @@ function validateTestGuard(record, path, errors) {
   if (record.append_prompt !== undefined && asString(record.append_prompt) === undefined) {
     errors.push(`${path}.append_prompt must be a non-empty string`);
   }
-  if (record.mutation !== undefined && !isRecord(record.mutation))
-    errors.push(`${path}.mutation must be an object`);
+  if (record.mutation !== undefined) {
+    if (!isRecord(record.mutation))
+      errors.push(`${path}.mutation must be an object`);
+    else
+      validateMutation(record.mutation, `${path}.mutation`, errors);
+  }
   rejectUnknown(record, [
     "enabled",
     "test_patterns",
@@ -1230,6 +1234,16 @@ function validateTestGuard(record, path, errors) {
     "append_prompt",
     "mutation"
   ], path, errors);
+}
+function validateMutation(record, path, errors) {
+  if (record.enabled !== undefined && typeof record.enabled !== "boolean")
+    errors.push(`${path}.enabled must be a boolean`);
+  if (record.command !== undefined && asString(record.command) === undefined)
+    errors.push(`${path}.command must be a non-empty string`);
+  if (record.timeout_ms !== undefined && asCount(record.timeout_ms, 1) === undefined) {
+    errors.push(`${path}.timeout_ms must be an integer >= 1`);
+  }
+  rejectUnknown(record, ["enabled", "command", "timeout_ms"], path, errors);
 }
 function rejectUnknown(record, known, path, errors) {
   for (const key of Object.keys(record)) {
@@ -2049,7 +2063,8 @@ async function auditCommand(parsed) {
       testCommand: detectTestCommand(process.cwd()),
       checks: {},
       maxWarningsPerFile: 0,
-      netAssertionLossThreshold: 2
+      netAssertionLossThreshold: 2,
+      mutationEnabled: false
     })
   });
   process.stdout.write(`${output}

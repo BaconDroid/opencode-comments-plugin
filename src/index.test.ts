@@ -46,6 +46,7 @@ type AfterOutput = { title: string; output: string; metadata: unknown }
 
 interface CommentCheckerHooks {
   config?: (config: unknown) => Promise<void>
+  event?: (input: { event: { type: string } }) => Promise<void>
   tool?: Record<string, unknown>
   "permission.ask"?: (
     input: { type: string; pattern?: string | string[] },
@@ -560,6 +561,11 @@ test("denies permission for an existing test file when protected-paths is block"
   const output: { status: "ask" | "deny" | "allow" } = { status: "ask" }
   await hooks["permission.ask"]!({ type: "edit", pattern: filePath }, output)
   expect(output.status).toBe("deny")
+})
+
+test("event hook ignores session.idle when mutation is disabled", async () => {
+  const hooks = await newSession({ comment_checker: { tools: ["none"] } })
+  await expect(hooks.event?.({ event: { type: "session.idle" } })).resolves.toBeUndefined()
 })
 
 test("test guard after hook never throws on malformed metadata", async () => {
