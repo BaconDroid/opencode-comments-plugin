@@ -5,6 +5,7 @@ export interface ResolvedTestGuard {
     testCommand?: string | null;
     checks: Record<string, Severity>;
     maxWarningsPerFile: number;
+    dedupWindowMs?: number;
     customPrompt?: string;
     appendPrompt?: string;
     triggerTools?: Set<string>;

@@ -2,6 +2,7 @@ export interface ResolvedCommentConfig {
     customPrompt?: string;
     appendPrompt?: string;
     maxWarningsPerFile: number;
+    dedupWindowMs: number;
     triggerTools: Set<string>;
     timeoutMs: number;
 }

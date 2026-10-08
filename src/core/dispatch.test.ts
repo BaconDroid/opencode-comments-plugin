@@ -287,6 +287,32 @@ test("still surfaces queued notes when the tool is filtered out", async () => {
   expect(output.output).toContain("queued advisory")
 })
 
+test("dedups repeated findings within the window unless the window is zero", async () => {
+  const args = { filePath: "/work/dedup.test.ts", content: "it.only('a', () => {})\n" }
+
+  const deduped = guarded(config())
+  const firstCall = freshCallID()
+  deduped.before({ ...INPUT, callID: firstCall }, { args })
+  const first: Output = { title: "", output: "Wrote file successfully.", metadata: {} }
+  await deduped.after({ ...INPUT, callID: firstCall }, first)
+  expect(first.output).toContain("skip-focus-added")
+
+  const secondCall = freshCallID()
+  deduped.before({ ...INPUT, callID: secondCall }, { args })
+  const second: Output = { title: "", output: "Wrote file successfully.", metadata: {} }
+  await deduped.after({ ...INPUT, callID: secondCall }, second)
+  expect(second.output).toBe("Wrote file successfully.")
+
+  const noDedup = guarded(config({ dedupWindowMs: 0 }))
+  for (let i = 0; i < 2; i++) {
+    const callID = freshCallID()
+    noDedup.before({ ...INPUT, callID }, { args })
+    const output: Output = { title: "", output: "Wrote file successfully.", metadata: {} }
+    await noDedup.after({ ...INPUT, callID }, output)
+    expect(output.output).toContain("skip-focus-added")
+  }
+})
+
 test("does not process a pending call older than the TTL", async () => {
   const guard = guarded(config())
   const stale = freshCallID()

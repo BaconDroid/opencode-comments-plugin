@@ -5,6 +5,7 @@
 import { existsSync } from "node:fs"
 import { APPLY_PATCH_TOOL_NAME, COMMENT_CHECKER_EVENT } from "../../constants"
 import { getCommentCheckerPath, runCommentChecker } from "../../cli"
+import { GuardBudget } from "../../core/budget"
 import { detectLanguage, diffLines, extractPatchChanges, isCommentLine, readPreimage } from "../../core/diff"
 import type { HookInput, PendingCall } from "../../types"
 
@@ -94,14 +95,12 @@ export interface ResolvedCommentConfig {
   customPrompt?: string
   appendPrompt?: string
   maxWarningsPerFile: number
+  dedupWindowMs: number
   triggerTools: Set<string>
   timeoutMs: number
 }
 
-interface SessionWarnings {
-  lastSeen: number
-  files: Map<string, number>
-}
+const COMMENT_RULE = "comment"
 
 interface BeforeInput {
   tool: string
@@ -122,43 +121,12 @@ export interface CommentGuard {
 
 export function createCommentGuard(getConfig: () => ResolvedCommentConfig): CommentGuard {
   const pendingCalls = new Map<string, PendingCall>()
-  const warningCounts = new Map<string, SessionWarnings>()
+  const budget = new GuardBudget({ dedupWindowMs: 0 })
 
-  function cleanupStaleState(): void {
-    const now = Date.now()
+  function prunePending(now = Date.now()): void {
     for (const [callID, call] of pendingCalls) {
       if (now - call.timestamp > PENDING_CALL_TTL) pendingCalls.delete(callID)
     }
-    for (const [sessionID, session] of warningCounts) {
-      if (now - session.lastSeen > PENDING_CALL_TTL) warningCounts.delete(sessionID)
-    }
-  }
-
-  const interval = setInterval(cleanupStaleState, 10_000)
-  interval.unref?.()
-
-  function canWarn(sessionID: string, filePath: string): boolean {
-    const { maxWarningsPerFile } = getConfig()
-    if (maxWarningsPerFile <= 0) return true
-    const session = warningCounts.get(sessionID)
-    if (!session) return true
-    return (session.files.get(filePath) ?? 0) < maxWarningsPerFile
-  }
-
-  function recordWarning(sessionID: string, filePath: string): void {
-    const { maxWarningsPerFile } = getConfig()
-    if (maxWarningsPerFile <= 0) return
-    let session = warningCounts.get(sessionID)
-    if (!session) {
-      session = { lastSeen: Date.now(), files: new Map() }
-      warningCounts.set(sessionID, session)
-    }
-    session.files.set(filePath, (session.files.get(filePath) ?? 0) + 1)
-  }
-
-  function touchSession(sessionID: string): void {
-    const session = warningCounts.get(sessionID)
-    if (session) session.lastSeen = Date.now()
   }
 
   // Only new comment-like lines are worth checking on `write` when the previous
@@ -177,7 +145,7 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
     change: { oldText: string; newText: string },
   ): Promise<void> {
     try {
-      const { customPrompt, appendPrompt, timeoutMs } = getConfig()
+      const { customPrompt, appendPrompt, timeoutMs, maxWarningsPerFile, dedupWindowMs } = getConfig()
       const filePath = toolInput.file_path ?? ""
 
       const bypass = bypassState(change.newText, change.oldText, detectLanguage(filePath))
@@ -187,7 +155,9 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
         return
       }
 
-      if (!canWarn(sessionID, filePath)) {
+      budget.setMaxWarningsPerFile(maxWarningsPerFile)
+      budget.setDedupWindowMs(dedupWindowMs)
+      if (!budget.shouldEmit(sessionID, COMMENT_RULE, filePath)) {
         debugLog("warning budget spent for", filePath)
         return
       }
@@ -209,7 +179,7 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
 
       const result = await runCommentChecker(hookInput, { prompt: customPrompt, timeoutMs })
       if (result.hasComments && result.message) {
-        recordWarning(sessionID, filePath)
+        budget.record(sessionID, COMMENT_RULE, filePath)
         const message = appendPrompt ? `${result.message}\n\n${appendPrompt}` : result.message
         output.output += `\n\n${message}`
         if (bypass.notes.length > 0) output.output += `\n\n${renderBypassFooter(filePath, bypass.notes)}`
@@ -246,6 +216,7 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
       return
     }
 
+    prunePending()
     const filePath = (output.args.filePath ?? output.args.file_path ?? output.args.path) as string | undefined
     const content = output.args.content as string | undefined
     const oldString = (output.args.oldString ?? output.args.old_string) as string | undefined
@@ -279,7 +250,7 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
     const { triggerTools } = getConfig()
     if (input.tool.toLowerCase() === APPLY_PATCH_TOOL_NAME) {
       if (!triggerTools.has(APPLY_PATCH_TOOL_NAME)) return
-      touchSession(input.sessionID)
+      budget.touch(input.sessionID)
       await checkApplyPatch(input.sessionID, output)
       return
     }
@@ -288,7 +259,7 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
     if (!pendingCall) return
 
     pendingCalls.delete(input.callID)
-    touchSession(input.sessionID)
+    budget.touch(input.sessionID)
 
     const isToolFailure = output.output.toLowerCase().startsWith("error")
     if (isToolFailure) {

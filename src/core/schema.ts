@@ -39,6 +39,9 @@ function validateCommentChecker(record: Record<string, unknown>, path: string, e
   if (record.max_warnings_per_file !== undefined && asCount(record.max_warnings_per_file, 0) === undefined) {
     errors.push(`${path}.max_warnings_per_file must be an integer >= 0`)
   }
+  if (record.dedup_window_ms !== undefined && asCount(record.dedup_window_ms, 0) === undefined) {
+    errors.push(`${path}.dedup_window_ms must be an integer >= 0`)
+  }
   if (record.timeout_ms !== undefined && asCount(record.timeout_ms, 1) === undefined) {
     errors.push(`${path}.timeout_ms must be an integer >= 1`)
   }
@@ -49,7 +52,7 @@ function validateCommentChecker(record: Record<string, unknown>, path: string, e
     if (!isRecord(record.judge)) errors.push(`${path}.judge must be an object`)
     else validateJudge(record.judge, `${path}.judge`, errors)
   }
-  rejectUnknown(record, ["custom_prompt", "append_prompt", "max_warnings_per_file", "timeout_ms", "tools", "judge"], path, errors)
+  rejectUnknown(record, ["custom_prompt", "append_prompt", "max_warnings_per_file", "dedup_window_ms", "timeout_ms", "tools", "judge"], path, errors)
 }
 
 function validateTestGuard(record: Record<string, unknown>, path: string, errors: string[]): void {
@@ -62,6 +65,9 @@ function validateTestGuard(record: Record<string, unknown>, path: string, errors
   }
   if (record.max_warnings_per_file !== undefined && asCount(record.max_warnings_per_file, 0) === undefined) {
     errors.push(`${path}.max_warnings_per_file must be an integer >= 0`)
+  }
+  if (record.dedup_window_ms !== undefined && asCount(record.dedup_window_ms, 0) === undefined) {
+    errors.push(`${path}.dedup_window_ms must be an integer >= 0`)
   }
   if (record.tools !== undefined && asTools(record.tools) === undefined) {
     errors.push(`${path}.tools must be a string array or a comma separated string`)
@@ -100,6 +106,7 @@ function validateTestGuard(record: Record<string, unknown>, path: string, errors
       "test_command",
       "checks",
       "max_warnings_per_file",
+      "dedup_window_ms",
       "custom_prompt",
       "append_prompt",
       "tools",

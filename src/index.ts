@@ -45,6 +45,7 @@ let projectDirectory = process.cwd()
 
 const resolvedCommentConfig: ResolvedCommentConfig = {
   maxWarningsPerFile: 0,
+  dedupWindowMs: 0,
   triggerTools: new Set(DEFAULT_TRIGGER_TOOLS),
   timeoutMs: DEFAULT_CLI_TIMEOUT_MS,
 }
@@ -96,6 +97,8 @@ function resolveConfiguration(config?: unknown): void {
   )
   resolvedCommentConfig.maxWarningsPerFile =
     resolveOption(value => asCount(value, 1), "COMMENT_CHECKER_MAX_WARNINGS_PER_FILE", "max_warnings_per_file", inputs) ?? 0
+  resolvedCommentConfig.dedupWindowMs =
+    resolveOption(value => asCount(value, 0), "COMMENT_CHECKER_DEDUP_WINDOW_MS", "dedup_window_ms", inputs) ?? 0
   resolvedCommentConfig.triggerTools = new Set(
     resolveOption(asTools, "COMMENT_CHECKER_TOOLS", "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS,
   )
@@ -137,6 +140,9 @@ function resolveTestGuardConfiguration(config?: unknown): void {
 
   resolvedTestGuard.maxWarningsPerFile =
     resolveOption(value => asCount(value, 1), "TEST_GUARD_MAX_WARNINGS_PER_FILE", "max_warnings_per_file", inputs) ?? 0
+
+  resolvedTestGuard.dedupWindowMs =
+    resolveOption(value => asCount(value, 0), "TEST_GUARD_DEDUP_WINDOW_MS", "dedup_window_ms", inputs) ?? 30_000
 
   resolvedTestGuard.triggerTools = new Set(
     resolveOption(asTools, "TEST_GUARD_TOOLS", "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS,
