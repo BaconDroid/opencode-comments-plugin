@@ -47,6 +47,10 @@ type AfterOutput = { title: string; output: string; metadata: unknown }
 interface CommentCheckerHooks {
   config?: (config: unknown) => Promise<void>
   tool?: Record<string, unknown>
+  "permission.ask"?: (
+    input: { type: string; pattern?: string | string[] },
+    output: { status: "ask" | "deny" | "allow" },
+  ) => Promise<void>
   "tool.execute.before": (input: BeforeInput, output: { args: Record<string, unknown> }) => Promise<void>
   "tool.execute.after": (input: BeforeInput, output: AfterOutput) => Promise<void>
 }
@@ -544,6 +548,18 @@ test("test guard warns on a focused test without clobbering the output", async (
   expect(output.output.startsWith("Wrote file successfully.")).toBe(true)
   expect(output.output).toContain("skip-focus-added")
   expect(output.output.split(TEST_GUARD_MARKER).length - 1).toBe(1)
+})
+
+test("denies permission for an existing test file when protected-paths is block", async () => {
+  const filePath = join(cacheRoot, "permission.test.ts")
+  writeFileSync(filePath, "it('a', () => {})\n")
+  const hooks = await newSession({
+    comment_checker: { tools: ["none"] },
+    test_guard: { checks: { "protected-paths": "block" } },
+  })
+  const output: { status: "ask" | "deny" | "allow" } = { status: "ask" }
+  await hooks["permission.ask"]!({ type: "edit", pattern: filePath }, output)
+  expect(output.status).toBe("deny")
 })
 
 test("test guard after hook never throws on malformed metadata", async () => {

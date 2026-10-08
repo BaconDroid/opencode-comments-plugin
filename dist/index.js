@@ -463,6 +463,7 @@ function asRecord(value) {
 
 // src/core/dispatch.ts
 import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
+import { join as join3 } from "path";
 
 // src/core/budget.ts
 class GuardBudget {
@@ -1674,6 +1675,37 @@ function createTestGuard(getResolved) {
   function isProtectedPath(filePath, patterns) {
     return isTestPath(filePath, patterns);
   }
+  function pathExists(filePath) {
+    try {
+      return existsSync3(filePath) || existsSync3(join3(process.cwd(), filePath));
+    } catch {
+      return false;
+    }
+  }
+  function permission(input, output) {
+    try {
+      const resolved = resolve();
+      if (!resolved.enabled)
+        return;
+      if (!isBlocking())
+        return;
+      if (input.type !== "edit" && input.type !== "write")
+        return;
+      const patterns = resolved.testPatterns;
+      const candidates = Array.isArray(input.pattern) ? input.pattern : input.pattern ? [input.pattern] : [];
+      for (const candidate of candidates) {
+        if (!isProtectedPath(candidate, patterns))
+          continue;
+        if (!pathExists(candidate))
+          continue;
+        output.status = "deny";
+        debugLog3("permission denied for protected test path", candidate);
+        return;
+      }
+    } catch (err) {
+      debugLog3("permission failed (fail-open):", err);
+    }
+  }
   function before(input, output) {
     try {
       const resolved = resolve();
@@ -1781,6 +1813,11 @@ function createTestGuard(getResolved) {
         }
       }
       let message = findings.length > 0 ? renderFeedback(findings, { customPrompt: resolved.customPrompt, appendPrompt: resolved.appendPrompt }) : "";
+      if (findings.some((finding) => finding.severity === "block")) {
+        message = `BLOCK BYPASSED \u2014 a rule configured as "block" reached the after hook; the change was not stopped.
+
+${message}`;
+      }
       if (bypassNotes.length > 0) {
         const footer = `Test guard bypass recorded:
 ${bypassNotes.map((note) => `- ${note}`).join(`
@@ -1796,7 +1833,7 @@ ${footer}` : footer;
       debugLog3("after failed (fail-open):", err);
     }
   }
-  return { before, after };
+  return { before, after, permission };
 }
 
 // src/rules/comments/index.ts
@@ -1984,7 +2021,7 @@ ${message}`;
 
 // src/core/test-command.ts
 import { existsSync as existsSync5, readFileSync as readFileSync4 } from "fs";
-import { join as join3 } from "path";
+import { join as join4 } from "path";
 var CANDIDATES = [
   { file: "pytest.ini", command: "pytest" },
   { file: "pyproject.toml", contains: "[tool.pytest", command: "pytest" },
@@ -2002,7 +2039,7 @@ function readIfExists(filePath) {
   }
 }
 function detectTestCommand(directory) {
-  const packageJson = readIfExists(join3(directory, "package.json"));
+  const packageJson = readIfExists(join4(directory, "package.json"));
   if (packageJson) {
     try {
       const parsed = JSON.parse(packageJson);
@@ -2013,7 +2050,7 @@ function detectTestCommand(directory) {
     } catch {}
   }
   for (const candidate of CANDIDATES) {
-    const content = readIfExists(join3(directory, candidate.file));
+    const content = readIfExists(join4(directory, candidate.file));
     if (content === undefined)
       continue;
     if (candidate.contains && !content.includes(candidate.contains))
@@ -2026,7 +2063,7 @@ function detectTestCommand(directory) {
 // src/audit.ts
 import { tool } from "@opencode-ai/plugin";
 import { readFileSync as readFileSync5, readdirSync as readdirSync2, statSync } from "fs";
-import { isAbsolute, join as join4, relative } from "path";
+import { isAbsolute, join as join5, relative } from "path";
 var EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "build", "vendor", ".cache", "coverage"]);
 var SECRET_PATTERNS = [/(?:^|\/)\.env(?:\.|$)/, /\.pem$/, /\.key$/, /(?:^|\/)id_(?:rsa|ed25519)$/, /\.p12$/];
 var MAX_FILES = 500;
@@ -2047,7 +2084,7 @@ function walk(dir, out, limit) {
       return;
     if (entry.startsWith(".") && entry !== ".env.example")
       continue;
-    const full = join4(dir, entry);
+    const full = join5(dir, entry);
     let stat;
     try {
       stat = statSync(full);
@@ -2067,7 +2104,7 @@ function listRepositoryFiles(directory, paths) {
   const collected = [];
   if (paths && paths.length > 0) {
     for (const entry of paths) {
-      const abs = isAbsolute(entry) ? entry : join4(directory, entry);
+      const abs = isAbsolute(entry) ? entry : join5(directory, entry);
       try {
         const stat = statSync(abs);
         if (stat.isDirectory())
@@ -2082,7 +2119,7 @@ function listRepositoryFiles(directory, paths) {
     const result = Bun.spawnSync(["git", "ls-files"], { cwd: directory, stdout: "pipe", stderr: "ignore" });
     if (result.exitCode === 0) {
       return result.stdout.toString().split(`
-`).filter((line) => line.trim().length > 0).map((line) => join4(directory, line)).slice(0, MAX_FILES);
+`).filter((line) => line.trim().length > 0).map((line) => join5(directory, line)).slice(0, MAX_FILES);
     }
   } catch {}
   walk(directory, collected, MAX_FILES);
@@ -2460,6 +2497,9 @@ var CommentCheckerPlugin = async (input, options) => {
     },
     tool: {
       guard_audit: auditTool
+    },
+    "permission.ask": async (input, output) => {
+      testGuard.permission(input, output);
     },
     "tool.execute.before": async (input, output) => {
       testGuard.before(input, output);

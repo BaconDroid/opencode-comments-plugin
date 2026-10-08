@@ -161,6 +161,59 @@ test("records a bypass even when no rule fires", async () => {
   expect(output.output).toContain("allow")
 })
 
+test("permission denies editing an existing test file when block is set", () => {
+  const filePath = join(dir, "perm.test.ts")
+  writeFileSync(filePath, "it('a', () => {})\n")
+  const guard = guarded(config({ checks: { "protected-paths": "block" } }))
+  const output: { status: "ask" | "deny" | "allow" } = { status: "ask" }
+  guard.permission({ type: "edit", pattern: filePath }, output)
+  expect(output.status).toBe("deny")
+})
+
+test("permission exempts a new test file", () => {
+  const guard = guarded(config({ checks: { "protected-paths": "block" } }))
+  const output: { status: "ask" | "deny" | "allow" } = { status: "ask" }
+  guard.permission({ type: "write", pattern: join(dir, "new-perm.test.ts") }, output)
+  expect(output.status).toBe("ask")
+})
+
+test("permission does not deny when protected-paths is warn", () => {
+  const filePath = join(dir, "perm2.test.ts")
+  writeFileSync(filePath, "it('a', () => {})\n")
+  const guard = guarded(config())
+  const output: { status: "ask" | "deny" | "allow" } = { status: "ask" }
+  guard.permission({ type: "edit", pattern: filePath }, output)
+  expect(output.status).toBe("ask")
+})
+
+test("permission ignores non-edit/write permissions", () => {
+  const filePath = join(dir, "perm3.test.ts")
+  writeFileSync(filePath, "it('a', () => {})\n")
+  const guard = guarded(config({ checks: { "protected-paths": "block" } }))
+  const output: { status: "ask" | "deny" | "allow" } = { status: "ask" }
+  guard.permission({ type: "bash", pattern: filePath }, output)
+  expect(output.status).toBe("ask")
+})
+
+test("permission never throws on a malformed payload", () => {
+  const guard = guarded(config({ checks: { "protected-paths": "block" } }))
+  const output: { status: "ask" | "deny" | "allow" } = { status: "ask" }
+  expect(() => guard.permission({ type: "edit", pattern: undefined }, output)).not.toThrow()
+})
+
+test("after alerts when a block rule was bypassed", async () => {
+  const guard = guarded(config({ checks: { "protected-paths": "block" } }))
+  const output: Output = {
+    title: "",
+    output: "Success. Updated the following files:",
+    metadata: {
+      files: [{ type: "update", filePath: "/work/src/a.test.ts", patch: "@@ -1 +1 @@\n-it('a', () => {})\n+it('a', () => {})\n" }],
+    },
+  }
+  await guard.after({ tool: "apply_patch", sessionID: "s", callID: freshCallID() }, output)
+  expect(output.output).toContain("BLOCK BYPASSED")
+})
+
 test("coexists with another plugin without clobbering or duplicating output", async () => {
   const guard = guarded(config())
   const callID = freshCallID()

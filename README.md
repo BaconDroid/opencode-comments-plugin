@@ -132,8 +132,12 @@ tests. It reuses the same tuple, under a sibling `test_guard` key:
 ```
 
 Every content rule defaults to `warn`. `block` is opt-in per rule and only then
-can `tool.execute.before` throw. All internal guard errors are swallowed
-(fail-open), so the guard can never prevent the agent's action.
+can `tool.execute.before` throw. When `protected-paths` is `block`, the plugin
+also denies the `edit`/`write` permission through `permission.ask`, which
+covers sub-agents that bypass `tool.execute.before` (opencode issue #5894); if
+such a change still reaches the after hook, the warning is prefixed with
+`BLOCK BYPASSED`. All internal guard errors are swallowed (fail-open), so the
+guard can never prevent the agent's action.
 
 | Rule | Signal | Default |
 |---|---|---|

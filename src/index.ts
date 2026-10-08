@@ -170,6 +170,9 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
     tool: {
       guard_audit: auditTool,
     },
+    "permission.ask": async (input, output) => {
+      testGuard.permission(input, output)
+    },
     "tool.execute.before": async (input, output) => {
       testGuard.before(input, output)
       await commentGuard.before(input, output)
