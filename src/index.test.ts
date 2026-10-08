@@ -681,6 +681,15 @@ test("event hook ignores session.idle when mutation is disabled", async () => {
   await expect(hooks.event?.({ event: { type: "session.idle" } })).resolves.toBeUndefined()
 })
 
+test("session.idle with disabled analyzers queues no advisory note", async () => {
+  const hooks = await newSession({ comment_checker: { tools: ["none"] } })
+  await hooks.event?.({ event: { type: "session.idle" } })
+
+  const output = writeOutput("bash output")
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s", callID: "idle-note" }, output)
+  expect(output.output).toBe("bash output")
+})
+
 test("test guard after hook never throws on malformed metadata", async () => {
   const hooks = await newSession({ comment_checker: { tools: ["none"] } })
   const output = writeOutput("ok")

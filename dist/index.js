@@ -468,6 +468,28 @@ function asRecord(value) {
 import { existsSync as existsSync4 } from "fs";
 import { join as join3 } from "path";
 
+// src/core/analyzer.ts
+class AnalyzerRegistry {
+  analyzers = [];
+  register(analyzer) {
+    this.analyzers.push(analyzer);
+  }
+  forTrigger(trigger) {
+    return this.analyzers.filter((analyzer) => analyzer.trigger === trigger);
+  }
+  async run(trigger, ctx) {
+    const results = [];
+    for (const analyzer of this.forTrigger(trigger)) {
+      try {
+        if (!analyzer.isEnabled())
+          continue;
+        results.push(await analyzer.analyze(ctx));
+      } catch {}
+    }
+    return results;
+  }
+}
+
 // src/core/budget.ts
 class GuardBudget {
   dedupWindowMs;
@@ -1667,10 +1689,39 @@ function extractPatchEntries(patchText) {
   }
   return entries;
 }
+function createRuleAnalyzer(getResolved) {
+  return {
+    id: "test-rules",
+    trigger: "after",
+    isEnabled: () => getResolved().enabled,
+    analyze: (ctx) => {
+      const change = ctx.change;
+      if (!change)
+        return {};
+      const resolved = getResolved();
+      const result = runTestRules({
+        change,
+        isTestFile: isTestPath(change.filePath, resolved.testPatterns),
+        config: { ...resolved, testCommand: resolved.testCommand ?? null }
+      });
+      const findings = result.findings.map((finding) => ({
+        rule: finding.rule,
+        filePath: change.filePath,
+        line: finding.line,
+        message: finding.message,
+        severity: resolved.checks[finding.rule] ?? "off",
+        excerpt: finding.excerpt
+      }));
+      return { findings, bypasses: result.bypasses };
+    }
+  };
+}
 function createTestGuard(getResolved) {
   const budget = new GuardBudget;
   const pending = new Map;
   const pendingNotes = [];
+  const registry = new AnalyzerRegistry;
+  registry.register(createRuleAnalyzer(getResolved));
   function queueNote(message) {
     if (message.length > 0)
       pendingNotes.push(message);
@@ -1803,19 +1854,27 @@ function createTestGuard(getResolved) {
         const findings = [];
         const bypassNotes = [];
         for (const change of changes) {
-          const isTestFile = isProtectedPath(change.filePath, resolved.testPatterns);
-          const ctx = {
+          const results = await registry.run("after", {
+            tool: input.tool,
+            sessionID: input.sessionID,
+            callID: input.callID,
             change,
-            isTestFile,
-            config: { ...resolved, testCommand: resolved.testCommand ?? null }
-          };
-          const result = runTestRules(ctx);
-          for (const bypass of result.bypasses) {
+            directory: process.cwd()
+          });
+          const changeFindings = [];
+          const changeBypasses = [];
+          for (const result of results) {
+            if (result.findings)
+              changeFindings.push(...result.findings);
+            if (result.bypasses)
+              changeBypasses.push(...result.bypasses);
+          }
+          for (const bypass of changeBypasses) {
             debugLog3("bypass", change.filePath, bypass);
             bypassNotes.push(`${change.filePath}:${bypass.line} ${bypass.kind}${bypass.reason ? ` (${bypass.reason})` : ""}`);
           }
           const grouped = new Map;
-          for (const finding of result.findings) {
+          for (const finding of changeFindings) {
             const list = grouped.get(finding.rule) ?? [];
             list.push(finding);
             grouped.set(finding.rule, list);
@@ -1827,16 +1886,8 @@ function createTestGuard(getResolved) {
             if (!budget.shouldEmit(input.sessionID, rule, change.filePath))
               continue;
             budget.record(input.sessionID, rule, change.filePath);
-            for (const finding of ruleFindings) {
-              findings.push({
-                rule: finding.rule,
-                filePath: change.filePath,
-                line: finding.line,
-                message: finding.message,
-                severity: level,
-                excerpt: finding.excerpt
-              });
-            }
+            for (const finding of ruleFindings)
+              findings.push(finding);
           }
         }
         let message = findings.length > 0 ? renderFeedback(findings, { customPrompt: resolved.customPrompt, appendPrompt: resolved.appendPrompt }) : "";
@@ -1868,6 +1919,57 @@ ${footer}` : footer;
     }
   }
   return { before, after, permission, queueNote };
+}
+
+// src/core/idle-advisory.ts
+import { tool } from "@opencode-ai/plugin";
+function createIdleAdvisory(options) {
+  const cooldownMs = options.cooldownMs ?? 60000;
+  const lastRun = new Map;
+  return {
+    async onIdle(sessionID) {
+      try {
+        if (!options.isEnabled())
+          return null;
+        const now = Date.now();
+        if (now - (lastRun.get(sessionID) ?? 0) < cooldownMs)
+          return null;
+        lastRun.set(sessionID, now);
+        return await options.analyze();
+      } catch {
+        return null;
+      }
+    },
+    async analyzeNow() {
+      try {
+        if (!options.isEnabled())
+          return options.disabledMessage;
+        return await options.analyze() ?? options.emptyMessage;
+      } catch {
+        return options.unavailableMessage;
+      }
+    }
+  };
+}
+function createIdleAnalyzer(id, controller) {
+  return {
+    id,
+    trigger: "idle",
+    isEnabled: () => true,
+    analyze: async (ctx) => {
+      const note = await controller.onIdle(ctx.sessionID);
+      return note ? { note } : {};
+    }
+  };
+}
+function createAdvisoryTool(description, controller) {
+  return tool({
+    description,
+    args: {},
+    async execute() {
+      return controller.analyzeNow();
+    }
+  });
 }
 
 // src/core/ci.ts
@@ -1928,46 +2030,6 @@ function diffChanges(directory, base) {
     }));
   }
   return changes;
-}
-
-// src/core/idle-advisory.ts
-import { tool } from "@opencode-ai/plugin";
-function createIdleAdvisory(options) {
-  const cooldownMs = options.cooldownMs ?? 60000;
-  const lastRun = new Map;
-  return {
-    async onIdle(sessionID) {
-      try {
-        if (!options.isEnabled())
-          return null;
-        const now = Date.now();
-        if (now - (lastRun.get(sessionID) ?? 0) < cooldownMs)
-          return null;
-        lastRun.set(sessionID, now);
-        return await options.analyze();
-      } catch {
-        return null;
-      }
-    },
-    async analyzeNow() {
-      try {
-        if (!options.isEnabled())
-          return options.disabledMessage;
-        return await options.analyze() ?? options.emptyMessage;
-      } catch {
-        return options.unavailableMessage;
-      }
-    }
-  };
-}
-function createAdvisoryTool(description, controller) {
-  return tool({
-    description,
-    args: {},
-    async execute() {
-      return controller.analyzeNow();
-    }
-  });
 }
 
 // src/core/judge.ts
@@ -3132,6 +3194,11 @@ var CommentCheckerPlugin = async (input, options) => {
   });
   const parseTool = createGuardParseTool(parser);
   const mutation = createMutationAdapter({ getConfig: () => resolvedMutation });
+  const analyzers = new AnalyzerRegistry;
+  analyzers.register(createIdleAnalyzer("mutation", mutation));
+  analyzers.register(createIdleAnalyzer("test-judge", judge));
+  analyzers.register(createIdleAnalyzer("parser", parser));
+  analyzers.register(createIdleAnalyzer("comment-judge", commentJudge));
   return {
     config: async (config) => {
       resolveConfiguration(config);
@@ -3148,10 +3215,10 @@ var CommentCheckerPlugin = async (input, options) => {
       if (event.type !== "session.idle")
         return;
       const sessionID = event.properties?.sessionID ?? "";
-      for (const analyzer of [mutation, judge, parser, commentJudge]) {
-        const message = await analyzer.onIdle(sessionID);
-        if (message)
-          testGuard.queueNote(message);
+      const results = await analyzers.run("idle", { tool: "", sessionID, directory: projectDirectory });
+      for (const result of results) {
+        if (result.note)
+          testGuard.queueNote(result.note);
       }
     },
     "permission.ask": async (input, output) => {

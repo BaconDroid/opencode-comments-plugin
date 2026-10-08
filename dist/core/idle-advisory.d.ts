@@ -1,3 +1,4 @@
+import type { Analyzer } from "./analyzer";
 export interface IdleAdvisoryController {
     onIdle(sessionID: string): Promise<string | null>;
     analyzeNow(): Promise<string>;
@@ -10,6 +11,7 @@ export declare function createIdleAdvisory(options: {
     emptyMessage: string;
     cooldownMs?: number;
 }): IdleAdvisoryController;
+export declare function createIdleAnalyzer(id: string, controller: IdleAdvisoryController): Analyzer;
 export declare function createAdvisoryTool(description: string, controller: IdleAdvisoryController): {
     description: string;
     args: {};

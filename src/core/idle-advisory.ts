@@ -3,6 +3,7 @@
 // wrapper. The analyzer itself only provides `analyze`.
 
 import { tool } from "@opencode-ai/plugin"
+import type { Analyzer } from "./analyzer"
 
 export interface IdleAdvisoryController {
   onIdle(sessionID: string): Promise<string | null>
@@ -39,6 +40,21 @@ export function createIdleAdvisory(options: {
       } catch {
         return options.unavailableMessage
       }
+    },
+  }
+}
+
+// Adapts an IdleAdvisoryController to the analyzer registry. The controller
+// already gates on its own enabled flag and cooldown, so the analyzer is always
+// enabled and a disabled controller simply yields no note.
+export function createIdleAnalyzer(id: string, controller: IdleAdvisoryController): Analyzer {
+  return {
+    id,
+    trigger: "idle",
+    isEnabled: () => true,
+    analyze: async ctx => {
+      const note = await controller.onIdle(ctx.sessionID)
+      return note ? { note } : {}
     },
   }
 }

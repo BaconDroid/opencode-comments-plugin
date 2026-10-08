@@ -4,13 +4,14 @@
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { APPLY_PATCH_TOOL_NAME, DEFAULT_TRIGGER_TOOLS } from "../constants"
+import { AnalyzerRegistry, type Analyzer } from "./analyzer"
 import { GuardBudget } from "./budget"
+import type { Bypass } from "./bypass"
 import type { Severity } from "./config"
 import { extractPatchChanges, extractToolChange, firstString, readPreimage, type ExtractedChange } from "./diff"
 import { appendFeedback, renderFeedback, type Finding } from "./feedback"
 import { isTestPath } from "../rules/tests/patterns"
 import { runTestRules } from "../rules/tests"
-import type { RuleContext } from "../rules/tests/types"
 
 const DEBUG = process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1"
 
@@ -94,10 +95,42 @@ export function extractPatchEntries(patchText: string): Array<{ kind: string; pa
   return entries
 }
 
+// Wraps the deterministic test rules as an analyzer. Dispatch keeps ownership
+// of the budget, the severity resolution, the grouping and the `BLOCK BYPASSED`
+// marker; the analyzer only produces findings and bypasses for one change.
+function createRuleAnalyzer(getResolved: () => ResolvedTestGuard): Analyzer {
+  return {
+    id: "test-rules",
+    trigger: "after",
+    isEnabled: () => getResolved().enabled,
+    analyze: ctx => {
+      const change = ctx.change
+      if (!change) return {}
+      const resolved = getResolved()
+      const result = runTestRules({
+        change,
+        isTestFile: isTestPath(change.filePath, resolved.testPatterns),
+        config: { ...resolved, testCommand: resolved.testCommand ?? null },
+      })
+      const findings: Finding[] = result.findings.map(finding => ({
+        rule: finding.rule,
+        filePath: change.filePath,
+        line: finding.line,
+        message: finding.message,
+        severity: resolved.checks[finding.rule] ?? "off",
+        excerpt: finding.excerpt,
+      }))
+      return { findings, bypasses: result.bypasses }
+    },
+  }
+}
+
 export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard {
   const budget = new GuardBudget()
   const pending = new Map<string, PendingGuardCall>()
   const pendingNotes: string[] = []
+  const registry = new AnalyzerRegistry()
+  registry.register(createRuleAnalyzer(getResolved))
   function queueNote(message: string): void {
     if (message.length > 0) pendingNotes.push(message)
   }
@@ -242,20 +275,28 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
         const findings: Finding[] = []
         const bypassNotes: string[] = []
         for (const change of changes) {
-          const isTestFile = isProtectedPath(change.filePath, resolved.testPatterns)
-          const ctx: RuleContext = {
+          const results = await registry.run("after", {
+            tool: input.tool,
+            sessionID: input.sessionID,
+            callID: input.callID,
             change,
-            isTestFile,
-            config: { ...resolved, testCommand: resolved.testCommand ?? null },
+            directory: process.cwd(),
+          })
+
+          const changeFindings: Finding[] = []
+          const changeBypasses: Bypass[] = []
+          for (const result of results) {
+            if (result.findings) changeFindings.push(...result.findings)
+            if (result.bypasses) changeBypasses.push(...result.bypasses)
           }
-          const result = runTestRules(ctx)
-          for (const bypass of result.bypasses) {
+
+          for (const bypass of changeBypasses) {
             debugLog("bypass", change.filePath, bypass)
             bypassNotes.push(`${change.filePath}:${bypass.line} ${bypass.kind}${bypass.reason ? ` (${bypass.reason})` : ""}`)
           }
 
-          const grouped = new Map<string, typeof result.findings>()
-          for (const finding of result.findings) {
+          const grouped = new Map<string, Finding[]>()
+          for (const finding of changeFindings) {
             const list = grouped.get(finding.rule) ?? []
             list.push(finding)
             grouped.set(finding.rule, list)
@@ -266,16 +307,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
             if (level === "off") continue
             if (!budget.shouldEmit(input.sessionID, rule, change.filePath)) continue
             budget.record(input.sessionID, rule, change.filePath)
-            for (const finding of ruleFindings) {
-              findings.push({
-                rule: finding.rule,
-                filePath: change.filePath,
-                line: finding.line,
-                message: finding.message,
-                severity: level,
-                excerpt: finding.excerpt,
-              })
-            }
+            for (const finding of ruleFindings) findings.push(finding)
           }
         }
 
