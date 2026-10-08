@@ -2172,6 +2172,137 @@ function createGuardJudgeTool(judge) {
   });
 }
 
+// src/core/parser-adapter.ts
+import { tool as tool2 } from "@opencode-ai/plugin";
+var MAX_FINDINGS2 = 20;
+function buildParserPayload(changes) {
+  const files = [];
+  for (const change of changes) {
+    if (change.addedLines.length === 0 && change.removedLines.length === 0)
+      continue;
+    files.push({
+      path: change.filePath,
+      language: change.language,
+      added: change.addedLines,
+      removed: change.removedLines
+    });
+  }
+  return JSON.stringify({ files });
+}
+function parseParserFindings(raw) {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  let parsed;
+  if (start >= 0 && end > start) {
+    try {
+      parsed = JSON.parse(raw.slice(start, end + 1));
+    } catch {
+      return [];
+    }
+  } else {
+    const arrayStart = raw.indexOf("[");
+    const arrayEnd = raw.lastIndexOf("]");
+    if (arrayStart < 0 || arrayEnd <= arrayStart)
+      return [];
+    try {
+      parsed = JSON.parse(raw.slice(arrayStart, arrayEnd + 1));
+    } catch {
+      return [];
+    }
+  }
+  const items = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray(parsed.findings) ? parsed.findings : [];
+  const findings = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object")
+      continue;
+    const record = item;
+    const file = typeof record.file === "string" ? record.file : "";
+    const message = typeof record.message === "string" ? record.message.trim() : "";
+    if (!file || !message)
+      continue;
+    if (PLACEHOLDER_PATTERN.test(message))
+      continue;
+    findings.push({
+      file,
+      line: typeof record.line === "number" && Number.isFinite(record.line) ? record.line : 0,
+      rule: typeof record.rule === "string" ? record.rule : "external-parser",
+      message,
+      confidence: typeof record.confidence === "string" ? record.confidence : "medium"
+    });
+    if (findings.length >= MAX_FINDINGS2)
+      break;
+  }
+  return findings;
+}
+function formatParserFindings(findings) {
+  const lines = findings.map((finding) => `- ${finding.file}:${finding.line} [${finding.rule}] ${finding.message} (${finding.confidence})`);
+  return `External parser (advisory, opt-in):
+${lines.join(`
+`)}`;
+}
+async function defaultRun(command, payload, timeoutMs) {
+  const outcome = await runProcess(["/bin/sh", "-c", command], { stdin: payload, timeoutMs });
+  return outcome === "timeout" ? "" : outcome.stdout;
+}
+async function runParserAdapter(changes, config, run = defaultRun) {
+  if (!config.enabled || !config.command)
+    return [];
+  const payload = buildParserPayload(changes);
+  if (payload === JSON.stringify({ files: [] }))
+    return [];
+  try {
+    const raw = await run(config.command, payload, config.timeoutMs ?? 30000);
+    return parseParserFindings(raw);
+  } catch {
+    return [];
+  }
+}
+function createParserAdapter(options) {
+  const cooldownMs = options.cooldownMs ?? 60000;
+  const lastRun = new Map;
+  function collectTestChanges() {
+    const patterns = options.getTestPatterns();
+    return diffChanges(options.directory, "HEAD").filter((change) => isSupportedLanguage(change.language) && isTestPath(change.filePath, patterns));
+  }
+  async function analyze() {
+    const findings = await runParserAdapter(collectTestChanges(), options.getConfig(), options.run);
+    return findings.length > 0 ? formatParserFindings(findings) : null;
+  }
+  return {
+    async onIdle(sessionID) {
+      try {
+        if (!options.getConfig().enabled)
+          return null;
+        const now = Date.now();
+        if (now - (lastRun.get(sessionID) ?? 0) < cooldownMs)
+          return null;
+        lastRun.set(sessionID, now);
+        return await analyze();
+      } catch {
+        return null;
+      }
+    },
+    async analyzeNow() {
+      try {
+        if (!options.getConfig().enabled)
+          return "External parser: disabled (set test_guard.parser.enabled).";
+        return await analyze() ?? "External parser: no findings.";
+      } catch {
+        return "External parser: unavailable.";
+      }
+    }
+  };
+}
+function createGuardParseTool(controller) {
+  return tool2({
+    description: "Run the opt-in external parser adapter over the current test diff. Read-only and advisory; requires test_guard.parser.enabled.",
+    args: {},
+    async execute() {
+      return controller.analyzeNow();
+    }
+  });
+}
+
 // src/rules/comments/index.ts
 import { existsSync as existsSync5, readFileSync as readFileSync4 } from "fs";
 var DEBUG4 = process.env.COMMENT_CHECKER_DEBUG === "1";
@@ -2397,7 +2528,7 @@ function detectTestCommand(directory) {
 }
 
 // src/audit.ts
-import { tool as tool2 } from "@opencode-ai/plugin";
+import { tool as tool3 } from "@opencode-ai/plugin";
 import { readFileSync as readFileSync6, readdirSync as readdirSync2, statSync } from "fs";
 import { isAbsolute as isAbsolute2, join as join6, relative as relative2 } from "path";
 var EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "build", "vendor", ".cache", "coverage"]);
@@ -2706,13 +2837,13 @@ async function runAudit(options, deps = {}) {
   return renderAudit({ scope, comments, tests, skipped, generatedAt: new Date().toISOString(), testCommand: config?.testCommand ?? null }, format);
 }
 function createGuardAuditTool(options) {
-  return tool2({
+  return tool3({
     description: "Read-only audit of existing comments and tests. Produces a cleanup plan (markdown or json) that the agent applies afterwards. Never modifies files.",
     args: {
-      scope: tool2.schema.enum(["comments", "tests", "both"]).optional(),
-      paths: tool2.schema.array(tool2.schema.string()).optional(),
-      format: tool2.schema.enum(["markdown", "json"]).optional(),
-      include_advisory: tool2.schema.boolean().optional()
+      scope: tool3.schema.enum(["comments", "tests", "both"]).optional(),
+      paths: tool3.schema.array(tool3.schema.string()).optional(),
+      format: tool3.schema.enum(["markdown", "json"]).optional(),
+      include_advisory: tool3.schema.boolean().optional()
     },
     async execute(args) {
       return runAudit({
@@ -2775,6 +2906,7 @@ var resolvedTestGuard = {
   mutationEnabled: false
 };
 var resolvedJudge = { enabled: false };
+var resolvedParser = { enabled: false };
 function resolveTestGuardConfiguration(config) {
   const options = optionContainer(pluginOptions, "test_guard");
   const fromConfig = optionContainer(config, "test_guard");
@@ -2799,6 +2931,12 @@ function resolveTestGuardConfiguration(config) {
   resolvedJudge.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, false), "TEST_GUARD_JUDGE_ENABLED", "enabled", judgeInputs) ?? false;
   resolvedJudge.model = resolveJudgeModel(resolveOption(asString, "TEST_GUARD_JUDGE_MODEL", "model", judgeInputs));
   resolvedJudge.timeoutMs = resolveOption((value) => asCount(value, 1), "TEST_GUARD_JUDGE_TIMEOUT_MS", "timeout_ms", judgeInputs);
+  const optionsParser = asRecord(options?.parser);
+  const configParser = asRecord(fromConfig?.parser);
+  const parserInputs = { options: optionsParser, config: configParser };
+  resolvedParser.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, false), "TEST_GUARD_PARSER_ENABLED", "enabled", parserInputs) ?? false;
+  resolvedParser.command = resolveOption(asString, "TEST_GUARD_PARSER_COMMAND", "command", parserInputs);
+  resolvedParser.timeoutMs = resolveOption((value) => asCount(value, 1), "TEST_GUARD_PARSER_TIMEOUT_MS", "timeout_ms", parserInputs);
   resolvedTestGuard.checks = resolveRuleConfig(DEFAULT_TEST_CHECKS, {
     envPrefix: "TEST_GUARD_",
     options,
@@ -2838,6 +2976,12 @@ var CommentCheckerPlugin = async (input, options) => {
     runner: createModelJudgeRunner(input.client, projectDirectory)
   });
   const judgeTool = createGuardJudgeTool(judge);
+  const parser = createParserAdapter({
+    directory: projectDirectory,
+    getConfig: () => resolvedParser,
+    getTestPatterns: () => resolvedTestGuard.testPatterns
+  });
+  const parseTool = createGuardParseTool(parser);
   return {
     config: async (config) => {
       resolveConfiguration(config);
@@ -2846,7 +2990,8 @@ var CommentCheckerPlugin = async (input, options) => {
     },
     tool: {
       guard_audit: auditTool,
-      guard_judge: judgeTool
+      guard_judge: judgeTool,
+      guard_parse: parseTool
     },
     event: async ({ event }) => {
       if (event.type !== "session.idle")
@@ -2856,6 +3001,9 @@ var CommentCheckerPlugin = async (input, options) => {
       const judgeMessage = await judge.onIdle(sessionID);
       if (judgeMessage)
         testGuard.queueNote(judgeMessage);
+      const parserMessage = await parser.onIdle(sessionID);
+      if (parserMessage)
+        testGuard.queueNote(parserMessage);
     },
     "permission.ask": async (input, output) => {
       testGuard.permission(input, output);

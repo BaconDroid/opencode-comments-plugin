@@ -53,6 +53,15 @@ export const TUPLE_OPTIONS_SCHEMA = {
             timeout_ms: { type: "integer", minimum: 1 },
           },
         },
+        parser: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            enabled: { type: "boolean" },
+            command: { type: "string" },
+            timeout_ms: { type: "integer", minimum: 1 },
+          },
+        },
       },
     },
   },
@@ -134,6 +143,10 @@ function validateTestGuard(record: Record<string, unknown>, path: string, errors
     if (!isRecord(record.judge)) errors.push(`${path}.judge must be an object`)
     else validateJudge(record.judge, `${path}.judge`, errors)
   }
+  if (record.parser !== undefined) {
+    if (!isRecord(record.parser)) errors.push(`${path}.parser must be an object`)
+    else validateParser(record.parser, `${path}.parser`, errors)
+  }
   rejectUnknown(
     record,
     [
@@ -146,6 +159,7 @@ function validateTestGuard(record: Record<string, unknown>, path: string, errors
       "append_prompt",
       "mutation",
       "judge",
+      "parser",
     ],
     path,
     errors,
@@ -168,6 +182,15 @@ function validateJudge(record: Record<string, unknown>, path: string, errors: st
     errors.push(`${path}.timeout_ms must be an integer >= 1`)
   }
   rejectUnknown(record, ["enabled", "model", "timeout_ms"], path, errors)
+}
+
+function validateParser(record: Record<string, unknown>, path: string, errors: string[]): void {
+  if (record.enabled !== undefined && typeof record.enabled !== "boolean") errors.push(`${path}.enabled must be a boolean`)
+  if (record.command !== undefined && asString(record.command) === undefined) errors.push(`${path}.command must be a non-empty string`)
+  if (record.timeout_ms !== undefined && asCount(record.timeout_ms, 1) === undefined) {
+    errors.push(`${path}.timeout_ms must be an integer >= 1`)
+  }
+  rejectUnknown(record, ["enabled", "command", "timeout_ms"], path, errors)
 }
 
 function rejectUnknown(record: Record<string, unknown>, known: string[], path: string, errors: string[]): void {

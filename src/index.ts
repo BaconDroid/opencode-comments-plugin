@@ -15,6 +15,7 @@ import {
 } from "./core/config"
 import { createTestGuard, type ResolvedTestGuard } from "./core/dispatch"
 import { createGuardJudgeTool, createJudge, createModelJudgeRunner, resolveJudgeModel, type JudgeConfig } from "./core/judge"
+import { createGuardParseTool, createParserAdapter, type ParserAdapterConfig } from "./core/parser-adapter"
 import { createCommentGuard, type ResolvedCommentConfig } from "./rules/comments"
 import { DEFAULT_TEST_PATTERNS } from "./rules/tests/patterns"
 import { detectTestCommand } from "./core/test-command"
@@ -83,6 +84,7 @@ const resolvedTestGuard: ResolvedTestGuard = {
 }
 
 const resolvedJudge: JudgeConfig = { enabled: false }
+const resolvedParser: ParserAdapterConfig = { enabled: false }
 
 function resolveTestGuardConfiguration(config?: unknown): void {
   const options = optionContainer(pluginOptions, "test_guard")
@@ -153,6 +155,19 @@ function resolveTestGuardConfiguration(config?: unknown): void {
   resolvedJudge.model = resolveJudgeModel(resolveOption(asString, "TEST_GUARD_JUDGE_MODEL", "model", judgeInputs))
   resolvedJudge.timeoutMs = resolveOption(value => asCount(value, 1), "TEST_GUARD_JUDGE_TIMEOUT_MS", "timeout_ms", judgeInputs)
 
+  const optionsParser = asRecord(options?.parser)
+  const configParser = asRecord(fromConfig?.parser)
+  const parserInputs = { options: optionsParser, config: configParser }
+  resolvedParser.enabled =
+    resolveOption(
+      value => (value === undefined ? undefined : asBoolean(value, false)),
+      "TEST_GUARD_PARSER_ENABLED",
+      "enabled",
+      parserInputs,
+    ) ?? false
+  resolvedParser.command = resolveOption(asString, "TEST_GUARD_PARSER_COMMAND", "command", parserInputs)
+  resolvedParser.timeoutMs = resolveOption(value => asCount(value, 1), "TEST_GUARD_PARSER_TIMEOUT_MS", "timeout_ms", parserInputs)
+
   resolvedTestGuard.checks = resolveRuleConfig(DEFAULT_TEST_CHECKS, {
     envPrefix: "TEST_GUARD_",
     options,
@@ -193,6 +208,12 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
     runner: createModelJudgeRunner(input.client, projectDirectory),
   })
   const judgeTool = createGuardJudgeTool(judge)
+  const parser = createParserAdapter({
+    directory: projectDirectory,
+    getConfig: () => resolvedParser,
+    getTestPatterns: () => resolvedTestGuard.testPatterns,
+  })
+  const parseTool = createGuardParseTool(parser)
 
   return {
     config: async (config: unknown) => {
@@ -203,6 +224,7 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
     tool: {
       guard_audit: auditTool,
       guard_judge: judgeTool,
+      guard_parse: parseTool,
     },
     event: async ({ event }) => {
       if (event.type !== "session.idle") return
@@ -210,6 +232,8 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
       await testGuard.onIdle(sessionID)
       const judgeMessage = await judge.onIdle(sessionID)
       if (judgeMessage) testGuard.queueNote(judgeMessage)
+      const parserMessage = await parser.onIdle(sessionID)
+      if (parserMessage) testGuard.queueNote(parserMessage)
     },
     "permission.ask": async (input, output) => {
       testGuard.permission(input, output)

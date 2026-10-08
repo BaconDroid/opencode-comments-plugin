@@ -521,9 +521,10 @@ test("registers the guard_audit tool", async () => {
   expect(hooks.tool!.guard_audit).toBeDefined()
 })
 
-test("registers the guard_judge tool", async () => {
+test("registers the guard_judge and guard_parse tools", async () => {
   const hooks = await newSession()
   expect(hooks.tool!.guard_judge).toBeDefined()
+  expect(hooks.tool!.guard_parse).toBeDefined()
 })
 
 test("registers the /guard-audit command without overwriting existing commands", async () => {

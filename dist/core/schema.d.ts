@@ -102,6 +102,22 @@ export declare const TUPLE_OPTIONS_SCHEMA: {
                         };
                     };
                 };
+                readonly parser: {
+                    readonly type: "object";
+                    readonly additionalProperties: false;
+                    readonly properties: {
+                        readonly enabled: {
+                            readonly type: "boolean";
+                        };
+                        readonly command: {
+                            readonly type: "string";
+                        };
+                        readonly timeout_ms: {
+                            readonly type: "integer";
+                            readonly minimum: 1;
+                        };
+                    };
+                };
             };
         };
     };
