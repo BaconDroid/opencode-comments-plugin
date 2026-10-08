@@ -85,3 +85,32 @@ typecheck` + `bun run build`, then PR and squash merge.
 - The comment relevance judge, when enabled, sends the added comment lines to
   the configured model (the test judge sends the test diff).
 - Java remains unsupported.
+
+## 7. Slice status
+
+All slices landed via squash-merged PRs:
+
+1. `test_guard.tools` configurable filter (#26).
+2. Test-guard pending-call TTL cleanup + drop dead `mutationEnabled` (#27).
+3. Shared `readPreimage` in `core/diff` (#28).
+4. Comment `comment-guard: allow` / `comment-guard-disable-file` bypass (#29).
+5. Opt-in comment relevance judge + `guard_comment_judge` (#30).
+6. Comment guard reuses `extractPatchChanges` (#31).
+
+## 8. Detaching from the fork network (manual)
+
+The repository is a GitHub fork of `ajoslin/opencode-comments-plugin`. The
+GitHub REST API has no endpoint to leave the fork network (only `GET`/`POST
+/repos/{owner}/{repo}/forks`), so this cannot be done with a token. The
+non-destructive metadata/README independence changes are done in-repo; the fork
+link itself must be removed from the GitHub UI:
+
+1. Repository -> Settings -> General -> Danger Zone -> "Leave fork network".
+2. Type the repository name to confirm.
+
+Conditions (all met): public, < 1 GB, no child forks. GitHub warns that the
+standalone repository may not retain issues, pull requests, wikis, stars,
+watchers or comments; git commit history is preserved. Alternatively, contact
+GitHub Support to detach without recreating. A delete-and-recreate mirror is
+the only fully scriptable route and is destructive, so it is not performed.
+

@@ -2,13 +2,26 @@
 
 Stop the comment slop.
 
-OpenCode plugin that warns when new comments or docstrings are added.
-It wraps the `comment-checker` CLI from `go-claude-code-comment-checker` and surfaces warnings in tool output.
+OpenCode plugin that guards comments and tests: it warns when new comments or
+docstrings are added (wrapping the `comment-checker` CLI from
+`go-claude-code-comment-checker`) and ships a deterministic test guard that
+discourages weakened tests. Both surface their findings in tool output.
+
+## Origin and independence
+
+This project began as a fork of
+[`ajoslin/opencode-comments-plugin`](https://github.com/ajoslin/opencode-comments-plugin),
+which itself derives from the comment-checker hook in
+[oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode). It is now an
+independent project maintained by BaconDroid and has grown beyond comments: the
+test guard, the audit tooling and the opt-in analyzers are original work. The
+original credits are kept below.
 
 ## Credits
 
-This plugin is derived from the comment-checker hook logic in `oh-my-opencode`.
-Credit to [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) for the original hook integration.
+The comment guard is derived from the comment-checker hook logic in `oh-my-opencode`.
+Credit to [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) for the original hook integration,
+and to [ajoslin/opencode-comments-plugin](https://github.com/ajoslin/opencode-comments-plugin) for the plugin this one forked from.
 
 ## Install
 
