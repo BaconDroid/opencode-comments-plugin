@@ -1836,13 +1836,13 @@ function createTestGuard(getResolved) {
               continue;
             if (!isProtectedPath(entry.path, patterns))
               continue;
-            if (entry.kind === "Delete") {
-              throw new Error(`[test-guard] protected-paths is set to block: refusing to delete test file ${entry.path}. Set "checks": { "protected-paths": "warn" } or add a bypass.`);
+            if (entry.kind === "Delete" || pathExists(entry.path)) {
+              throw new Error(`[test-guard] protected-paths is set to block: refusing to modify test file ${entry.path}. Set "checks": { "protected-paths": "warn" } or add a bypass.`);
             }
           }
         } else {
           const filePath = firstString(args, "filePath", "file_path", "path");
-          if (filePath && isProtectedPath(filePath, patterns) && existsSync3(filePath)) {
+          if (filePath && isProtectedPath(filePath, patterns) && pathExists(filePath)) {
             throw new Error(`[test-guard] protected-paths is set to block: refusing to edit existing test file ${filePath}. Set "checks": { "protected-paths": "warn" } or add a bypass.`);
           }
         }

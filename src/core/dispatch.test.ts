@@ -111,6 +111,16 @@ test("block mode refuses an apply_patch deletion of a test file", () => {
   expect(() => guard.before({ tool: "apply_patch", sessionID: "s", callID: freshCallID() }, { args })).toThrow(/protected-paths/)
 })
 
+test("block mode refuses an apply_patch update of an existing test file", () => {
+  const filePath = join(dir, "existing-patch.test.ts")
+  writeFileSync(filePath, "it('a', () => {})\n")
+  const guard = guarded(config({ checks: { "protected-paths": "block" } }))
+  const args = { patchText: `*** Begin Patch\n*** Update File: ${filePath}\n*** End Patch` }
+  expect(() => guard.before({ tool: "apply_patch", sessionID: "s", callID: freshCallID() }, { args })).toThrow(
+    /protected-paths/,
+  )
+})
+
 test("extractPatchEntries parses add/update/delete entries", () => {
   const entries = extractPatchEntries(
     "*** Add File: src/a.ts\n*** Update File: src/b.ts\n*** Delete File: src/c.ts\n",
