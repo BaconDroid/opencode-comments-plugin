@@ -5,7 +5,7 @@
 import { existsSync } from "node:fs"
 import { APPLY_PATCH_TOOL_NAME, COMMENT_CHECKER_EVENT } from "../../constants"
 import { getCommentCheckerPath, runCommentChecker } from "../../cli"
-import { detectLanguage, diffLines, isCommentLine, readPreimage, splitPatch, toPatchEntries } from "../../core/diff"
+import { detectLanguage, diffLines, extractPatchChanges, isCommentLine, readPreimage } from "../../core/diff"
 import type { HookInput, PendingCall } from "../../types"
 
 const DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1"
@@ -225,21 +225,17 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
       return
     }
 
-    for (const file of toPatchEntries(output.metadata)) {
-      if (file.type === "delete") continue
-
-      const filePath = file.movePath ?? file.filePath
-      const sides = file.patch ? splitPatch(file.patch) : undefined
-      if (!filePath || !sides || sides.newText.length === 0) {
+    for (const change of extractPatchChanges(output.metadata)) {
+      if (change.isDelete || change.newText.length === 0) {
         debugLog("no file path or no added lines in patch entry for apply_patch")
         continue
       }
 
       await reportComments(sessionID, APPLY_PATCH_TOOL_NAME, {
-        file_path: filePath,
-        old_string: sides.oldText,
-        new_string: sides.newText,
-      }, output, { oldText: sides.oldText, newText: sides.newText })
+        file_path: change.filePath,
+        old_string: change.oldText,
+        new_string: change.newText,
+      }, output, { oldText: change.oldText, newText: change.newText })
     }
   }
 
