@@ -6,6 +6,7 @@ import { existsSync } from "node:fs"
 import { APPLY_PATCH_TOOL_NAME, COMMENT_CHECKER_EVENT } from "../../constants"
 import { getCommentCheckerPath, runCommentChecker } from "../../cli"
 import { GuardBudget } from "../../core/budget"
+import { bypassMatchers, collectBypasses, withinAllowWindow, type Bypass } from "../../core/bypass"
 import { detectLanguage, diffLines, extractPatchChanges, isCommentLine, readPreimage } from "../../core/diff"
 import type { HookInput, PendingCall } from "../../types"
 
@@ -23,41 +24,14 @@ const PENDING_CALL_TTL = 60_000
 // `test-guard-disable-file`. A comment whose added lines are all within
 // +/-2 lines of an allow marker suppresses the file's warning; a file-level
 // disable marker suppresses it outright.
-const BYPASS_WINDOW = 2
-const ALLOW_MARKER = /comment-guard:\s*allow\b/i
-const DISABLE_FILE_MARKER = /comment-guard-disable-file\b/i
-
-interface BypassNote {
-  kind: "allow" | "disable-file"
-  line: number
-  reason: string
-}
-
-function collectBypasses(text: string): BypassNote[] {
-  const notes: BypassNote[] = []
-  const lines = text.split("\n")
-  for (let i = 0; i < lines.length; i++) {
-    const allow = lines[i]!.match(/comment-guard:\s*allow\s*(.*)$/i)
-    if (allow) notes.push({ kind: "allow", line: i + 1, reason: allow[1]!.trim() })
-    if (DISABLE_FILE_MARKER.test(lines[i]!)) notes.push({ kind: "disable-file", line: i + 1, reason: "" })
-  }
-  return notes
-}
-
-function withinAllow(text: string, line: number): boolean {
-  const lines = text.split("\n")
-  const from = Math.max(0, line - 1 - BYPASS_WINDOW)
-  const to = Math.min(lines.length, line + BYPASS_WINDOW)
-  for (let i = from; i < to; i++) if (ALLOW_MARKER.test(lines[i] ?? "")) return true
-  return false
-}
+const MATCHERS = bypassMatchers("comment-guard")
 
 function bypassState(
   newText: string,
   oldText: string,
   language: ReturnType<typeof detectLanguage>,
-): { suppress: boolean; notes: BypassNote[] } {
-  const notes = collectBypasses(newText)
+): { suppress: boolean; notes: Bypass[] } {
+  const notes = collectBypasses(newText, MATCHERS)
   if (notes.some(note => note.kind === "disable-file")) return { suppress: true, notes }
 
   const { added } = diffLines(oldText, newText)
@@ -68,13 +42,13 @@ function bypassState(
   const used = new Set<number>()
   for (const comment of addedComments) {
     const index = lines.findIndex((line, i) => !used.has(i) && line === comment)
-    if (index < 0 || !withinAllow(newText, index + 1)) return { suppress: false, notes }
+    if (index < 0 || !withinAllowWindow(newText, index + 1, MATCHERS)) return { suppress: false, notes }
     used.add(index)
   }
   return { suppress: true, notes }
 }
 
-function renderBypassFooter(filePath: string, notes: BypassNote[]): string {
+function renderBypassFooter(filePath: string, notes: Bypass[]): string {
   const lines = notes.map(note => `- ${filePath}:${note.line} ${note.kind}${note.reason ? ` (${note.reason})` : ""}`)
   return `Comment guard bypass recorded:\n${lines.join("\n")}`
 }

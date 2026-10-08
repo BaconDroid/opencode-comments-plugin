@@ -1048,10 +1048,47 @@ function isConditionalSkip(line) {
   return CONDITIONAL_SKIP_PATTERNS.some((pattern) => pattern.test(line));
 }
 
-// src/rules/tests/content.ts
-var ALLOW_MARKER = /test-guard:\s*allow\b/i;
-var DISABLE_FILE_MARKER = /test-guard-disable-file\b/i;
+// src/core/bypass.ts
 var BYPASS_WINDOW = 2;
+function bypassMatchers(prefix) {
+  return {
+    allow: new RegExp(`${prefix}:\\s*allow\\b`, "i"),
+    allowReason: new RegExp(`${prefix}:\\s*allow\\s*(.*)$`, "i"),
+    disableFile: new RegExp(`${prefix}-disable-file\\b`, "i")
+  };
+}
+function collectBypasses(text, matchers) {
+  const bypasses = [];
+  const lines = text.split(`
+`);
+  for (let i = 0;i < lines.length; i++) {
+    const line = lines[i];
+    const allow = line.match(matchers.allowReason);
+    if (allow)
+      bypasses.push({ kind: "allow", line: i + 1, reason: allow[1].trim() });
+    if (matchers.disableFile.test(line))
+      bypasses.push({ kind: "disable-file", line: i + 1, reason: "" });
+  }
+  return bypasses;
+}
+function isFileDisabled(text, matchers) {
+  return matchers.disableFile.test(text);
+}
+function withinAllowWindow(text, line, matchers, window = BYPASS_WINDOW) {
+  if (line <= 0)
+    return false;
+  const lines = text.split(`
+`);
+  const from = Math.max(0, line - 1 - window);
+  const to = Math.min(lines.length, line + window);
+  for (let i = from;i < to; i++)
+    if (matchers.allow.test(lines[i] ?? ""))
+      return true;
+  return false;
+}
+
+// src/rules/tests/content.ts
+var MATCHERS = bypassMatchers("test-guard");
 function codeText(line, language) {
   return stripStringLiterals(stripComments(line, language));
 }
@@ -1093,34 +1130,13 @@ function locateLine(newText, needle) {
   return loose >= 0 ? loose + 1 : 0;
 }
 function withinBypass(newText, line) {
-  if (line <= 0)
-    return false;
-  const lines = newText.split(`
-`);
-  const from = Math.max(0, line - 1 - BYPASS_WINDOW);
-  const to = Math.min(lines.length, line + BYPASS_WINDOW);
-  for (let i = from;i < to; i++) {
-    if (ALLOW_MARKER.test(lines[i] ?? ""))
-      return true;
-  }
-  return false;
+  return withinAllowWindow(newText, line, MATCHERS);
 }
-function isFileDisabled(change) {
-  return DISABLE_FILE_MARKER.test(change.newText);
+function isFileDisabled2(change) {
+  return isFileDisabled(change.newText, MATCHERS);
 }
-function collectBypasses(change) {
-  const bypasses = [];
-  const lines = change.newText.split(`
-`);
-  for (let i = 0;i < lines.length; i++) {
-    const line = lines[i];
-    const allow = line.match(/test-guard:\s*allow\s*(.*)$/i);
-    if (allow)
-      bypasses.push({ kind: "allow", line: i + 1, reason: allow[1].trim() });
-    if (DISABLE_FILE_MARKER.test(line))
-      bypasses.push({ kind: "disable-file", line: i + 1, reason: "" });
-  }
-  return bypasses;
+function collectBypasses2(change) {
+  return collectBypasses(change.newText, MATCHERS);
 }
 function addedLineFindings(ctx, rule, patterns, message, skip) {
   const findings = [];
@@ -1607,8 +1623,8 @@ function buildRuleChecks(includeAdvisory) {
 function runTestRules(ctx) {
   if (!ctx.isTestFile)
     return { findings: [], bypassed: false, bypasses: [] };
-  if (isFileDisabled(ctx.change)) {
-    return { findings: [], bypassed: true, bypasses: collectBypasses(ctx.change) };
+  if (isFileDisabled2(ctx.change)) {
+    return { findings: [], bypassed: true, bypasses: collectBypasses2(ctx.change) };
   }
   if (!ctx.blocks)
     ctx.blocks = findTestBlocks(ctx.change.newText, ctx.change.language);
@@ -1621,7 +1637,7 @@ function runTestRules(ctx) {
       findings.push(...rule.run(ctx));
     } catch {}
   }
-  return { findings, bypassed: false, bypasses: collectBypasses(ctx.change) };
+  return { findings, bypassed: false, bypasses: collectBypasses2(ctx.change) };
 }
 
 // src/core/dispatch.ts
@@ -2404,34 +2420,9 @@ function debugLog4(...args) {
   process.stderr.write(msg);
 }
 var PENDING_CALL_TTL2 = 60000;
-var BYPASS_WINDOW2 = 2;
-var ALLOW_MARKER2 = /comment-guard:\s*allow\b/i;
-var DISABLE_FILE_MARKER2 = /comment-guard-disable-file\b/i;
-function collectBypasses2(text) {
-  const notes = [];
-  const lines = text.split(`
-`);
-  for (let i = 0;i < lines.length; i++) {
-    const allow = lines[i].match(/comment-guard:\s*allow\s*(.*)$/i);
-    if (allow)
-      notes.push({ kind: "allow", line: i + 1, reason: allow[1].trim() });
-    if (DISABLE_FILE_MARKER2.test(lines[i]))
-      notes.push({ kind: "disable-file", line: i + 1, reason: "" });
-  }
-  return notes;
-}
-function withinAllow(text, line) {
-  const lines = text.split(`
-`);
-  const from = Math.max(0, line - 1 - BYPASS_WINDOW2);
-  const to = Math.min(lines.length, line + BYPASS_WINDOW2);
-  for (let i = from;i < to; i++)
-    if (ALLOW_MARKER2.test(lines[i] ?? ""))
-      return true;
-  return false;
-}
+var MATCHERS2 = bypassMatchers("comment-guard");
 function bypassState(newText, oldText, language) {
-  const notes = collectBypasses2(newText);
+  const notes = collectBypasses(newText, MATCHERS2);
   if (notes.some((note) => note.kind === "disable-file"))
     return { suppress: true, notes };
   const { added } = diffLines(oldText, newText);
@@ -2443,7 +2434,7 @@ function bypassState(newText, oldText, language) {
   const used = new Set;
   for (const comment of addedComments) {
     const index = lines.findIndex((line, i) => !used.has(i) && line === comment);
-    if (index < 0 || !withinAllow(newText, index + 1))
+    if (index < 0 || !withinAllowWindow(newText, index + 1, MATCHERS2))
       return { suppress: false, notes };
     used.add(index);
   }
