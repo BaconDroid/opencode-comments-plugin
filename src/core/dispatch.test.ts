@@ -15,7 +15,6 @@ function config(overrides: Partial<ResolvedTestGuard> = {}): ResolvedTestGuard {
     testPatterns: [...DEFAULT_TEST_PATTERNS],
     checks: { "skip-focus-added": "warn", "protected-paths": "warn" },
     maxWarningsPerFile: 0,
-    mutationEnabled: false,
     ...overrides,
   }
 }
@@ -224,38 +223,12 @@ test("after alerts when a block rule was bypassed", async () => {
   expect(output.output).toContain("BLOCK BYPASSED")
 })
 
-test("mutation adapter surfaces survivors on the next tool call", async () => {
-  const guard = guarded(
-    config({
-      mutationEnabled: true,
-      mutationCommand: `printf '%s' '{"survivors":[{"file":"a.ts","line":3,"mutator":"X"}]}'`,
-    }),
-  )
-  await guard.onIdle()
-  const output: Output = { title: "", output: "bash output", metadata: {} }
-  await guard.after({ tool: "bash", sessionID: "s", callID: freshCallID() }, output)
-  expect(output.output).toContain("Mutation survivors detected")
-})
-
-test("mutation adapter does not rerun within the cooldown", async () => {
-  const logFile = join(dir, "mutation-runs.txt")
-  const guard = guarded(
-    config({
-      mutationEnabled: true,
-      mutationCommand: `printf x >> '${logFile}'; printf '%s' '{"survivors":[{"file":"a.ts","line":1}]}'`,
-    }),
-  )
-  await guard.onIdle("s-cool")
-  await guard.onIdle("s-cool")
-  expect(await Bun.file(logFile).text()).toBe("x")
-})
-
-test("mutation adapter is off by default", async () => {
+test("surfaces a queued note on the next tool call", async () => {
   const guard = guarded(config())
-  await guard.onIdle()
+  guard.queueNote("queued advisory")
   const output: Output = { title: "", output: "bash output", metadata: {} }
   await guard.after({ tool: "bash", sessionID: "s", callID: freshCallID() }, output)
-  expect(output.output).toBe("bash output")
+  expect(output.output).toContain("queued advisory")
 })
 
 test("coexists with another plugin without clobbering or duplicating output", async () => {

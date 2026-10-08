@@ -16,6 +16,7 @@ import {
 import { createTestGuard, type ResolvedTestGuard } from "./core/dispatch"
 import { createGuardJudgeTool, createJudge, createModelJudgeRunner, resolveJudgeModel, type JudgeConfig } from "./core/judge"
 import { createGuardParseTool, createParserAdapter, type ParserAdapterConfig } from "./core/parser-adapter"
+import { createMutationAdapter, type MutationConfig } from "./core/mutation"
 import { createCommentGuard, type ResolvedCommentConfig } from "./rules/comments"
 import { DEFAULT_TEST_PATTERNS } from "./rules/tests/patterns"
 import { detectTestCommand } from "./core/test-command"
@@ -80,8 +81,9 @@ const resolvedTestGuard: ResolvedTestGuard = {
   testCommand: null,
   checks: { ...DEFAULT_TEST_CHECKS },
   maxWarningsPerFile: 0,
-  mutationEnabled: false,
 }
+
+const resolvedMutation: MutationConfig = { enabled: false }
 
 const resolvedJudge: JudgeConfig = { enabled: false }
 const resolvedParser: ParserAdapterConfig = { enabled: false }
@@ -127,15 +129,15 @@ function resolveTestGuardConfiguration(config?: unknown): void {
   const optionsMutation = asRecord(options?.mutation)
   const configMutation = asRecord(fromConfig?.mutation)
   const mutationInputs = { options: optionsMutation, config: configMutation }
-  resolvedTestGuard.mutationEnabled =
+  resolvedMutation.enabled =
     resolveOption(
       value => (value === undefined ? undefined : asBoolean(value, false)),
       "TEST_GUARD_MUTATION_ENABLED",
       "enabled",
       mutationInputs,
     ) ?? false
-  resolvedTestGuard.mutationCommand = resolveOption(asString, "TEST_GUARD_MUTATION_COMMAND", "command", mutationInputs)
-  resolvedTestGuard.mutationTimeoutMs = resolveOption(
+  resolvedMutation.command = resolveOption(asString, "TEST_GUARD_MUTATION_COMMAND", "command", mutationInputs)
+  resolvedMutation.timeoutMs = resolveOption(
     value => asCount(value, 1),
     "TEST_GUARD_MUTATION_TIMEOUT_MS",
     "timeout_ms",
@@ -214,6 +216,7 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
     getTestPatterns: () => resolvedTestGuard.testPatterns,
   })
   const parseTool = createGuardParseTool(parser)
+  const mutation = createMutationAdapter({ getConfig: () => resolvedMutation })
 
   return {
     config: async (config: unknown) => {
@@ -229,11 +232,10 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
     event: async ({ event }) => {
       if (event.type !== "session.idle") return
       const sessionID = event.properties?.sessionID ?? ""
-      await testGuard.onIdle(sessionID)
-      const judgeMessage = await judge.onIdle(sessionID)
-      if (judgeMessage) testGuard.queueNote(judgeMessage)
-      const parserMessage = await parser.onIdle(sessionID)
-      if (parserMessage) testGuard.queueNote(parserMessage)
+      for (const analyzer of [mutation, judge, parser]) {
+        const message = await analyzer.onIdle(sessionID)
+        if (message) testGuard.queueNote(message)
+      }
     },
     "permission.ask": async (input, output) => {
       testGuard.permission(input, output)
