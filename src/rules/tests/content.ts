@@ -41,6 +41,29 @@ function countAssertionsCode(lines: string[], language: Language): number {
   return countAssertions(lines.map(line => codeText(line, language)))
 }
 
+// Normalizes an assertion so formatting-only edits and common aliases are not
+// counted as different assertions (plan section 6: normalize expected values).
+function normalizeAssertion(code: string): string {
+  return code
+    .replace(/\s+/g, "")
+    .replace(/self\.(?=assert)/g, "")
+    .replace(/assertEqual/gi, "assertEquals")
+    .replace(/\.toBe\b/g, ".toEqual")
+}
+
+// Deduplicated set of normalized assertion lines, so repeated identical
+// assertions are not mistaken for a net loss.
+function uniqueAssertions(lines: string[], language: Language): string[] {
+  const set = new Set<string>()
+  for (const line of lines) {
+    const code = codeText(line, language).trim()
+    if (code.length === 0) continue
+    if (!ASSERTION_COUNT_PATTERNS.some(pattern => pattern.test(code))) continue
+    set.add(normalizeAssertion(code))
+  }
+  return [...set]
+}
+
 function multiset(lines: string[]): Map<string, number> {
   const map = new Map<string, number>()
   for (const line of lines) map.set(line, (map.get(line) ?? 0) + 1)
@@ -168,9 +191,10 @@ export const netAssertionLossRule: TestRule = {
   id: "net-assertion-loss",
   run(ctx) {
     if (ctx.change.removedLines.length === 0) return []
-    const removed = countAssertionsCode(ctx.change.removedLines, ctx.change.language)
-    const added = countAssertionsCode(ctx.change.addedLines, ctx.change.language)
-    if (removed - added < 2) return []
+    const removed = uniqueAssertions(ctx.change.removedLines, ctx.change.language).length
+    const added = uniqueAssertions(ctx.change.addedLines, ctx.change.language).length
+    const threshold = ctx.config.netAssertionLossThreshold ?? 2
+    if (removed - added < threshold) return []
 
     const learned = ctx.change.addedLines.some(line =>
       HELPER_DECLARATION_PATTERNS.some(p => p.test(codeText(line, ctx.change.language))),
@@ -200,8 +224,8 @@ export const netAssertionLossRule: TestRule = {
 export const guttedTestRule: TestRule = {
   id: "gutted-test",
   run(ctx) {
-    const removed = countAssertionsCode(ctx.change.removedLines, ctx.change.language)
-    const added = countAssertionsCode(ctx.change.addedLines, ctx.change.language)
+    const removed = uniqueAssertions(ctx.change.removedLines, ctx.change.language).length
+    const added = uniqueAssertions(ctx.change.addedLines, ctx.change.language).length
     if (removed <= 0 || added !== 0) return []
 
     const declarations = TEST_DECLARATION_PATTERNS[ctx.change.language]

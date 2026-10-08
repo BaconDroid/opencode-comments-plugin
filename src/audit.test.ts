@@ -24,6 +24,7 @@ function config(): ResolvedTestGuard {
     testPatterns: ["**/*.test.ts"],
     checks: {},
     maxWarningsPerFile: 0,
+    netAssertionLossThreshold: 2,
   }
 }
 

@@ -64,6 +64,10 @@ export declare const TUPLE_OPTIONS_SCHEMA: {
                     readonly type: "integer";
                     readonly minimum: 0;
                 };
+                readonly net_assertion_loss_threshold: {
+                    readonly type: "integer";
+                    readonly minimum: 1;
+                };
                 readonly custom_prompt: {
                     readonly type: "string";
                 };

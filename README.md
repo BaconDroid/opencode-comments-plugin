@@ -123,6 +123,7 @@ tests. It reuses the same tuple, under a sibling `test_guard` key:
       "test_guard": {
         "enabled": true,
         "test_patterns": ["**/*.test.*", "**/*_test.*", "**/test_*.py", "**/tests/**"],
+        "net_assertion_loss_threshold": 2,
         "checks": { "protected-paths": "warn", "skip-focus-added": "warn" }
       }
     }]
@@ -158,8 +159,9 @@ file-level `// test-guard-disable-file`.
 
 Env vars mirror the comment guard: `TEST_GUARD_ENABLED`,
 `TEST_GUARD_TEST_PATTERNS`, `TEST_GUARD_MAX_WARNINGS_PER_FILE`,
-`TEST_GUARD_CUSTOM_PROMPT`, `TEST_GUARD_APPEND_PROMPT`, and
-`TEST_GUARD_CHECK_<RULE>` (env > tuple options > config hook).
+`TEST_GUARD_NET_ASSERTION_LOSS_THRESHOLD`, `TEST_GUARD_CUSTOM_PROMPT`,
+`TEST_GUARD_APPEND_PROMPT`, and `TEST_GUARD_CHECK_<RULE>`
+(env > tuple options > config hook).
 
 ### Audit
 

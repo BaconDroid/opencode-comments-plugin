@@ -401,6 +401,21 @@ function blocksOf(ctx) {
 function countAssertionsCode(lines, language) {
   return countAssertions(lines.map((line) => codeText(line, language)));
 }
+function normalizeAssertion(code) {
+  return code.replace(/\s+/g, "").replace(/self\.(?=assert)/g, "").replace(/assertEqual/gi, "assertEquals").replace(/\.toBe\b/g, ".toEqual");
+}
+function uniqueAssertions(lines, language) {
+  const set = new Set;
+  for (const line of lines) {
+    const code = codeText(line, language).trim();
+    if (code.length === 0)
+      continue;
+    if (!ASSERTION_COUNT_PATTERNS.some((pattern) => pattern.test(code)))
+      continue;
+    set.add(normalizeAssertion(code));
+  }
+  return [...set];
+}
 function multiset(lines) {
   const map = new Map;
   for (const line of lines)
@@ -514,9 +529,10 @@ var netAssertionLossRule = {
   run(ctx) {
     if (ctx.change.removedLines.length === 0)
       return [];
-    const removed = countAssertionsCode(ctx.change.removedLines, ctx.change.language);
-    const added = countAssertionsCode(ctx.change.addedLines, ctx.change.language);
-    if (removed - added < 2)
+    const removed = uniqueAssertions(ctx.change.removedLines, ctx.change.language).length;
+    const added = uniqueAssertions(ctx.change.addedLines, ctx.change.language).length;
+    const threshold = ctx.config.netAssertionLossThreshold ?? 2;
+    if (removed - added < threshold)
       return [];
     const learned = ctx.change.addedLines.some((line) => HELPER_DECLARATION_PATTERNS.some((p) => p.test(codeText(line, ctx.change.language))));
     if (learned)
@@ -541,8 +557,8 @@ var netAssertionLossRule = {
 var guttedTestRule = {
   id: "gutted-test",
   run(ctx) {
-    const removed = countAssertionsCode(ctx.change.removedLines, ctx.change.language);
-    const added = countAssertionsCode(ctx.change.addedLines, ctx.change.language);
+    const removed = uniqueAssertions(ctx.change.removedLines, ctx.change.language).length;
+    const added = uniqueAssertions(ctx.change.addedLines, ctx.change.language).length;
     if (removed <= 0 || added !== 0)
       return [];
     const declarations = TEST_DECLARATION_PATTERNS[ctx.change.language];
@@ -1182,6 +1198,9 @@ function validateTestGuard(record, path, errors) {
   if (record.max_warnings_per_file !== undefined && asCount(record.max_warnings_per_file, 0) === undefined) {
     errors.push(`${path}.max_warnings_per_file must be an integer >= 0`);
   }
+  if (record.net_assertion_loss_threshold !== undefined && asCount(record.net_assertion_loss_threshold, 1) === undefined) {
+    errors.push(`${path}.net_assertion_loss_threshold must be an integer >= 1`);
+  }
   if (record.checks !== undefined) {
     if (!isRecord(record.checks))
       errors.push(`${path}.checks must be an object`);
@@ -1200,7 +1219,17 @@ function validateTestGuard(record, path, errors) {
   }
   if (record.mutation !== undefined && !isRecord(record.mutation))
     errors.push(`${path}.mutation must be an object`);
-  rejectUnknown(record, ["enabled", "test_patterns", "test_command", "checks", "max_warnings_per_file", "custom_prompt", "append_prompt", "mutation"], path, errors);
+  rejectUnknown(record, [
+    "enabled",
+    "test_patterns",
+    "test_command",
+    "checks",
+    "max_warnings_per_file",
+    "net_assertion_loss_threshold",
+    "custom_prompt",
+    "append_prompt",
+    "mutation"
+  ], path, errors);
 }
 function rejectUnknown(record, known, path, errors) {
   for (const key of Object.keys(record)) {
@@ -2019,7 +2048,8 @@ async function auditCommand(parsed) {
       testPatterns: [],
       testCommand: detectTestCommand(process.cwd()),
       checks: {},
-      maxWarningsPerFile: 0
+      maxWarningsPerFile: 0,
+      netAssertionLossThreshold: 2
     })
   });
   process.stdout.write(`${output}

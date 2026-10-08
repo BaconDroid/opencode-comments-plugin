@@ -25,6 +25,14 @@ test("rejects an unknown test_guard key", () => {
   expect(result.errors.join()).toContain("nope")
 })
 
+test("accepts a net_assertion_loss_threshold", () => {
+  expect(validateTupleOptions({ test_guard: { net_assertion_loss_threshold: 3 } }).valid).toBe(true)
+})
+
+test("rejects a zero net_assertion_loss_threshold", () => {
+  expect(validateTupleOptions({ test_guard: { net_assertion_loss_threshold: 0 } }).valid).toBe(false)
+})
+
 test("rejects a non-object options value", () => {
   expect(validateTupleOptions([]).valid).toBe(false)
 })

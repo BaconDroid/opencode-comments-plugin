@@ -298,6 +298,26 @@ test("tests-not-run flags an exclude flag", () => {
   expect(run(testsNotRunRule, change)).toHaveLength(1)
 })
 
+test("net-assertion-loss honours a custom threshold", () => {
+  const oldText = "def test_x():\n    assert a == 1\n"
+  const newText = "def test_x():\n    pass\n"
+  const ctx = makeContext(makeChange("/work/test_x.py", oldText, newText), true)
+  ctx.config.netAssertionLossThreshold = 1
+  expect(netAssertionLossRule.run(ctx)).toHaveLength(1)
+})
+
+test("net-assertion-loss normalizes duplicate assertions", () => {
+  const oldText = "def test_x():\n    assert a == 1\n    assert a == 1\n    assert a == 1\n"
+  const newText = "def test_x():\n    assert a == 1\n"
+  expect(run(netAssertionLossRule, makeChange("/work/test_x.py", oldText, newText), true)).toHaveLength(0)
+})
+
+test("net-assertion-loss normalizes self.assert aliases", () => {
+  const oldText = "def test_x():\n    self.assertEqual(a, b)\n    self.assertEqual(a, b)\n"
+  const newText = "def test_x():\n    assertEquals(a, b)\n"
+  expect(run(netAssertionLossRule, makeChange("/work/test_x.py", oldText, newText), true)).toHaveLength(0)
+})
+
 test("findCrossFileDuplicates flags identical bodies across files", () => {
   const body = ["test('a', () => {", "  expect(compute(1)).toBe(42)", "})", ""].join("\n")
   const dups = findCrossFileDuplicates([

@@ -15,6 +15,7 @@ function config(overrides: Partial<ResolvedTestGuard> = {}): ResolvedTestGuard {
     testPatterns: [...DEFAULT_TEST_PATTERNS],
     checks: { "skip-focus-added": "warn", "protected-paths": "warn" },
     maxWarningsPerFile: 0,
+    netAssertionLossThreshold: 2,
     ...overrides,
   }
 }
