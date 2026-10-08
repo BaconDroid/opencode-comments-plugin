@@ -91,6 +91,7 @@ Every option can also be set (and overridden) through the environment, which alw
 - If the CLI detects comments, it appends the warning message to the tool output, so the model that called the tool reads it on its next turn. Nothing is blocked and the file is never rewritten.
 - Only comments introduced by the change are candidates: for `edit` and `apply_patch` the plugin passes the old and the new snippet, so a comment that was already on the changed lines is not reported; for `write` the whole new content is checked, because the hook cannot see the previous content (rewriting a file keeps flagging the comments it contains).
 - The `comment-checker` binary is resolved from the latest GitHub release (checked at most once a day), cached under `~/.cache/opencode-comments-plugin/bin/<version>/`, and downloaded on demand. If the network is unavailable it falls back to the cached or installed version.
+- Inline bypass: `// comment-guard: allow <reason>` within +/-2 lines of the added comments suppresses the file's warning; file-level `// comment-guard-disable-file` suppresses it outright. A suppressed or warned file with markers reports them under a "Comment guard bypass recorded" footer.
 
 ## Detection
 

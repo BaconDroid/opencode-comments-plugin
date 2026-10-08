@@ -2319,6 +2319,70 @@ function debugLog4(...args) {
   process.stderr.write(msg);
 }
 var PENDING_CALL_TTL2 = 60000;
+var BYPASS_WINDOW2 = 2;
+var ALLOW_MARKER2 = /comment-guard:\s*allow\b/i;
+var DISABLE_FILE_MARKER2 = /comment-guard-disable-file\b/i;
+function collectBypasses2(text) {
+  const notes = [];
+  const lines = text.split(`
+`);
+  for (let i = 0;i < lines.length; i++) {
+    const allow = lines[i].match(/comment-guard:\s*allow\s*(.*)$/i);
+    if (allow)
+      notes.push({ kind: "allow", line: i + 1, reason: allow[1].trim() });
+    if (DISABLE_FILE_MARKER2.test(lines[i]))
+      notes.push({ kind: "disable-file", line: i + 1, reason: "" });
+  }
+  return notes;
+}
+function withinAllow(text, line) {
+  const lines = text.split(`
+`);
+  const from = Math.max(0, line - 1 - BYPASS_WINDOW2);
+  const to = Math.min(lines.length, line + BYPASS_WINDOW2);
+  for (let i = from;i < to; i++)
+    if (ALLOW_MARKER2.test(lines[i] ?? ""))
+      return true;
+  return false;
+}
+function bypassState(newText, oldText, language) {
+  const notes = collectBypasses2(newText);
+  if (notes.some((note) => note.kind === "disable-file"))
+    return { suppress: true, notes };
+  const { added } = diffLines(oldText, newText);
+  const addedComments = added.filter((line) => isCommentLine(line, language));
+  if (addedComments.length === 0)
+    return { suppress: false, notes };
+  const lines = newText.split(`
+`);
+  const used = new Set;
+  for (const comment of addedComments) {
+    const index = lines.findIndex((line, i) => !used.has(i) && line === comment);
+    if (index < 0 || !withinAllow(newText, index + 1))
+      return { suppress: false, notes };
+    used.add(index);
+  }
+  return { suppress: true, notes };
+}
+function renderBypassFooter(filePath, notes) {
+  const lines = notes.map((note) => `- ${filePath}:${note.line} ${note.kind}${note.reason ? ` (${note.reason})` : ""}`);
+  return `Comment guard bypass recorded:
+${lines.join(`
+`)}`;
+}
+function changeOf(call) {
+  if (typeof call.content === "string")
+    return { oldText: call.preimage ?? "", newText: call.content };
+  if (Array.isArray(call.edits) && call.edits.length > 0) {
+    return {
+      oldText: call.edits.map((edit) => edit.old_string ?? "").join(`
+`),
+      newText: call.edits.map((edit) => edit.new_string ?? "").join(`
+`)
+    };
+  }
+  return { oldText: call.oldString ?? "", newText: call.newString ?? "" };
+}
 function createCommentGuard(getConfig) {
   const pendingCalls = new Map;
   const warningCounts = new Map;
@@ -2365,10 +2429,19 @@ function createCommentGuard(getConfig) {
     const { added } = diffLines(preimage, content);
     return added.some((line) => isCommentLine(line, language));
   }
-  async function reportComments(sessionID, toolName, toolInput, output) {
+  async function reportComments(sessionID, toolName, toolInput, output, change) {
     try {
       const { customPrompt, appendPrompt, timeoutMs } = getConfig();
       const filePath = toolInput.file_path ?? "";
+      const bypass = bypassState(change.newText, change.oldText, detectLanguage(filePath));
+      if (bypass.suppress) {
+        debugLog4("comment guard bypassed for", filePath);
+        if (bypass.notes.length > 0)
+          output.output += `
+
+${renderBypassFooter(filePath, bypass.notes)}`;
+        return;
+      }
       if (!canWarn(sessionID, filePath)) {
         debugLog4("warning budget spent for", filePath);
         return;
@@ -2395,6 +2468,10 @@ ${appendPrompt}` : result.message;
         output.output += `
 
 ${message}`;
+        if (bypass.notes.length > 0)
+          output.output += `
+
+${renderBypassFooter(filePath, bypass.notes)}`;
       }
     } catch (err) {
       debugLog4("comment check failed:", err);
@@ -2418,7 +2495,7 @@ ${message}`;
         file_path: filePath,
         old_string: sides.oldText,
         new_string: sides.newText
-      }, output);
+      }, output, { oldText: sides.oldText, newText: sides.newText });
     }
   }
   async function before(input, output) {
@@ -2481,7 +2558,7 @@ ${message}`;
       old_string: pendingCall.oldString,
       new_string: pendingCall.newString,
       edits: pendingCall.edits
-    }, output);
+    }, output, changeOf(pendingCall));
   }
   return { before, after };
 }
