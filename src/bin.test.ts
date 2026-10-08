@@ -41,6 +41,17 @@ test("validate-config rejects an invalid severity", () => {
   }
 })
 
+test("guard check rejects an unknown scope", () => {
+  const dir = mkdtempSync(join(tmpdir(), "guard-bin-scope-"))
+  try {
+    const result = runCli(["guard", "check", "--scope", "nope"], dir)
+    expect(result.exitCode).toBe(2)
+    expect(result.stderr).toContain("--scope")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("guard check --diff exits non-zero when the diff weakens a test", () => {
   const dir = mkdtempSync(join(tmpdir(), "guard-bin-git-"))
   try {

@@ -3,11 +3,14 @@
 
 import { existsSync, readFileSync } from "node:fs"
 import { isAbsolute, join, relative } from "node:path"
+import { getCommentCheckerPath, runCommentChecker } from "../cli"
+import { COMMENT_CHECKER_EVENT } from "../constants"
 import { extractChange, isSupportedLanguage, stripComments, type ExtractedChange, type Language } from "./diff"
 import { formatFindings, type Finding } from "./feedback"
 import { ASSERTION_COUNT_PATTERNS, DEFAULT_TEST_PATTERNS, isTestPath } from "../rules/tests/patterns"
 import { buildRuleChecks, runTestRules } from "../rules/tests"
 import type { RuleContext } from "../rules/tests/types"
+import type { CheckResult } from "../types"
 
 function run(args: string[], cwd: string): { stdout: string; exitCode: number } {
   const result = Bun.spawnSync(args, { cwd, stdout: "pipe", stderr: "ignore" })
@@ -146,4 +149,64 @@ export function runDiffCheck(options: DiffCheckOptions): DiffCheckResult {
   const header = `# Test guard check (${base})`
   const body = findings.length > 0 ? formatFindings(findings) : "No findings."
   return { findings, output: `${header}\n\n${body}` }
+}
+
+// CI parity for the comment guard: run the comment-checker binary over the
+// added lines of every supported changed file. Fail-open: a missing binary or
+// an error yields no findings.
+export interface CommentDiffDeps {
+  runCheck?: (change: ExtractedChange) => Promise<CheckResult>
+}
+
+export interface CommentDiffResult {
+  output: string
+  count: number
+}
+
+async function defaultCommentCheck(change: ExtractedChange, directory: string): Promise<CheckResult> {
+  const cliPath = await getCommentCheckerPath()
+  if (!cliPath || !existsSync(cliPath)) return { hasComments: false, message: "" }
+  return runCommentChecker(
+    {
+      session_id: "guard-check",
+      tool_name: "Edit",
+      transcript_path: "",
+      cwd: directory,
+      hook_event_name: COMMENT_CHECKER_EVENT,
+      tool_input: { file_path: change.filePath, old_string: change.oldText, new_string: change.newText },
+    },
+    { cliPath },
+  )
+}
+
+export async function runCommentDiffCheck(
+  options: { directory: string; base?: string; format?: "markdown" | "json" },
+  deps: CommentDiffDeps = {},
+): Promise<CommentDiffResult> {
+  const directory = options.directory
+  const base = options.base ?? "HEAD"
+  const runCheck = deps.runCheck ?? ((change: ExtractedChange) => defaultCommentCheck(change, directory))
+  const changes = diffChanges(directory, base).filter(
+    change => isSupportedLanguage(change.language) && change.addedLines.length > 0,
+  )
+
+  const entries: Array<{ file: string; message: string }> = []
+  for (const change of changes) {
+    try {
+      const result = await runCheck(change)
+      if (result.hasComments && result.message) {
+        entries.push({ file: relative(directory, change.filePath) || change.filePath, message: result.message })
+      }
+    } catch {
+      // fail-open: a failing check never breaks the CLI
+    }
+  }
+
+  if (options.format === "json") {
+    return { output: JSON.stringify({ comments: entries }, null, 2), count: entries.length }
+  }
+
+  const header = `# Comment guard check (${base})`
+  const body = entries.length === 0 ? "No findings." : entries.map(entry => `## ${entry.file}\n\n${entry.message}`).join("\n\n")
+  return { output: `${header}\n\n${body}`, count: entries.length }
 }

@@ -2,7 +2,7 @@ import { test, expect, beforeEach, afterEach } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { runDiffCheck } from "./ci"
+import { runCommentDiffCheck, runDiffCheck } from "./ci"
 
 let dir: string
 
@@ -67,4 +67,36 @@ test("json output is parseable", () => {
   const result = runDiffCheck({ directory: dir, base: "HEAD", format: "json" })
   const parsed = JSON.parse(result.output) as { findings: unknown[] }
   expect(parsed.findings.length).toBeGreaterThan(0)
+})
+
+test("runCommentDiffCheck reports the comments the checker returns", async () => {
+  writeFileSync(join(dir, "a.ts"), "const a = 1\n")
+  git(["add", "."])
+  git(["commit", "-m", "init"])
+  writeFileSync(join(dir, "a.ts"), "const a = 1\n// explain\n")
+
+  const result = await runCommentDiffCheck(
+    { directory: dir, base: "HEAD" },
+    {
+      runCheck: async change =>
+        change.addedLines.some(line => line.includes("//"))
+          ? { hasComments: true, message: "COMMENT DETECTED" }
+          : { hasComments: false, message: "" },
+    },
+  )
+  expect(result.count).toBe(1)
+  expect(result.output).toContain("COMMENT DETECTED")
+})
+
+test("runCommentDiffCheck is silent when the checker reports nothing", async () => {
+  writeFileSync(join(dir, "a.ts"), "const a = 1\n")
+  git(["add", "."])
+  git(["commit", "-m", "init"])
+  writeFileSync(join(dir, "a.ts"), "const a = 1\n// explain\n")
+
+  const result = await runCommentDiffCheck({ directory: dir, base: "HEAD" }, {
+    runCheck: async () => ({ hasComments: false, message: "" }),
+  })
+  expect(result.count).toBe(0)
+  expect(result.output).toContain("No findings.")
 })
