@@ -5,6 +5,7 @@ export interface ResolvedCommentConfig {
     maxWarningsPerFile: number;
     dedupWindowMs: number;
     triggerTools: Set<string>;
+    paths: string[];
     timeoutMs: number;
 }
 interface BeforeInput {

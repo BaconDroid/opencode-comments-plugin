@@ -8,6 +8,7 @@ import { getCommentCheckerPath, runCommentChecker } from "../../cli"
 import { GuardBudget } from "../../core/budget"
 import { bypassMatchers, collectBypasses, withinAllowWindow, type Bypass } from "../../core/bypass"
 import { detectLanguage, diffLines, extractPatchChanges, isCommentLine, readPreimage } from "../../core/diff"
+import { matchesAnyGlob } from "../../core/glob"
 import type { HookInput, PendingCall } from "../../types"
 
 const DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1"
@@ -72,10 +73,16 @@ export interface ResolvedCommentConfig {
   maxWarningsPerFile: number
   dedupWindowMs: number
   triggerTools: Set<string>
+  paths: string[]
   timeoutMs: number
 }
 
 const COMMENT_RULE = "comment"
+
+// An empty list means every file; otherwise the file must match one glob.
+function isCheckedPath(filePath: string, paths: string[]): boolean {
+  return paths.length === 0 || matchesAnyGlob(paths, filePath)
+}
 
 interface BeforeInput {
   tool: string
@@ -175,6 +182,7 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
         debugLog("no file path or no added lines in patch entry for apply_patch")
         continue
       }
+      if (!isCheckedPath(change.filePath, getConfig().paths)) continue
 
       await reportComments(sessionID, APPLY_PATCH_TOOL_NAME, {
         file_path: change.filePath,
@@ -201,6 +209,11 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
 
     if (!filePath) {
       debugLog("no filePath found for tool:", toolLower)
+      return
+    }
+
+    if (!isCheckedPath(filePath, getConfig().paths)) {
+      debugLog("path not in comment_checker.paths; skipping:", filePath)
       return
     }
 

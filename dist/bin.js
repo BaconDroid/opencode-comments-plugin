@@ -1170,13 +1170,16 @@ function validateCommentChecker(record, path, errors) {
   if (record.tools !== undefined && asTools(record.tools) === undefined) {
     errors.push(`${path}.tools must be a string array or a comma separated string`);
   }
+  if (record.paths !== undefined && asPatterns(record.paths) === undefined) {
+    errors.push(`${path}.paths must be a string array or a comma separated string`);
+  }
   if (record.judge !== undefined) {
     if (!isRecord(record.judge))
       errors.push(`${path}.judge must be an object`);
     else
       validateJudge(record.judge, `${path}.judge`, errors);
   }
-  rejectUnknown(record, ["enabled", "custom_prompt", "append_prompt", "max_warnings_per_file", "dedup_window_ms", "timeout_ms", "tools", "judge"], path, errors);
+  rejectUnknown(record, ["enabled", "custom_prompt", "append_prompt", "max_warnings_per_file", "dedup_window_ms", "timeout_ms", "tools", "paths", "judge"], path, errors);
 }
 function validateTestGuard(record, path, errors) {
   if (record.enabled !== undefined && typeof record.enabled !== "boolean")

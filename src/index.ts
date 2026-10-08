@@ -48,6 +48,7 @@ const resolvedCommentConfig: ResolvedCommentConfig = {
   maxWarningsPerFile: 0,
   dedupWindowMs: 0,
   triggerTools: new Set(DEFAULT_TRIGGER_TOOLS),
+  paths: [],
   timeoutMs: DEFAULT_CLI_TIMEOUT_MS,
 }
 
@@ -111,6 +112,7 @@ function resolveConfiguration(config?: unknown): void {
   resolvedCommentConfig.triggerTools = new Set(
     resolveOption(asTools, "COMMENT_CHECKER_TOOLS", "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS,
   )
+  resolvedCommentConfig.paths = resolveOption(asPatterns, "COMMENT_CHECKER_PATHS", "paths", inputs) ?? []
   resolvedCommentConfig.timeoutMs =
     resolveOption(value => asCount(value, 1), "COMMENT_CHECKER_TIMEOUT_MS", "timeout_ms", inputs) ?? DEFAULT_CLI_TIMEOUT_MS
 
