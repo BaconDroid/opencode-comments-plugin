@@ -230,6 +230,9 @@ async function ensureCommentCheckerBinary(versionOverride) {
 
 // src/core/runner.ts
 var {spawn: spawn2 } = globalThis.Bun;
+function runShellCommand(command, options = {}) {
+  return runProcess(["/bin/sh", "-c", command], options);
+}
 async function runProcess(args, options = {}) {
   const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_CLI_TIMEOUT_MS;
   try {
@@ -2152,7 +2155,7 @@ ${lines.join(`
 `)}`;
 }
 async function defaultRun(command, payload, timeoutMs) {
-  const outcome = await runProcess(["/bin/sh", "-c", command], { stdin: payload, timeoutMs });
+  const outcome = await runShellCommand(command, { stdin: payload, timeoutMs });
   return outcome === "timeout" ? "" : outcome.stdout;
 }
 async function runParserAdapter(changes, config, run = defaultRun) {
@@ -2248,7 +2251,7 @@ function parseMutationReport(raw) {
 async function runMutationCheck(command, options = {}) {
   if (!command.trim())
     return { ran: false, survivors: [] };
-  const outcome = await runProcess(["/bin/sh", "-c", command], { timeoutMs: options.timeoutMs });
+  const outcome = await runShellCommand(command, { timeoutMs: options.timeoutMs });
   if (outcome === "timeout")
     return { ran: false, survivors: [], error: "timeout" };
   return { ran: true, survivors: parseMutationReport(outcome.stdout) };

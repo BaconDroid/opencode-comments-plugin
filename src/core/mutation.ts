@@ -4,7 +4,7 @@
 
 import { asRecord } from "./config"
 import { createIdleAdvisory, type IdleAdvisoryController } from "./idle-advisory"
-import { runProcess } from "./runner"
+import { runShellCommand } from "./runner"
 
 export interface MutationConfig {
   enabled: boolean
@@ -91,7 +91,7 @@ export function parseMutationReport(raw: string): MutationSurvivor[] {
 export async function runMutationCheck(command: string, options: { timeoutMs?: number } = {}): Promise<MutationRun> {
   if (!command.trim()) return { ran: false, survivors: [] }
 
-  const outcome = await runProcess(["/bin/sh", "-c", command], { timeoutMs: options.timeoutMs })
+  const outcome = await runShellCommand(command, { timeoutMs: options.timeoutMs })
   if (outcome === "timeout") return { ran: false, survivors: [], error: "timeout" }
   return { ran: true, survivors: parseMutationReport(outcome.stdout) }
 }
