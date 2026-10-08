@@ -1090,13 +1090,6 @@ var TEST_DECLARATION_PATTERNS = {
   go: /^\s*func\s+Test\w*\s*\(/,
   rust: /#\[test\]/
 };
-var HELPER_DECLARATION_PATTERNS = [
-  /^\s*def\s+(?!test_)\w+\s*\(/,
-  /^\s*(?:async\s+)?function\s+\w+\s*\(/,
-  /^\s*const\s+\w+\s*=\s*(?:async\s*)?\(/,
-  /parametrize/i,
-  /@pytest\.fixture/
-];
 var PLACEHOLDER_PATTERN = /^(?:<replace:[^>]+>|placeholder|todo|tbd|n\/a|stub)$/i;
 function hasAssertion(text) {
   return ASSERTION_PATTERNS.some((pattern) => pattern.test(text));
@@ -1247,36 +1240,6 @@ var swallowedErrorRule = {
       break;
     }
     return findings;
-  }
-};
-var netAssertionLossRule = {
-  id: "net-assertion-loss",
-  run(ctx) {
-    if (ctx.change.removedLines.length === 0)
-      return [];
-    const removed = uniqueAssertions(ctx.change.removedLines, ctx.change.language).length;
-    const added = uniqueAssertions(ctx.change.addedLines, ctx.change.language).length;
-    const threshold = ctx.config.netAssertionLossThreshold ?? 2;
-    if (removed - added < threshold)
-      return [];
-    const learned = ctx.change.addedLines.some((line) => HELPER_DECLARATION_PATTERNS.some((p) => p.test(codeText(line, ctx.change.language))));
-    if (learned)
-      return [];
-    const declarations = TEST_DECLARATION_PATTERNS[ctx.change.language];
-    if (declarations) {
-      const before = ctx.change.removedLines.filter((line) => declarations.test(codeText(line, ctx.change.language))).length;
-      const after = ctx.change.addedLines.filter((line) => declarations.test(codeText(line, ctx.change.language))).length;
-      if (before !== after)
-        return [];
-    }
-    const sample = ctx.change.removedLines.find((line) => ASSERTION_COUNT_PATTERNS.some((p) => p.test(codeText(line, ctx.change.language)))) ?? "";
-    const lineNumber = locateLine(ctx.change.oldText, sample);
-    return [{
-      rule: "net-assertion-loss",
-      line: lineNumber,
-      message: `Net assertion loss of ${removed - added} without added helper or parametrization.`,
-      excerpt: sample.trim()
-    }];
   }
 };
 var guttedTestRule = {
@@ -1676,7 +1639,6 @@ var DETERMINISTIC_RULES = [
   tautologicalAssertionRule,
   emptyTestRule,
   unknownTestRule,
-  netAssertionLossRule,
   guttedTestRule,
   matcherLoosenedRule,
   swallowedErrorRule,
@@ -1734,7 +1696,6 @@ var DEFAULT_TEST_GUARD = {
   testPatterns: [],
   checks: {},
   maxWarningsPerFile: 0,
-  netAssertionLossThreshold: 2,
   mutationEnabled: false
 };
 var MUTATION_COOLDOWN_MS = 60000;
@@ -2543,7 +2504,6 @@ var TEST_ACTION = {
   "duplicate-test": "remove",
   "skip-focus-added": "remove",
   "matcher-loosened": "adjust",
-  "net-assertion-loss": "adjust",
   "gutted-test": "adjust",
   "swallowed-error": "adjust",
   "over-mocking": "adjust",
@@ -2778,7 +2738,6 @@ var DEFAULT_TEST_CHECKS = {
   "tautological-assertion": "warn",
   "empty-test": "warn",
   "unknown-test": "warn",
-  "net-assertion-loss": "warn",
   "gutted-test": "warn",
   "matcher-loosened": "warn",
   "swallowed-error": "warn",
@@ -2813,7 +2772,6 @@ var resolvedTestGuard = {
   testCommand: null,
   checks: { ...DEFAULT_TEST_CHECKS },
   maxWarningsPerFile: 0,
-  netAssertionLossThreshold: 2,
   mutationEnabled: false
 };
 var resolvedJudge = { enabled: false };
@@ -2829,7 +2787,6 @@ function resolveTestGuardConfiguration(config) {
   resolvedTestGuard.customPrompt = resolveOption(asString, "TEST_GUARD_CUSTOM_PROMPT", "custom_prompt", { options, config: fromConfig });
   resolvedTestGuard.appendPrompt = resolveOption(asString, "TEST_GUARD_APPEND_PROMPT", "append_prompt", { options, config: fromConfig });
   resolvedTestGuard.testCommand = resolveOption(asString, "TEST_GUARD_TEST_COMMAND", "test_command", { options, config: fromConfig }) ?? detectTestCommand(projectDirectory);
-  resolvedTestGuard.netAssertionLossThreshold = resolveOption((value) => asCount(value, 1), "TEST_GUARD_NET_ASSERTION_LOSS_THRESHOLD", "net_assertion_loss_threshold", { options, config: fromConfig }) ?? 2;
   const optionsMutation = asRecord(options?.mutation);
   const configMutation = asRecord(fromConfig?.mutation);
   const mutationInputs = { options: optionsMutation, config: configMutation };

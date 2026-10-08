@@ -8,7 +8,6 @@ import {
   findCrossFileDuplicates,
   guttedTestRule,
   matcherLoosenedRule,
-  netAssertionLossRule,
   overMockingRule,
   protectedPathsRule,
   redundantAssertionRule,
@@ -129,25 +128,6 @@ test("swallowed-error does not flag a removed swallowed error", () => {
   const newText = "def test_a():\n    run()\n"
   const change = makeChange("/work/test_a.py", oldText, newText)
   expect(run(swallowedErrorRule, change, true)).toHaveLength(0)
-})
-
-test("net-assertion-loss flags a net loss of two assertions", () => {
-  const oldText = "def test_x():\n    assert a == 1\n    assert b == 2\n    assert c == 3\n"
-  const newText = "def test_x():\n    assert a == 1\n"
-  const findings = run(netAssertionLossRule, makeChange("/work/test_x.py", oldText, newText), true)
-  expect(findings).toHaveLength(1)
-})
-
-test("net-assertion-loss stays silent when assertions are replaced", () => {
-  const oldText = "def test_x():\n    assert a == 1\n    assert b == 2\n"
-  const newText = "def test_x():\n    expect(a).toBe(1)\n    expect(b).toBe(2)\n"
-  expect(run(netAssertionLossRule, makeChange("/work/test_x.py", oldText, newText), true)).toHaveLength(0)
-})
-
-test("net-assertion-loss does not flag when a helper is added", () => {
-  const oldText = "def test_x():\n    assert a == 1\n    assert b == 2\n    assert c == 3\n"
-  const newText = "def check(v):\n    assert v\ndef test_x():\n    assert a == 1\n"
-  expect(run(netAssertionLossRule, makeChange("/work/test_x.py", oldText, newText), true)).toHaveLength(0)
 })
 
 test("gutted-test flags removing every assertion", () => {
@@ -296,26 +276,6 @@ test("redundant-assertion ignores distinct assertions", () => {
 test("tests-not-run flags an exclude flag", () => {
   const change = makeChange("/work/a.test.ts", "", "bun test --exclude '**/flaky/**'\n")
   expect(run(testsNotRunRule, change)).toHaveLength(1)
-})
-
-test("net-assertion-loss honours a custom threshold", () => {
-  const oldText = "def test_x():\n    assert a == 1\n"
-  const newText = "def test_x():\n    pass\n"
-  const ctx = makeContext(makeChange("/work/test_x.py", oldText, newText), true)
-  ctx.config.netAssertionLossThreshold = 1
-  expect(netAssertionLossRule.run(ctx)).toHaveLength(1)
-})
-
-test("net-assertion-loss normalizes duplicate assertions", () => {
-  const oldText = "def test_x():\n    assert a == 1\n    assert a == 1\n    assert a == 1\n"
-  const newText = "def test_x():\n    assert a == 1\n"
-  expect(run(netAssertionLossRule, makeChange("/work/test_x.py", oldText, newText), true)).toHaveLength(0)
-})
-
-test("net-assertion-loss normalizes self.assert aliases", () => {
-  const oldText = "def test_x():\n    self.assertEqual(a, b)\n    self.assertEqual(a, b)\n"
-  const newText = "def test_x():\n    assertEquals(a, b)\n"
-  expect(run(netAssertionLossRule, makeChange("/work/test_x.py", oldText, newText), true)).toHaveLength(0)
 })
 
 test("findCrossFileDuplicates flags identical bodies across files", () => {

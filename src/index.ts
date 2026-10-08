@@ -26,7 +26,6 @@ const DEFAULT_TEST_CHECKS: Record<string, Severity> = {
   "tautological-assertion": "warn",
   "empty-test": "warn",
   "unknown-test": "warn",
-  "net-assertion-loss": "warn",
   "gutted-test": "warn",
   "matcher-loosened": "warn",
   "swallowed-error": "warn",
@@ -80,7 +79,6 @@ const resolvedTestGuard: ResolvedTestGuard = {
   testCommand: null,
   checks: { ...DEFAULT_TEST_CHECKS },
   maxWarningsPerFile: 0,
-  netAssertionLossThreshold: 2,
   mutationEnabled: false,
 }
 
@@ -123,14 +121,6 @@ function resolveTestGuardConfiguration(config?: unknown): void {
   resolvedTestGuard.testCommand =
     resolveOption(asString, "TEST_GUARD_TEST_COMMAND", "test_command", { options, config: fromConfig }) ??
     detectTestCommand(projectDirectory)
-
-  resolvedTestGuard.netAssertionLossThreshold =
-    resolveOption(
-      value => asCount(value, 1),
-      "TEST_GUARD_NET_ASSERTION_LOSS_THRESHOLD",
-      "net_assertion_loss_threshold",
-      { options, config: fromConfig },
-    ) ?? 2
 
   const optionsMutation = asRecord(options?.mutation)
   const configMutation = asRecord(fromConfig?.mutation)

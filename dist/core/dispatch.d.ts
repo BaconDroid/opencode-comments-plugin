@@ -5,7 +5,6 @@ export interface ResolvedTestGuard {
     testCommand?: string | null;
     checks: Record<string, Severity>;
     maxWarningsPerFile: number;
-    netAssertionLossThreshold: number;
     mutationEnabled: boolean;
     mutationCommand?: string;
     mutationTimeoutMs?: number;

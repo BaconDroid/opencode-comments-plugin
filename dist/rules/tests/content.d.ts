@@ -12,7 +12,6 @@ export declare function collectBypasses(change: ExtractedChange): Bypass[];
 export declare const skipFocusAddedRule: TestRule;
 export declare const tautologicalAssertionRule: TestRule;
 export declare const swallowedErrorRule: TestRule;
-export declare const netAssertionLossRule: TestRule;
 export declare const guttedTestRule: TestRule;
 export declare const matcherLoosenedRule: TestRule;
 export declare function findTestBlocks(text: string, language: Language): TestBlock[];

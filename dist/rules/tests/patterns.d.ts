@@ -17,7 +17,6 @@ export declare const MOCK_IDENTIFIER_PATTERNS: RegExp[];
 export declare const WEAKENED_CONFIG_PATTERNS: RegExp[];
 export declare const TESTS_NOT_RUN_PATTERNS: RegExp[];
 export declare const TEST_DECLARATION_PATTERNS: Partial<Record<Language, RegExp>>;
-export declare const HELPER_DECLARATION_PATTERNS: RegExp[];
 export declare const PLACEHOLDER_PATTERN: RegExp;
 export declare function hasAssertion(text: string): boolean;
 export declare function countAssertions(lines: string[]): number;

@@ -123,7 +123,6 @@ tests. It reuses the same tuple, under a sibling `test_guard` key:
       "test_guard": {
         "enabled": true,
         "test_patterns": ["**/*.test.*", "**/*_test.*", "**/test_*.py", "**/tests/**"],
-        "net_assertion_loss_threshold": 2,
         "checks": { "protected-paths": "warn", "skip-focus-added": "warn" },
         "mutation": { "enabled": false, "command": "npx stryker run --reporters json", "timeout_ms": 120000 },
         "judge": { "enabled": false, "model": "opencode/big-pickle", "timeout_ms": 30000 }
@@ -148,7 +147,6 @@ guard can never prevent the agent's action.
 | `tautological-assertion` | `assert True`, `expect(true).toBe(true)`, `assertEquals(x,x)` | warn |
 | `empty-test` | test body with no executable statement | warn |
 | `unknown-test` | test with no assertion/expect/fail | warn |
-| `net-assertion-loss` | 2+ assertions removed with no replacement/helper | warn |
 | `gutted-test` | all assertions removed | warn |
 | `matcher-loosened` | `assertEqual -> assertTrue`, `toBe -> toBeTruthy`, ... | warn |
 | `swallowed-error` | `except Exception: pass`, empty `catch {}` | warn |
@@ -165,7 +163,7 @@ file-level `// test-guard-disable-file`.
 
 Env vars mirror the comment guard: `TEST_GUARD_ENABLED`,
 `TEST_GUARD_TEST_PATTERNS`, `TEST_GUARD_MAX_WARNINGS_PER_FILE`,
-`TEST_GUARD_NET_ASSERTION_LOSS_THRESHOLD`, `TEST_GUARD_CUSTOM_PROMPT`,
+`TEST_GUARD_CUSTOM_PROMPT`,
 `TEST_GUARD_APPEND_PROMPT`, `TEST_GUARD_MUTATION_ENABLED`,
 `TEST_GUARD_MUTATION_COMMAND`, `TEST_GUARD_MUTATION_TIMEOUT_MS`,
 `TEST_GUARD_JUDGE_ENABLED`, `TEST_GUARD_JUDGE_MODEL`,
@@ -226,8 +224,7 @@ languages are ignored by the test guard rather than matched with unvalidated
 rules.
 
 Known limits: rules are regex-based (no AST), so a test declaration written
-inside a string or a regex literal can be misread; `net-assertion-loss` uses a
-heuristic threshold; `block` is not airtight because sub-agents may bypass
+inside a string or a regex literal can be misread; `block` is not airtight because sub-agents may bypass
 `tool.execute.before` (opencode issue #5894); cross-file duplicate detection
 runs in the audit/CI paths, not the live per-file hook.
 

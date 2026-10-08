@@ -9,7 +9,6 @@ import {
 } from "../../core/diff"
 import {
   ASSERTION_COUNT_PATTERNS,
-  HELPER_DECLARATION_PATTERNS,
   MATCHER_LOOSENINGS,
   MOCK_IDENTIFIER_PATTERNS,
   SKIP_FOCUS_PATTERNS,
@@ -184,40 +183,6 @@ export const swallowedErrorRule: TestRule = {
       break
     }
     return findings
-  },
-}
-
-export const netAssertionLossRule: TestRule = {
-  id: "net-assertion-loss",
-  run(ctx) {
-    if (ctx.change.removedLines.length === 0) return []
-    const removed = uniqueAssertions(ctx.change.removedLines, ctx.change.language).length
-    const added = uniqueAssertions(ctx.change.addedLines, ctx.change.language).length
-    const threshold = ctx.config.netAssertionLossThreshold ?? 2
-    if (removed - added < threshold) return []
-
-    const learned = ctx.change.addedLines.some(line =>
-      HELPER_DECLARATION_PATTERNS.some(p => p.test(codeText(line, ctx.change.language))),
-    )
-    if (learned) return []
-
-    const declarations = TEST_DECLARATION_PATTERNS[ctx.change.language]
-    if (declarations) {
-      const before = ctx.change.removedLines.filter(line => declarations.test(codeText(line, ctx.change.language))).length
-      const after = ctx.change.addedLines.filter(line => declarations.test(codeText(line, ctx.change.language))).length
-      if (before !== after) return []
-    }
-
-    const sample = ctx.change.removedLines.find(line =>
-      ASSERTION_COUNT_PATTERNS.some(p => p.test(codeText(line, ctx.change.language))),
-    ) ?? ""
-    const lineNumber = locateLine(ctx.change.oldText, sample)
-    return [{
-      rule: "net-assertion-loss",
-      line: lineNumber,
-      message: `Net assertion loss of ${removed - added} without added helper or parametrization.`,
-      excerpt: sample.trim(),
-    }]
   },
 }
 
@@ -627,7 +592,6 @@ export const DETERMINISTIC_RULES: TestRule[] = [
   tautologicalAssertionRule,
   emptyTestRule,
   unknownTestRule,
-  netAssertionLossRule,
   guttedTestRule,
   matcherLoosenedRule,
   swallowedErrorRule,

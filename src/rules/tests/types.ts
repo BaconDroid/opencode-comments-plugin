@@ -7,7 +7,6 @@ export interface TestGuardConfig {
   testCommand: string | null
   checks: Record<string, Severity>
   maxWarningsPerFile: number
-  netAssertionLossThreshold?: number
   customPrompt?: string
   appendPrompt?: string
 }

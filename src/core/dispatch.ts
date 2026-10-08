@@ -27,7 +27,6 @@ export interface ResolvedTestGuard {
   testCommand?: string | null
   checks: Record<string, Severity>
   maxWarningsPerFile: number
-  netAssertionLossThreshold: number
   mutationEnabled: boolean
   mutationCommand?: string
   mutationTimeoutMs?: number
@@ -57,7 +56,6 @@ const DEFAULT_TEST_GUARD: ResolvedTestGuard = {
   testPatterns: [],
   checks: {},
   maxWarningsPerFile: 0,
-  netAssertionLossThreshold: 2,
   mutationEnabled: false,
 }
 

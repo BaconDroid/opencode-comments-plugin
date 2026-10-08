@@ -162,7 +162,6 @@ const TEST_ACTION: Record<string, CommentFinding["action"]> = {
   "duplicate-test": "remove",
   "skip-focus-added": "remove",
   "matcher-loosened": "adjust",
-  "net-assertion-loss": "adjust",
   "gutted-test": "adjust",
   "swallowed-error": "adjust",
   "over-mocking": "adjust",
