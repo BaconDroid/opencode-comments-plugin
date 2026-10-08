@@ -2,10 +2,10 @@
 // parser). The configured command receives the test diff as JSON on stdin and
 // returns findings as JSON on stdout. Advisory, fail-open, disabled by default.
 
-import { tool } from "@opencode-ai/plugin"
-import { diffChanges } from "./ci"
-import { isSupportedLanguage, type ExtractedChange } from "./diff"
-import { PLACEHOLDER_PATTERN, isTestPath } from "../rules/tests/patterns"
+import { changedTestChanges } from "./ci"
+import type { ExtractedChange } from "./diff"
+import { createAdvisoryTool, createIdleAdvisory, type IdleAdvisoryController } from "./idle-advisory"
+import { PLACEHOLDER_PATTERN } from "../rules/tests/patterns"
 import { runProcess } from "./runner"
 
 export interface ParserAdapterConfig {
@@ -121,10 +121,7 @@ export async function runParserAdapter(
   }
 }
 
-export interface ParserAdapterController {
-  onIdle(sessionID: string): Promise<string | null>
-  analyzeNow(): Promise<string>
-}
+export type ParserAdapterController = IdleAdvisoryController
 
 export function createParserAdapter(options: {
   directory: string
@@ -133,51 +130,23 @@ export function createParserAdapter(options: {
   run?: ParserRun
   cooldownMs?: number
 }): ParserAdapterController {
-  const cooldownMs = options.cooldownMs ?? 60_000
-  const lastRun = new Map<string, number>()
-
-  function collectTestChanges(): ExtractedChange[] {
-    const patterns = options.getTestPatterns()
-    return diffChanges(options.directory, "HEAD").filter(
-      change => isSupportedLanguage(change.language) && isTestPath(change.filePath, patterns),
-    )
-  }
-
-  async function analyze(): Promise<string | null> {
-    const findings = await runParserAdapter(collectTestChanges(), options.getConfig(), options.run)
-    return findings.length > 0 ? formatParserFindings(findings) : null
-  }
-
-  return {
-    async onIdle(sessionID) {
-      try {
-        if (!options.getConfig().enabled) return null
-        const now = Date.now()
-        if (now - (lastRun.get(sessionID) ?? 0) < cooldownMs) return null
-        lastRun.set(sessionID, now)
-        return await analyze()
-      } catch {
-        return null
-      }
+  return createIdleAdvisory({
+    isEnabled: () => options.getConfig().enabled,
+    cooldownMs: options.cooldownMs,
+    disabledMessage: "External parser: disabled (set test_guard.parser.enabled).",
+    unavailableMessage: "External parser: unavailable.",
+    emptyMessage: "External parser: no findings.",
+    analyze: async () => {
+      const changes = changedTestChanges(options.directory, "HEAD", options.getTestPatterns())
+      const findings = await runParserAdapter(changes, options.getConfig(), options.run)
+      return findings.length > 0 ? formatParserFindings(findings) : null
     },
-    async analyzeNow() {
-      try {
-        if (!options.getConfig().enabled) return "External parser: disabled (set test_guard.parser.enabled)."
-        return (await analyze()) ?? "External parser: no findings."
-      } catch {
-        return "External parser: unavailable."
-      }
-    },
-  }
+  })
 }
 
 export function createGuardParseTool(controller: ParserAdapterController) {
-  return tool({
-    description:
-      "Run the opt-in external parser adapter over the current test diff. Read-only and advisory; requires test_guard.parser.enabled.",
-    args: {},
-    async execute() {
-      return controller.analyzeNow()
-    },
-  })
+  return createAdvisoryTool(
+    "Run the opt-in external parser adapter over the current test diff. Read-only and advisory; requires test_guard.parser.enabled.",
+    controller,
+  )
 }

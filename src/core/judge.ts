@@ -2,10 +2,10 @@
 // in opencode (no provider/auth handling here) through a sandboxed session.
 // Advisory only, fail-open, never blocks.
 
-import { tool } from "@opencode-ai/plugin"
-import { diffChanges } from "./ci"
-import { isSupportedLanguage, type ExtractedChange } from "./diff"
-import { PLACEHOLDER_PATTERN, isTestPath } from "../rules/tests/patterns"
+import { changedTestChanges } from "./ci"
+import type { ExtractedChange } from "./diff"
+import { createAdvisoryTool, createIdleAdvisory, type IdleAdvisoryController } from "./idle-advisory"
+import { PLACEHOLDER_PATTERN } from "../rules/tests/patterns"
 
 // Free OpenCode Zen model (id `opencode/big-pickle`), used when no judge model
 // is configured. Free for a limited period; data may be used to improve it.
@@ -180,10 +180,7 @@ export function createModelJudgeRunner(client: unknown, directory: string): Judg
   }
 }
 
-export interface JudgeController {
-  onIdle(sessionID: string): Promise<string | null>
-  judgeNow(): Promise<string>
-}
+export type JudgeController = IdleAdvisoryController
 
 export function createJudge(options: {
   directory: string
@@ -192,51 +189,23 @@ export function createJudge(options: {
   runner: JudgeRunner
   cooldownMs?: number
 }): JudgeController {
-  const cooldownMs = options.cooldownMs ?? 60_000
-  const lastRun = new Map<string, number>()
-
-  function collectTestChanges(): ExtractedChange[] {
-    const patterns = options.getTestPatterns()
-    return diffChanges(options.directory, "HEAD").filter(
-      change => isSupportedLanguage(change.language) && isTestPath(change.filePath, patterns),
-    )
-  }
-
-  async function judge(): Promise<string | null> {
-    const findings = await runJudge(collectTestChanges(), options.getConfig(), options.runner)
-    return findings.length > 0 ? formatJudgeFindings(findings) : null
-  }
-
-  return {
-    async onIdle(sessionID) {
-      try {
-        if (!options.getConfig().enabled) return null
-        const now = Date.now()
-        if (now - (lastRun.get(sessionID) ?? 0) < cooldownMs) return null
-        lastRun.set(sessionID, now)
-        return await judge()
-      } catch {
-        return null
-      }
+  return createIdleAdvisory({
+    isEnabled: () => options.getConfig().enabled,
+    cooldownMs: options.cooldownMs,
+    disabledMessage: "LLM judge: disabled (set test_guard.judge.enabled).",
+    unavailableMessage: "LLM judge: unavailable.",
+    emptyMessage: "LLM judge: no findings.",
+    analyze: async () => {
+      const changes = changedTestChanges(options.directory, "HEAD", options.getTestPatterns())
+      const findings = await runJudge(changes, options.getConfig(), options.runner)
+      return findings.length > 0 ? formatJudgeFindings(findings) : null
     },
-    async judgeNow() {
-      try {
-        if (!options.getConfig().enabled) return "LLM judge: disabled (set test_guard.judge.enabled)."
-        return (await judge()) ?? "LLM judge: no findings."
-      } catch {
-        return "LLM judge: unavailable."
-      }
-    },
-  }
+  })
 }
 
 export function createGuardJudgeTool(judge: JudgeController) {
-  return tool({
-    description:
-      "Run the opt-in LLM judge over the current test diff. Read-only and advisory; requires test_guard.judge.enabled.",
-    args: {},
-    async execute() {
-      return judge.judgeNow()
-    },
-  })
+  return createAdvisoryTool(
+    "Run the opt-in LLM judge over the current test diff. Read-only and advisory; requires test_guard.judge.enabled.",
+    judge,
+  )
 }

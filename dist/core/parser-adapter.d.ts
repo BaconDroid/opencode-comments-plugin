@@ -1,4 +1,5 @@
-import { type ExtractedChange } from "./diff";
+import type { ExtractedChange } from "./diff";
+import { type IdleAdvisoryController } from "./idle-advisory";
 export interface ParserAdapterConfig {
     enabled: boolean;
     command?: string;
@@ -22,10 +23,7 @@ export declare function buildParserPayload(changes: ExtractedChange[]): string;
 export declare function parseParserFindings(raw: string): ParserFinding[];
 export declare function formatParserFindings(findings: ParserFinding[]): string;
 export declare function runParserAdapter(changes: ExtractedChange[], config: ParserAdapterConfig, run?: ParserRun): Promise<ParserFinding[]>;
-export interface ParserAdapterController {
-    onIdle(sessionID: string): Promise<string | null>;
-    analyzeNow(): Promise<string>;
-}
+export type ParserAdapterController = IdleAdvisoryController;
 export declare function createParserAdapter(options: {
     directory: string;
     getConfig: () => ParserAdapterConfig;

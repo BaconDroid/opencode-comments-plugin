@@ -1,5 +1,6 @@
 import { type ExtractedChange } from "./diff";
 import { type Finding } from "./feedback";
+export declare function changedTestChanges(directory: string, base: string, testPatterns: string[]): ExtractedChange[];
 export declare function diffChanges(directory: string, base: string): ExtractedChange[];
 export interface DiffCheckOptions {
     directory: string;

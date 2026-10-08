@@ -134,7 +134,7 @@ test("judge controller runs on idle with cooldown and on demand", async () => {
   const first = await judge.onIdle("s1")
   expect(first).toContain("loosened matcher")
   expect(await judge.onIdle("s1")).toBeNull()
-  expect(await judge.judgeNow()).toContain("loosened matcher")
+  expect(await judge.analyzeNow()).toContain("loosened matcher")
 })
 
 test("judge controller does nothing when disabled", async () => {
@@ -145,5 +145,5 @@ test("judge controller does nothing when disabled", async () => {
     runner: async () => "[]",
   })
   expect(await judge.onIdle("s1")).toBeNull()
-  expect(await judge.judgeNow()).toContain("disabled")
+  expect(await judge.analyzeNow()).toContain("disabled")
 })
