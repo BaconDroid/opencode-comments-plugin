@@ -18,14 +18,6 @@ import { DEFAULT_TEST_PATTERNS } from "./rules/tests/patterns"
 import { detectTestCommand } from "./core/test-command"
 import { createGuardAuditTool, GUARD_AUDIT_COMMAND } from "./audit"
 
-const DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1"
-
-function debugLog(...args: unknown[]) {
-  if (!DEBUG) return
-  const msg = `[${new Date().toISOString()}] [comment-checker:hook] ${args.map(a => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}\n`
-  process.stderr.write(msg)
-}
-
 const DEFAULT_TEST_CHECKS: Record<string, Severity> = {
   "protected-paths": "warn",
   "skip-focus-added": "warn",

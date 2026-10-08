@@ -402,6 +402,9 @@ var BYPASS_WINDOW = 2;
 function codeText(line, language) {
   return stripStringLiterals(stripComments(line, language), language);
 }
+function blocksOf(ctx) {
+  return ctx.blocks ?? findTestBlocks(ctx.change.newText, ctx.change.language);
+}
 function countAssertionsCode(lines, language) {
   return countAssertions(lines.map((line) => codeText(line, language)));
 }
@@ -688,7 +691,7 @@ var emptyTestRule = {
     if (!ctx.isTestFile)
       return [];
     const findings = [];
-    for (const block of findTestBlocks(ctx.change.newText, ctx.change.language)) {
+    for (const block of blocksOf(ctx)) {
       if (!blockIsAdded(ctx, block))
         continue;
       const body = block.lines.join(`
@@ -714,7 +717,7 @@ var unknownTestRule = {
     if (!ctx.isTestFile)
       return [];
     const findings = [];
-    for (const block of findTestBlocks(ctx.change.newText, ctx.change.language)) {
+    for (const block of blocksOf(ctx)) {
       if (!blockIsAdded(ctx, block))
         continue;
       const body = block.lines.join(`
@@ -779,7 +782,7 @@ var assertionRouletteRule = {
     if (!ctx.isTestFile)
       return [];
     const findings = [];
-    for (const block of findTestBlocks(ctx.change.newText, ctx.change.language)) {
+    for (const block of blocksOf(ctx)) {
       if (!blockIsAdded(ctx, block))
         continue;
       const body = block.lines.join(`
@@ -847,7 +850,7 @@ var duplicateTestRule = {
       return [];
     const findings = [];
     const seen = new Map;
-    for (const block of findTestBlocks(ctx.change.newText, ctx.change.language)) {
+    for (const block of blocksOf(ctx)) {
       const normalized = normalizeBody(block.lines, ctx.change.language);
       if (normalized.length === 0)
         continue;
@@ -875,7 +878,7 @@ var redundantAssertionRule = {
     if (!ctx.isTestFile)
       return [];
     const findings = [];
-    for (const block of findTestBlocks(ctx.change.newText, ctx.change.language)) {
+    for (const block of blocksOf(ctx)) {
       if (!blockIsAdded(ctx, block))
         continue;
       const seen = new Set;
@@ -961,6 +964,8 @@ function runTestRules(ctx) {
   if (isFileDisabled(ctx.change)) {
     return { findings: [], bypassed: true, bypasses: collectBypasses(ctx.change) };
   }
+  if (!ctx.blocks)
+    ctx.blocks = findTestBlocks(ctx.change.newText, ctx.change.language);
   const findings = [];
   for (const rule of ALL_TEST_RULES) {
     const level = ctx.config.checks[rule.id] ?? "off";

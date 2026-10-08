@@ -471,7 +471,6 @@ class GuardBudget {
   maxWarningsPerFile;
   seen = new Map;
   perFile = new Map;
-  inFlight = new Map;
   constructor(options = {}) {
     this.dedupWindowMs = options.dedupWindowMs ?? 30000;
     this.ttlMs = options.ttlMs ?? 60000;
@@ -521,17 +520,6 @@ class GuardBudget {
     } else {
       this.perFile.set(key, { count: 1, lastSeen: Date.now() });
     }
-  }
-  async singleFlight(sessionID, ruleID, filePath, fn) {
-    const key = this.key(sessionID, ruleID, filePath);
-    const existing = this.inFlight.get(key);
-    if (existing)
-      return existing;
-    const promise = fn().finally(() => {
-      this.inFlight.delete(key);
-    });
-    this.inFlight.set(key, promise);
-    return promise;
   }
 }
 
@@ -1059,6 +1047,9 @@ var BYPASS_WINDOW = 2;
 function codeText(line, language) {
   return stripStringLiterals(stripComments(line, language), language);
 }
+function blocksOf(ctx) {
+  return ctx.blocks ?? findTestBlocks(ctx.change.newText, ctx.change.language);
+}
 function countAssertionsCode(lines, language) {
   return countAssertions(lines.map((line) => codeText(line, language)));
 }
@@ -1345,7 +1336,7 @@ var emptyTestRule = {
     if (!ctx.isTestFile)
       return [];
     const findings = [];
-    for (const block of findTestBlocks(ctx.change.newText, ctx.change.language)) {
+    for (const block of blocksOf(ctx)) {
       if (!blockIsAdded(ctx, block))
         continue;
       const body = block.lines.join(`
@@ -1371,7 +1362,7 @@ var unknownTestRule = {
     if (!ctx.isTestFile)
       return [];
     const findings = [];
-    for (const block of findTestBlocks(ctx.change.newText, ctx.change.language)) {
+    for (const block of blocksOf(ctx)) {
       if (!blockIsAdded(ctx, block))
         continue;
       const body = block.lines.join(`
@@ -1436,7 +1427,7 @@ var assertionRouletteRule = {
     if (!ctx.isTestFile)
       return [];
     const findings = [];
-    for (const block of findTestBlocks(ctx.change.newText, ctx.change.language)) {
+    for (const block of blocksOf(ctx)) {
       if (!blockIsAdded(ctx, block))
         continue;
       const body = block.lines.join(`
@@ -1504,7 +1495,7 @@ var duplicateTestRule = {
       return [];
     const findings = [];
     const seen = new Map;
-    for (const block of findTestBlocks(ctx.change.newText, ctx.change.language)) {
+    for (const block of blocksOf(ctx)) {
       const normalized = normalizeBody(block.lines, ctx.change.language);
       if (normalized.length === 0)
         continue;
@@ -1532,7 +1523,7 @@ var redundantAssertionRule = {
     if (!ctx.isTestFile)
       return [];
     const findings = [];
-    for (const block of findTestBlocks(ctx.change.newText, ctx.change.language)) {
+    for (const block of blocksOf(ctx)) {
       if (!blockIsAdded(ctx, block))
         continue;
       const seen = new Set;
@@ -1618,6 +1609,8 @@ function runTestRules(ctx) {
   if (isFileDisabled(ctx.change)) {
     return { findings: [], bypassed: true, bypasses: collectBypasses(ctx.change) };
   }
+  if (!ctx.blocks)
+    ctx.blocks = findTestBlocks(ctx.change.newText, ctx.change.language);
   const findings = [];
   for (const rule of ALL_TEST_RULES) {
     const level = ctx.config.checks[rule.id] ?? "off";
@@ -2361,7 +2354,6 @@ var GUARD_AUDIT_COMMAND = {
 };
 
 // src/index.ts
-var DEBUG5 = process.env.COMMENT_CHECKER_DEBUG === "1";
 var DEFAULT_TEST_CHECKS = {
   "protected-paths": "warn",
   "skip-focus-added": "warn",

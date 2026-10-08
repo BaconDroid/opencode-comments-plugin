@@ -1,5 +1,5 @@
 import { type ExtractedChange, type Language } from "../../core/diff";
-import type { TestRule } from "./types";
+import type { TestBlock, TestRule } from "./types";
 export declare const ALLOW_MARKER: RegExp;
 export declare const DISABLE_FILE_MARKER: RegExp;
 export declare function isFileDisabled(change: ExtractedChange): boolean;
@@ -15,11 +15,6 @@ export declare const swallowedErrorRule: TestRule;
 export declare const netAssertionLossRule: TestRule;
 export declare const guttedTestRule: TestRule;
 export declare const matcherLoosenedRule: TestRule;
-export interface TestBlock {
-    startLine: number;
-    endLine: number;
-    lines: string[];
-}
 export declare function findTestBlocks(text: string, language: Language): TestBlock[];
 export declare const emptyTestRule: TestRule;
 export declare const unknownTestRule: TestRule;

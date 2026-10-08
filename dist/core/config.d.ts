@@ -6,7 +6,6 @@ export declare function asTools(value: unknown): string[] | undefined;
 export declare function asPatterns(value: unknown): string[] | undefined;
 export declare function asBoolean(value: unknown, fallback: boolean): boolean;
 export declare function asLevel(value: unknown): Severity | undefined;
-export declare function envName(prefix: string, suffix: string): string;
 export interface ResolveInputs {
     options?: Record<string, unknown>;
     config?: Record<string, unknown>;

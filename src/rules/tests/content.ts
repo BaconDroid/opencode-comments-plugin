@@ -22,7 +22,7 @@ import {
   hasAssertion,
   isConditionalSkip,
 } from "./patterns"
-import type { RuleContext, RuleFinding, TestRule } from "./types"
+import type { RuleContext, RuleFinding, TestBlock, TestRule } from "./types"
 
 export const ALLOW_MARKER = /test-guard:\s*allow\b/i
 export const DISABLE_FILE_MARKER = /test-guard-disable-file\b/i
@@ -30,6 +30,11 @@ const BYPASS_WINDOW = 2
 
 function codeText(line: string, language: Language): string {
   return stripStringLiterals(stripComments(line, language), language)
+}
+
+// Uses the once-per-file blocks when available, else parses on demand.
+function blocksOf(ctx: RuleContext): TestBlock[] {
+  return ctx.blocks ?? findTestBlocks(ctx.change.newText, ctx.change.language)
 }
 
 function countAssertionsCode(lines: string[], language: Language): number {
@@ -245,12 +250,6 @@ export const matcherLoosenedRule: TestRule = {
 }
 
 // Extracts whole test bodies so empty/unknown rules can look inside them.
-export interface TestBlock {
-  startLine: number
-  endLine: number
-  lines: string[]
-}
-
 export function findTestBlocks(text: string, language: Language): TestBlock[] {
   const declaration = TEST_DECLARATION_PATTERNS[language]
   if (!declaration) return []
@@ -337,7 +336,7 @@ export const emptyTestRule: TestRule = {
   run(ctx) {
     if (!ctx.isTestFile) return []
     const findings: RuleFinding[] = []
-    for (const block of findTestBlocks(ctx.change.newText, ctx.change.language)) {
+    for (const block of blocksOf(ctx)) {
       if (!blockIsAdded(ctx, block)) continue
       const body = block.lines.join("\n")
       const executable = countRealLines(body, ctx.change.language)
@@ -359,7 +358,7 @@ export const unknownTestRule: TestRule = {
   run(ctx) {
     if (!ctx.isTestFile) return []
     const findings: RuleFinding[] = []
-    for (const block of findTestBlocks(ctx.change.newText, ctx.change.language)) {
+    for (const block of blocksOf(ctx)) {
       if (!blockIsAdded(ctx, block)) continue
       const body = block.lines.join("\n")
       if (countRealLines(body, ctx.change.language) === 0) continue
@@ -416,7 +415,7 @@ export const assertionRouletteRule: TestRule = {
   run(ctx) {
     if (!ctx.isTestFile) return []
     const findings: RuleFinding[] = []
-    for (const block of findTestBlocks(ctx.change.newText, ctx.change.language)) {
+    for (const block of blocksOf(ctx)) {
       if (!blockIsAdded(ctx, block)) continue
       const body = block.lines.join("\n")
       const assertions = countAssertionsCode(block.lines, ctx.change.language)
@@ -495,7 +494,7 @@ export const duplicateTestRule: TestRule = {
     if (!ctx.isTestFile) return []
     const findings: RuleFinding[] = []
     const seen = new Map<string, number>()
-    for (const block of findTestBlocks(ctx.change.newText, ctx.change.language)) {
+    for (const block of blocksOf(ctx)) {
       const normalized = normalizeBody(block.lines, ctx.change.language)
       if (normalized.length === 0) continue
       const first = seen.get(normalized)
@@ -521,7 +520,7 @@ export const redundantAssertionRule: TestRule = {
   run(ctx) {
     if (!ctx.isTestFile) return []
     const findings: RuleFinding[] = []
-    for (const block of findTestBlocks(ctx.change.newText, ctx.change.language)) {
+    for (const block of blocksOf(ctx)) {
       if (!blockIsAdded(ctx, block)) continue
       const seen = new Set<string>()
       for (const raw of block.lines) {
