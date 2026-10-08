@@ -19,11 +19,19 @@ interface AfterOutput {
     output: string;
     metadata: unknown;
 }
+export interface PermissionLike {
+    type: string;
+    pattern?: string | string[];
+}
+export interface PermissionDecision {
+    status: "ask" | "deny" | "allow";
+}
 export interface TestGuard {
     before(input: BeforeInput, output: {
         args: Record<string, unknown>;
     }): void;
     after(input: BeforeInput, output: AfterOutput): Promise<void>;
+    permission(input: PermissionLike, output: PermissionDecision): void;
 }
 export declare function extractPatchEntries(patchText: string): Array<{
     kind: string;

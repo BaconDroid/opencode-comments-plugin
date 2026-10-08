@@ -2,6 +2,7 @@
 // `tool.execute.before` (block) and `tool.execute.after` (warn) hooks.
 
 import { existsSync, readFileSync } from "node:fs"
+import { join } from "node:path"
 import { APPLY_PATCH_TOOL_NAME } from "../constants"
 import { GuardBudget } from "./budget"
 import type { Severity } from "./config"
@@ -55,9 +56,20 @@ const DEFAULT_TEST_GUARD: ResolvedTestGuard = {
   netAssertionLossThreshold: 2,
 }
 
+// Minimal shape of the `permission.ask` hook payload we consume.
+export interface PermissionLike {
+  type: string
+  pattern?: string | string[]
+}
+
+export interface PermissionDecision {
+  status: "ask" | "deny" | "allow"
+}
+
 export interface TestGuard {
   before(input: BeforeInput, output: { args: Record<string, unknown> }): void
   after(input: BeforeInput, output: AfterOutput): Promise<void>
+  permission(input: PermissionLike, output: PermissionDecision): void
 }
 
 const PATCH_ENTRY = /^\*\*\* (Add|Update|Delete) File:\s*(.+?)\s*$/gm
@@ -90,6 +102,38 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
 
   function isProtectedPath(filePath: string, patterns: string[]): boolean {
     return isTestPath(filePath, patterns)
+  }
+
+  function pathExists(filePath: string): boolean {
+    try {
+      return existsSync(filePath) || existsSync(join(process.cwd(), filePath))
+    } catch {
+      return false
+    }
+  }
+
+  // Defense in depth for #5894: `tool.execute.before` can be bypassed by
+  // sub-agents, but `permission.ask` still runs. When protected-paths is set to
+  // block, deny the permission for an existing test file.
+  function permission(input: PermissionLike, output: PermissionDecision): void {
+    try {
+      const resolved = resolve()
+      if (!resolved.enabled) return
+      if (!isBlocking()) return
+      if (input.type !== "edit" && input.type !== "write") return
+
+      const patterns = resolved.testPatterns
+      const candidates = Array.isArray(input.pattern) ? input.pattern : input.pattern ? [input.pattern] : []
+      for (const candidate of candidates) {
+        if (!isProtectedPath(candidate, patterns)) continue
+        if (!pathExists(candidate)) continue
+        output.status = "deny"
+        debugLog("permission denied for protected test path", candidate)
+        return
+      }
+    } catch (err) {
+      debugLog("permission failed (fail-open):", err)
+    }
   }
 
   function before(input: BeforeInput, output: { args: Record<string, unknown> }): void {
@@ -206,6 +250,11 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       let message = findings.length > 0
         ? renderFeedback(findings, { customPrompt: resolved.customPrompt, appendPrompt: resolved.appendPrompt })
         : ""
+      // A block-configured rule reached the after hook: `before` did not stop
+      // this change (e.g. a sub-agent bypassed it, #5894).
+      if (findings.some(finding => finding.severity === "block")) {
+        message = `BLOCK BYPASSED — a rule configured as "block" reached the after hook; the change was not stopped.\n\n${message}`
+      }
       if (bypassNotes.length > 0) {
         const footer = `Test guard bypass recorded:\n${bypassNotes.map(note => `- ${note}`).join("\n")}`
         message = message.length > 0 ? `${message}\n\n${footer}` : footer
@@ -217,5 +266,5 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
     }
   }
 
-  return { before, after }
+  return { before, after, permission }
 }
