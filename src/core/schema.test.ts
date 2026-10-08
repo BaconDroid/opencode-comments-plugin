@@ -43,6 +43,16 @@ test("rejects an unknown mutation key", () => {
   expect(validateTupleOptions({ test_guard: { mutation: { nope: 1 } } }).valid).toBe(false)
 })
 
+test("accepts a valid judge block", () => {
+  expect(
+    validateTupleOptions({ test_guard: { judge: { enabled: true, model: "anthropic/claude-3", timeout_ms: 30000 } } }).valid,
+  ).toBe(true)
+})
+
+test("rejects an unknown judge key", () => {
+  expect(validateTupleOptions({ test_guard: { judge: { nope: 1 } } }).valid).toBe(false)
+})
+
 test("rejects a non-object options value", () => {
   expect(validateTupleOptions([]).valid).toBe(false)
 })

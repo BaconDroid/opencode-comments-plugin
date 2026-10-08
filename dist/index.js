@@ -1751,12 +1751,14 @@ function extractPatchEntries(patchText) {
 function createTestGuard(getResolved) {
   const budget = new GuardBudget;
   const pending = new Map;
-  let pendingMutation = "";
+  const pendingNotes = [];
   const lastMutation = new Map;
-  function consumePendingMutation() {
-    const message = pendingMutation;
-    pendingMutation = "";
-    return message;
+  function queueNote(message) {
+    if (message.length > 0)
+      pendingNotes.push(message);
+  }
+  function consumeNotes() {
+    return pendingNotes.splice(0, pendingNotes.length);
   }
   function resolve() {
     try {
@@ -1815,7 +1817,7 @@ function createTestGuard(getResolved) {
       if (!run.ran || run.survivors.length === 0)
         return;
       debugLog3("mutation survivors:", run.survivors.length);
-      pendingMutation = formatSurvivors(run.survivors);
+      queueNote(formatSurvivors(run.survivors));
     } catch (err) {
       debugLog3("onIdle failed (fail-open):", err);
     }
@@ -1867,7 +1869,7 @@ function createTestGuard(getResolved) {
       const resolved = resolve();
       if (!resolved.enabled)
         return;
-      const mutationFeedback = consumePendingMutation();
+      const notes = consumeNotes();
       const toolLower = input.tool.toLowerCase();
       let changes = [];
       const failed = output.output.toLowerCase().startsWith("error");
@@ -1942,8 +1944,8 @@ ${footer}` : footer;
         if (message.length > 0)
           parts.push(message);
       }
-      if (mutationFeedback.length > 0)
-        parts.push(mutationFeedback);
+      for (const note of notes)
+        parts.push(note);
       if (parts.length === 0)
         return;
       appendFeedback(output, parts.join(`
@@ -1953,11 +1955,256 @@ ${footer}` : footer;
       debugLog3("after failed (fail-open):", err);
     }
   }
-  return { before, after, permission, onIdle };
+  return { before, after, permission, onIdle, queueNote };
+}
+
+// src/core/judge.ts
+import { tool } from "@opencode-ai/plugin";
+
+// src/core/ci.ts
+import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
+import { isAbsolute, join as join4, relative } from "path";
+function run(args, cwd) {
+  const result = Bun.spawnSync(args, { cwd, stdout: "pipe", stderr: "ignore" });
+  return { stdout: result.stdout.toString(), exitCode: result.exitCode };
+}
+function changedFiles(directory, base) {
+  const files = new Set;
+  const diff = run(["git", "diff", "--name-only", base], directory);
+  if (diff.exitCode === 0) {
+    for (const line of diff.stdout.split(`
+`))
+      if (line.trim())
+        files.add(line.trim());
+  }
+  const untracked = run(["git", "ls-files", "--others", "--exclude-standard"], directory);
+  if (untracked.exitCode === 0) {
+    for (const line of untracked.stdout.split(`
+`))
+      if (line.trim())
+        files.add(line.trim());
+  }
+  return [...files];
+}
+function readOldRevision(directory, base, relativePath) {
+  const result = run(["git", "show", `${base}:${relativePath}`], directory);
+  return result.exitCode === 0 ? result.stdout : "";
+}
+function readWorktree(filePath) {
+  try {
+    return existsSync4(filePath) ? readFileSync3(filePath, "utf8") : "";
+  } catch {
+    return;
+  }
+}
+function diffChanges(directory, base) {
+  const changes = [];
+  for (const relativePath of changedFiles(directory, base)) {
+    const absolute = isAbsolute(relativePath) ? relativePath : join4(directory, relativePath);
+    const newText = readWorktree(absolute);
+    if (newText === undefined)
+      continue;
+    const oldText = readOldRevision(directory, base, relativePath);
+    if (oldText.length === 0 && newText.length === 0)
+      continue;
+    changes.push(extractChange({
+      filePath: absolute,
+      oldText,
+      newText,
+      isNew: oldText.length === 0,
+      isDelete: newText.length === 0
+    }));
+  }
+  return changes;
+}
+
+// src/core/judge.ts
+var JUDGE_SYSTEM = "You are a read-only test-quality reviewer. Do not call any tool. Reply with JSON only.";
+var MAX_FINDINGS = 20;
+function buildJudgePrompt(changes) {
+  const sections = [];
+  for (const change of changes) {
+    if (change.addedLines.length === 0 && change.removedLines.length === 0)
+      continue;
+    const removed = change.removedLines.map((line) => `- ${line}`).join(`
+`);
+    const added = change.addedLines.map((line) => `+ ${line}`).join(`
+`);
+    sections.push(`--- ${change.filePath}
+${removed}
+${added}`);
+  }
+  if (sections.length === 0)
+    return "";
+  return [
+    "Review the following test changes and decide whether any of them weakens the tests",
+    "(removed assertions, loosened matchers, skipped/focused tests, tautological assertions,",
+    "swallowed errors, or tests that no longer validate behavior).",
+    "Reply with ONLY a JSON array. Each item:",
+    '{"file": "<path>", "line": <number>, "reason": "<short>", "confidence": "high|medium|low"}.',
+    "If nothing weakens the tests, reply with [].",
+    "",
+    sections.join(`
+
+`)
+  ].join(`
+`);
+}
+function parseJudgeResponse(raw) {
+  const start = raw.indexOf("[");
+  const end = raw.lastIndexOf("]");
+  if (start < 0 || end <= start)
+    return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed))
+    return [];
+  const findings = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== "object")
+      continue;
+    const record = item;
+    const file = typeof record.file === "string" ? record.file : "";
+    const reason = typeof record.reason === "string" ? record.reason.trim() : "";
+    if (!file || !reason)
+      continue;
+    if (PLACEHOLDER_PATTERN.test(reason))
+      continue;
+    findings.push({
+      file,
+      line: typeof record.line === "number" && Number.isFinite(record.line) ? record.line : 0,
+      reason,
+      confidence: typeof record.confidence === "string" ? record.confidence : "medium"
+    });
+    if (findings.length >= MAX_FINDINGS)
+      break;
+  }
+  return findings;
+}
+function formatJudgeFindings(findings) {
+  const lines = findings.map((finding) => `- ${finding.file}:${finding.line} ${finding.reason} (${finding.confidence})`);
+  return `LLM judge (advisory, opt-in):
+${lines.join(`
+`)}`;
+}
+function withTimeout(promise, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("judge timeout")), timeoutMs);
+    promise.then((value) => {
+      clearTimeout(timer);
+      resolve(value);
+    }, (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+async function runJudge(changes, config, runner) {
+  if (!config.enabled)
+    return [];
+  const prompt = buildJudgePrompt(changes);
+  if (prompt.length === 0)
+    return [];
+  try {
+    const raw = await withTimeout(runner(prompt, config.model), config.timeoutMs ?? 30000);
+    return parseJudgeResponse(raw);
+  } catch {
+    return [];
+  }
+}
+function parseModel(model) {
+  if (!model)
+    return;
+  const separator = model.indexOf("/");
+  if (separator <= 0 || separator === model.length - 1)
+    return;
+  return { providerID: model.slice(0, separator), modelID: model.slice(separator + 1) };
+}
+function createModelJudgeRunner(client, directory) {
+  const session = client?.session;
+  return async (prompt, model) => {
+    if (!session?.create || !session?.prompt)
+      return "";
+    const modelRef = parseModel(model);
+    try {
+      const created = await session.create({ body: { title: "test-guard judge" }, query: { directory } });
+      const id = created?.data?.id;
+      if (!id)
+        return "";
+      try {
+        const result = await session.prompt({
+          path: { id },
+          query: { directory },
+          body: {
+            system: JUDGE_SYSTEM,
+            tools: { bash: false, edit: false, write: false, read: false, webfetch: false, patch: false, task: false },
+            ...modelRef ? { model: modelRef } : {},
+            parts: [{ type: "text", text: prompt }]
+          }
+        });
+        const parts = result?.data?.parts ?? [];
+        return parts.filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join(`
+`);
+      } finally {
+        try {
+          await session.delete?.({ path: { id }, query: { directory } });
+        } catch {}
+      }
+    } catch {
+      return "";
+    }
+  };
+}
+function createJudge(options) {
+  const cooldownMs = options.cooldownMs ?? 60000;
+  const lastRun = new Map;
+  function collectTestChanges() {
+    const patterns = options.getTestPatterns();
+    return diffChanges(options.directory, "HEAD").filter((change) => isSupportedLanguage(change.language) && isTestPath(change.filePath, patterns));
+  }
+  async function judge() {
+    const findings = await runJudge(collectTestChanges(), options.getConfig(), options.runner);
+    return findings.length > 0 ? formatJudgeFindings(findings) : null;
+  }
+  return {
+    async onIdle(sessionID) {
+      try {
+        if (!options.getConfig().enabled)
+          return null;
+        const now = Date.now();
+        if (now - (lastRun.get(sessionID) ?? 0) < cooldownMs)
+          return null;
+        lastRun.set(sessionID, now);
+        return await judge();
+      } catch {
+        return null;
+      }
+    },
+    async judgeNow() {
+      try {
+        return await judge() ?? "LLM judge: no findings.";
+      } catch {
+        return "LLM judge: unavailable.";
+      }
+    }
+  };
+}
+function createGuardJudgeTool(judge) {
+  return tool({
+    description: "Run the opt-in LLM judge over the current test diff. Read-only and advisory; requires test_guard.judge.enabled.",
+    args: {},
+    async execute() {
+      return judge.judgeNow();
+    }
+  });
 }
 
 // src/rules/comments/index.ts
-import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
+import { existsSync as existsSync5, readFileSync as readFileSync4 } from "fs";
 var DEBUG4 = process.env.COMMENT_CHECKER_DEBUG === "1";
 function debugLog4(...args) {
   if (!DEBUG4)
@@ -2022,7 +2269,7 @@ function createCommentGuard(getConfig) {
         return;
       }
       const cliPath = await getCommentCheckerPath();
-      if (!cliPath || !existsSync4(cliPath)) {
+      if (!cliPath || !existsSync5(cliPath)) {
         debugLog4("CLI not available, skipping comment check");
         return;
       }
@@ -2087,8 +2334,8 @@ ${message}`;
     let preimage;
     if (typeof content === "string") {
       try {
-        if (existsSync4(filePath))
-          preimage = readFileSync3(filePath, "utf8");
+        if (existsSync5(filePath))
+          preimage = readFileSync4(filePath, "utf8");
       } catch (err) {
         debugLog4("could not read preimage:", err);
       }
@@ -2140,8 +2387,8 @@ ${message}`;
 }
 
 // src/core/test-command.ts
-import { existsSync as existsSync5, readFileSync as readFileSync4 } from "fs";
-import { join as join4 } from "path";
+import { existsSync as existsSync6, readFileSync as readFileSync5 } from "fs";
+import { join as join5 } from "path";
 var CANDIDATES = [
   { file: "pytest.ini", command: "pytest" },
   { file: "pyproject.toml", contains: "[tool.pytest", command: "pytest" },
@@ -2153,13 +2400,13 @@ var CANDIDATES = [
 ];
 function readIfExists(filePath) {
   try {
-    return existsSync5(filePath) ? readFileSync4(filePath, "utf8") : undefined;
+    return existsSync6(filePath) ? readFileSync5(filePath, "utf8") : undefined;
   } catch {
     return;
   }
 }
 function detectTestCommand(directory) {
-  const packageJson = readIfExists(join4(directory, "package.json"));
+  const packageJson = readIfExists(join5(directory, "package.json"));
   if (packageJson) {
     try {
       const parsed = JSON.parse(packageJson);
@@ -2170,7 +2417,7 @@ function detectTestCommand(directory) {
     } catch {}
   }
   for (const candidate of CANDIDATES) {
-    const content = readIfExists(join4(directory, candidate.file));
+    const content = readIfExists(join5(directory, candidate.file));
     if (content === undefined)
       continue;
     if (candidate.contains && !content.includes(candidate.contains))
@@ -2181,9 +2428,9 @@ function detectTestCommand(directory) {
 }
 
 // src/audit.ts
-import { tool } from "@opencode-ai/plugin";
-import { readFileSync as readFileSync5, readdirSync as readdirSync2, statSync } from "fs";
-import { isAbsolute, join as join5, relative } from "path";
+import { tool as tool2 } from "@opencode-ai/plugin";
+import { readFileSync as readFileSync6, readdirSync as readdirSync2, statSync } from "fs";
+import { isAbsolute as isAbsolute2, join as join6, relative as relative2 } from "path";
 var EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "build", "vendor", ".cache", "coverage"]);
 var SECRET_PATTERNS = [/(?:^|\/)\.env(?:\.|$)/, /\.pem$/, /\.key$/, /(?:^|\/)id_(?:rsa|ed25519)$/, /\.p12$/];
 var MAX_FILES = 500;
@@ -2204,7 +2451,7 @@ function walk(dir, out, limit) {
       return;
     if (entry.startsWith(".") && entry !== ".env.example")
       continue;
-    const full = join5(dir, entry);
+    const full = join6(dir, entry);
     let stat;
     try {
       stat = statSync(full);
@@ -2224,7 +2471,7 @@ function listRepositoryFiles(directory, paths) {
   const collected = [];
   if (paths && paths.length > 0) {
     for (const entry of paths) {
-      const abs = isAbsolute(entry) ? entry : join5(directory, entry);
+      const abs = isAbsolute2(entry) ? entry : join6(directory, entry);
       try {
         const stat = statSync(abs);
         if (stat.isDirectory())
@@ -2239,7 +2486,7 @@ function listRepositoryFiles(directory, paths) {
     const result = Bun.spawnSync(["git", "ls-files"], { cwd: directory, stdout: "pipe", stderr: "ignore" });
     if (result.exitCode === 0) {
       return result.stdout.toString().split(`
-`).filter((line) => line.trim().length > 0).map((line) => join5(directory, line)).slice(0, MAX_FILES);
+`).filter((line) => line.trim().length > 0).map((line) => join6(directory, line)).slice(0, MAX_FILES);
     }
   } catch {}
   walk(directory, collected, MAX_FILES);
@@ -2342,7 +2589,7 @@ function auditTestFile(file, includeAdvisory) {
 }
 function readText(filePath) {
   try {
-    return readFileSync5(filePath, "utf8");
+    return readFileSync6(filePath, "utf8");
   } catch {
     return;
   }
@@ -2427,7 +2674,7 @@ function renderAudit(report, format = "markdown") {
 `);
 }
 function display(filePath) {
-  return relative(process.cwd(), filePath) || filePath;
+  return relative2(process.cwd(), filePath) || filePath;
 }
 function escapeCell(value) {
   return value.replace(/\|/g, "\\|").replace(/\n/g, " ").slice(0, 120);
@@ -2491,13 +2738,13 @@ async function runAudit(options, deps = {}) {
   return renderAudit({ scope, comments, tests, skipped, generatedAt: new Date().toISOString(), testCommand: config?.testCommand ?? null }, format);
 }
 function createGuardAuditTool(options) {
-  return tool({
+  return tool2({
     description: "Read-only audit of existing comments and tests. Produces a cleanup plan (markdown or json) that the agent applies afterwards. Never modifies files.",
     args: {
-      scope: tool.schema.enum(["comments", "tests", "both"]).optional(),
-      paths: tool.schema.array(tool.schema.string()).optional(),
-      format: tool.schema.enum(["markdown", "json"]).optional(),
-      include_advisory: tool.schema.boolean().optional()
+      scope: tool2.schema.enum(["comments", "tests", "both"]).optional(),
+      paths: tool2.schema.array(tool2.schema.string()).optional(),
+      format: tool2.schema.enum(["markdown", "json"]).optional(),
+      include_advisory: tool2.schema.boolean().optional()
     },
     async execute(args) {
       return runAudit({
@@ -2561,6 +2808,7 @@ var resolvedTestGuard = {
   netAssertionLossThreshold: 2,
   mutationEnabled: false
 };
+var resolvedJudge = { enabled: false };
 function resolveTestGuardConfiguration(config) {
   const options = optionContainer(pluginOptions, "test_guard");
   const fromConfig = optionContainer(config, "test_guard");
@@ -2580,6 +2828,12 @@ function resolveTestGuardConfiguration(config) {
   resolvedTestGuard.mutationEnabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, false), "TEST_GUARD_MUTATION_ENABLED", "enabled", mutationInputs) ?? false;
   resolvedTestGuard.mutationCommand = resolveOption(asString, "TEST_GUARD_MUTATION_COMMAND", "command", mutationInputs);
   resolvedTestGuard.mutationTimeoutMs = resolveOption((value) => asCount(value, 1), "TEST_GUARD_MUTATION_TIMEOUT_MS", "timeout_ms", mutationInputs);
+  const optionsJudge = asRecord(options?.judge);
+  const configJudge = asRecord(fromConfig?.judge);
+  const judgeInputs = { options: optionsJudge, config: configJudge };
+  resolvedJudge.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, false), "TEST_GUARD_JUDGE_ENABLED", "enabled", judgeInputs) ?? false;
+  resolvedJudge.model = resolveOption(asString, "TEST_GUARD_JUDGE_MODEL", "model", judgeInputs);
+  resolvedJudge.timeoutMs = resolveOption((value) => asCount(value, 1), "TEST_GUARD_JUDGE_TIMEOUT_MS", "timeout_ms", judgeInputs);
   resolvedTestGuard.checks = resolveRuleConfig(DEFAULT_TEST_CHECKS, {
     envPrefix: "TEST_GUARD_",
     options,
@@ -2612,6 +2866,13 @@ var CommentCheckerPlugin = async (input, options) => {
   const commentGuard = createCommentGuard(() => resolvedCommentConfig);
   const testGuard = createTestGuard(() => resolvedTestGuard);
   const auditTool = createGuardAuditTool({ directory: projectDirectory, getConfig: () => resolvedTestGuard });
+  const judge = createJudge({
+    directory: projectDirectory,
+    getConfig: () => resolvedJudge,
+    getTestPatterns: () => resolvedTestGuard.testPatterns,
+    runner: createModelJudgeRunner(input.client, projectDirectory)
+  });
+  const judgeTool = createGuardJudgeTool(judge);
   return {
     config: async (config) => {
       resolveConfiguration(config);
@@ -2619,11 +2880,17 @@ var CommentCheckerPlugin = async (input, options) => {
       registerAuditCommand(config);
     },
     tool: {
-      guard_audit: auditTool
+      guard_audit: auditTool,
+      guard_judge: judgeTool
     },
     event: async ({ event }) => {
-      if (event.type === "session.idle")
-        await testGuard.onIdle(event.properties?.sessionID);
+      if (event.type !== "session.idle")
+        return;
+      const sessionID = event.properties?.sessionID ?? "";
+      await testGuard.onIdle(sessionID);
+      const judgeMessage = await judge.onIdle(sessionID);
+      if (judgeMessage)
+        testGuard.queueNote(judgeMessage);
     },
     "permission.ask": async (input, output) => {
       testGuard.permission(input, output);

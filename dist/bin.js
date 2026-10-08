@@ -1223,6 +1223,12 @@ function validateTestGuard(record, path, errors) {
     else
       validateMutation(record.mutation, `${path}.mutation`, errors);
   }
+  if (record.judge !== undefined) {
+    if (!isRecord(record.judge))
+      errors.push(`${path}.judge must be an object`);
+    else
+      validateJudge(record.judge, `${path}.judge`, errors);
+  }
   rejectUnknown(record, [
     "enabled",
     "test_patterns",
@@ -1232,7 +1238,8 @@ function validateTestGuard(record, path, errors) {
     "net_assertion_loss_threshold",
     "custom_prompt",
     "append_prompt",
-    "mutation"
+    "mutation",
+    "judge"
   ], path, errors);
 }
 function validateMutation(record, path, errors) {
@@ -1244,6 +1251,16 @@ function validateMutation(record, path, errors) {
     errors.push(`${path}.timeout_ms must be an integer >= 1`);
   }
   rejectUnknown(record, ["enabled", "command", "timeout_ms"], path, errors);
+}
+function validateJudge(record, path, errors) {
+  if (record.enabled !== undefined && typeof record.enabled !== "boolean")
+    errors.push(`${path}.enabled must be a boolean`);
+  if (record.model !== undefined && asString(record.model) === undefined)
+    errors.push(`${path}.model must be a non-empty string`);
+  if (record.timeout_ms !== undefined && asCount(record.timeout_ms, 1) === undefined) {
+    errors.push(`${path}.timeout_ms must be an integer >= 1`);
+  }
+  rejectUnknown(record, ["enabled", "model", "timeout_ms"], path, errors);
 }
 function rejectUnknown(record, known, path, errors) {
   for (const key of Object.keys(record)) {

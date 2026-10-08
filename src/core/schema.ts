@@ -45,6 +45,15 @@ export const TUPLE_OPTIONS_SCHEMA = {
             timeout_ms: { type: "integer", minimum: 1 },
           },
         },
+        judge: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            enabled: { type: "boolean" },
+            model: { type: "string" },
+            timeout_ms: { type: "integer", minimum: 1 },
+          },
+        },
       },
     },
   },
@@ -125,6 +134,10 @@ function validateTestGuard(record: Record<string, unknown>, path: string, errors
     if (!isRecord(record.mutation)) errors.push(`${path}.mutation must be an object`)
     else validateMutation(record.mutation, `${path}.mutation`, errors)
   }
+  if (record.judge !== undefined) {
+    if (!isRecord(record.judge)) errors.push(`${path}.judge must be an object`)
+    else validateJudge(record.judge, `${path}.judge`, errors)
+  }
   rejectUnknown(
     record,
     [
@@ -137,6 +150,7 @@ function validateTestGuard(record: Record<string, unknown>, path: string, errors
       "custom_prompt",
       "append_prompt",
       "mutation",
+      "judge",
     ],
     path,
     errors,
@@ -150,6 +164,15 @@ function validateMutation(record: Record<string, unknown>, path: string, errors:
     errors.push(`${path}.timeout_ms must be an integer >= 1`)
   }
   rejectUnknown(record, ["enabled", "command", "timeout_ms"], path, errors)
+}
+
+function validateJudge(record: Record<string, unknown>, path: string, errors: string[]): void {
+  if (record.enabled !== undefined && typeof record.enabled !== "boolean") errors.push(`${path}.enabled must be a boolean`)
+  if (record.model !== undefined && asString(record.model) === undefined) errors.push(`${path}.model must be a non-empty string`)
+  if (record.timeout_ms !== undefined && asCount(record.timeout_ms, 1) === undefined) {
+    errors.push(`${path}.timeout_ms must be an integer >= 1`)
+  }
+  rejectUnknown(record, ["enabled", "model", "timeout_ms"], path, errors)
 }
 
 function rejectUnknown(record: Record<string, unknown>, known: string[], path: string, errors: string[]): void {

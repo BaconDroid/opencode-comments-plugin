@@ -36,6 +36,7 @@ export interface TestGuard {
     after(input: BeforeInput, output: AfterOutput): Promise<void>;
     permission(input: PermissionLike, output: PermissionDecision): void;
     onIdle(sessionID?: string): Promise<void>;
+    queueNote(message: string): void;
 }
 export declare function extractPatchEntries(patchText: string): Array<{
     kind: string;

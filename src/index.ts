@@ -14,6 +14,7 @@ import {
   type Severity,
 } from "./core/config"
 import { createTestGuard, type ResolvedTestGuard } from "./core/dispatch"
+import { createGuardJudgeTool, createJudge, createModelJudgeRunner, type JudgeConfig } from "./core/judge"
 import { createCommentGuard, type ResolvedCommentConfig } from "./rules/comments"
 import { DEFAULT_TEST_PATTERNS } from "./rules/tests/patterns"
 import { detectTestCommand } from "./core/test-command"
@@ -83,6 +84,8 @@ const resolvedTestGuard: ResolvedTestGuard = {
   mutationEnabled: false,
 }
 
+const resolvedJudge: JudgeConfig = { enabled: false }
+
 function resolveTestGuardConfiguration(config?: unknown): void {
   const options = optionContainer(pluginOptions, "test_guard")
   const fromConfig = optionContainer(config, "test_guard")
@@ -147,6 +150,19 @@ function resolveTestGuardConfiguration(config?: unknown): void {
     mutationInputs,
   )
 
+  const optionsJudge = asRecord(options?.judge)
+  const configJudge = asRecord(fromConfig?.judge)
+  const judgeInputs = { options: optionsJudge, config: configJudge }
+  resolvedJudge.enabled =
+    resolveOption(
+      value => (value === undefined ? undefined : asBoolean(value, false)),
+      "TEST_GUARD_JUDGE_ENABLED",
+      "enabled",
+      judgeInputs,
+    ) ?? false
+  resolvedJudge.model = resolveOption(asString, "TEST_GUARD_JUDGE_MODEL", "model", judgeInputs)
+  resolvedJudge.timeoutMs = resolveOption(value => asCount(value, 1), "TEST_GUARD_JUDGE_TIMEOUT_MS", "timeout_ms", judgeInputs)
+
   resolvedTestGuard.checks = resolveRuleConfig(DEFAULT_TEST_CHECKS, {
     envPrefix: "TEST_GUARD_",
     options,
@@ -180,6 +196,13 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
   const commentGuard = createCommentGuard(() => resolvedCommentConfig)
   const testGuard = createTestGuard(() => resolvedTestGuard)
   const auditTool = createGuardAuditTool({ directory: projectDirectory, getConfig: () => resolvedTestGuard })
+  const judge = createJudge({
+    directory: projectDirectory,
+    getConfig: () => resolvedJudge,
+    getTestPatterns: () => resolvedTestGuard.testPatterns,
+    runner: createModelJudgeRunner(input.client, projectDirectory),
+  })
+  const judgeTool = createGuardJudgeTool(judge)
 
   return {
     config: async (config: unknown) => {
@@ -189,9 +212,14 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
     },
     tool: {
       guard_audit: auditTool,
+      guard_judge: judgeTool,
     },
     event: async ({ event }) => {
-      if (event.type === "session.idle") await testGuard.onIdle(event.properties?.sessionID)
+      if (event.type !== "session.idle") return
+      const sessionID = event.properties?.sessionID ?? ""
+      await testGuard.onIdle(sessionID)
+      const judgeMessage = await judge.onIdle(sessionID)
+      if (judgeMessage) testGuard.queueNote(judgeMessage)
     },
     "permission.ask": async (input, output) => {
       testGuard.permission(input, output)
