@@ -9,9 +9,16 @@ import {
   createModelJudgeRunner,
   formatJudgeFindings,
   parseJudgeResponse,
+  resolveJudgeModel,
   runJudge,
   type JudgeFinding,
 } from "./judge"
+
+test("defaults the judge model to the free Zen model", () => {
+  expect(resolveJudgeModel(undefined)).toBe("opencode/big-pickle")
+  expect(resolveJudgeModel("host")).toBeUndefined()
+  expect(resolveJudgeModel("anthropic/claude-3")).toBe("anthropic/claude-3")
+})
 
 function change(filePath: string, oldText: string, newText: string) {
   return extractChange({ filePath, oldText, newText, isNew: false, isDelete: false })

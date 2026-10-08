@@ -7,6 +7,16 @@ import { diffChanges } from "./ci"
 import { isSupportedLanguage, type ExtractedChange } from "./diff"
 import { PLACEHOLDER_PATTERN, isTestPath } from "../rules/tests/patterns"
 
+// Free OpenCode Zen model (id `opencode/big-pickle`), used when no judge model
+// is configured. Free for a limited period; data may be used to improve it.
+export const DEFAULT_JUDGE_MODEL = "opencode/big-pickle"
+
+// "host" keeps the model opencode is already configured with (no model sent).
+export function resolveJudgeModel(configured: string | undefined): string | undefined {
+  if (configured === "host") return undefined
+  return configured ?? DEFAULT_JUDGE_MODEL
+}
+
 export interface JudgeConfig {
   enabled: boolean
   model?: string

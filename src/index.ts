@@ -14,7 +14,7 @@ import {
   type Severity,
 } from "./core/config"
 import { createTestGuard, type ResolvedTestGuard } from "./core/dispatch"
-import { createGuardJudgeTool, createJudge, createModelJudgeRunner, type JudgeConfig } from "./core/judge"
+import { createGuardJudgeTool, createJudge, createModelJudgeRunner, resolveJudgeModel, type JudgeConfig } from "./core/judge"
 import { createCommentGuard, type ResolvedCommentConfig } from "./rules/comments"
 import { DEFAULT_TEST_PATTERNS } from "./rules/tests/patterns"
 import { detectTestCommand } from "./core/test-command"
@@ -160,7 +160,7 @@ function resolveTestGuardConfiguration(config?: unknown): void {
       "enabled",
       judgeInputs,
     ) ?? false
-  resolvedJudge.model = resolveOption(asString, "TEST_GUARD_JUDGE_MODEL", "model", judgeInputs)
+  resolvedJudge.model = resolveJudgeModel(resolveOption(asString, "TEST_GUARD_JUDGE_MODEL", "model", judgeInputs))
   resolvedJudge.timeoutMs = resolveOption(value => asCount(value, 1), "TEST_GUARD_JUDGE_TIMEOUT_MS", "timeout_ms", judgeInputs)
 
   resolvedTestGuard.checks = resolveRuleConfig(DEFAULT_TEST_CHECKS, {
