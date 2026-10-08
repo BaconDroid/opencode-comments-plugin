@@ -1,0 +1,219 @@
+// Test-guard orchestration: config-driven rule dispatch shared by the
+// `tool.execute.before` (block) and `tool.execute.after` (warn) hooks.
+
+import { existsSync, readFileSync } from "node:fs"
+import { APPLY_PATCH_TOOL_NAME } from "../constants"
+import { GuardBudget } from "./budget"
+import type { Severity } from "./config"
+import { extractPatchChanges, extractToolChange, firstString, type ExtractedChange } from "./diff"
+import { appendFeedback, renderFeedback, type Finding } from "./feedback"
+import { isTestPath } from "../rules/tests/patterns"
+import { runTestRules } from "../rules/tests"
+import type { RuleContext } from "../rules/tests/types"
+
+const DEBUG = process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1"
+
+function debugLog(...args: unknown[]) {
+  if (!DEBUG) return
+  const msg = `[${new Date().toISOString()}] [test-guard] ${args.map(a => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}\n`
+  process.stderr.write(msg)
+}
+
+export interface ResolvedTestGuard {
+  enabled: boolean
+  testPatterns: string[]
+  testCommand?: string | null
+  checks: Record<string, Severity>
+  maxWarningsPerFile: number
+  customPrompt?: string
+  appendPrompt?: string
+}
+
+interface BeforeInput {
+  tool: string
+  sessionID: string
+  callID: string
+}
+
+interface AfterOutput {
+  title: string
+  output: string
+  metadata: unknown
+}
+
+interface PendingGuardCall {
+  args: Record<string, unknown>
+  preimage?: string
+}
+
+const DEFAULT_TEST_GUARD: ResolvedTestGuard = {
+  enabled: true,
+  testPatterns: [],
+  checks: {},
+  maxWarningsPerFile: 0,
+}
+
+export interface TestGuard {
+  before(input: BeforeInput, output: { args: Record<string, unknown> }): void
+  after(input: BeforeInput, output: AfterOutput): Promise<void>
+}
+
+const PATCH_ENTRY = /^\*\*\* (Add|Update|Delete) File:\s*(.+?)\s*$/gm
+
+export function extractPatchEntries(patchText: string): Array<{ kind: string; path: string }> {
+  const entries: Array<{ kind: string; path: string }> = []
+  let match: RegExpExecArray | null
+  const regex = new RegExp(PATCH_ENTRY.source, "gm")
+  while ((match = regex.exec(patchText)) !== null) {
+    entries.push({ kind: match[1]!, path: match[2]! })
+  }
+  return entries
+}
+
+export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard {
+  const budget = new GuardBudget()
+  const pending = new Map<string, PendingGuardCall>()
+
+  function resolve(): ResolvedTestGuard {
+    try {
+      return getResolved()
+    } catch {
+      return DEFAULT_TEST_GUARD
+    }
+  }
+
+  function isBlocking(): boolean {
+    return (resolve().checks["protected-paths"] ?? "warn") === "block"
+  }
+
+  function isProtectedPath(filePath: string, patterns: string[]): boolean {
+    return isTestPath(filePath, patterns)
+  }
+
+  function before(input: BeforeInput, output: { args: Record<string, unknown> }): void {
+    try {
+      const resolved = resolve()
+      if (!resolved.enabled) return
+
+      const toolLower = input.tool.toLowerCase()
+      const args = output.args ?? {}
+      const patterns = resolved.testPatterns.length > 0 ? resolved.testPatterns : []
+
+      if (isBlocking()) {
+        if (toolLower === APPLY_PATCH_TOOL_NAME) {
+          const patchText = firstString(args, "patchText", "patch", "patch_text") ?? ""
+          for (const entry of extractPatchEntries(patchText)) {
+            if (entry.kind !== "Delete" && entry.kind !== "Update") continue
+            if (!isProtectedPath(entry.path, patterns)) continue
+            if (entry.kind === "Delete") {
+              throw new Error(
+                `[test-guard] protected-paths is set to block: refusing to delete test file ${entry.path}. Set "checks": { "protected-paths": "warn" } or add a bypass.`,
+              )
+            }
+          }
+        } else {
+          const filePath = firstString(args, "filePath", "file_path", "path")
+          if (filePath && isProtectedPath(filePath, patterns) && existsSync(filePath)) {
+            throw new Error(
+              `[test-guard] protected-paths is set to block: refusing to edit existing test file ${filePath}. Set "checks": { "protected-paths": "warn" } or add a bypass.`,
+            )
+          }
+        }
+      }
+
+      let preimage: string | undefined
+      const filePath = firstString(args, "filePath", "file_path", "path")
+      if (toolLower !== APPLY_PATCH_TOOL_NAME && filePath && typeof args.content === "string") {
+        try {
+          if (existsSync(filePath)) preimage = readFileSync(filePath, "utf8")
+        } catch {
+          // unreadable preimage is not fatal
+        }
+      }
+      pending.set(input.callID, { args, preimage })
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("[test-guard]")) throw err
+      debugLog("before failed (fail-open):", err)
+    }
+  }
+
+  async function after(input: BeforeInput, output: AfterOutput): Promise<void> {
+    try {
+      const resolved = resolve()
+      if (!resolved.enabled) return
+
+      const toolLower = input.tool.toLowerCase()
+      let changes: ExtractedChange[] = []
+
+      if (toolLower === APPLY_PATCH_TOOL_NAME) {
+        if (output.output.toLowerCase().startsWith("error")) return
+        changes = extractPatchChanges(output.metadata)
+      } else {
+        const call = pending.get(input.callID)
+        pending.delete(input.callID)
+        if (!call) return
+        if (output.output.toLowerCase().startsWith("error")) return
+        const change = extractToolChange(toolLower, call.args, call.preimage)
+        if (change) changes.push(change)
+      }
+
+      if (changes.length === 0) return
+
+      budget.setMaxWarningsPerFile(resolved.maxWarningsPerFile)
+
+      const findings: Finding[] = []
+      const bypassNotes: string[] = []
+      for (const change of changes) {
+        const isTestFile = isProtectedPath(change.filePath, resolved.testPatterns)
+        const ctx: RuleContext = {
+          change,
+          isTestFile,
+          config: { ...resolved, testPatterns: resolved.testPatterns, testCommand: resolved.testCommand ?? null },
+        }
+        const result = runTestRules(ctx)
+        for (const bypass of result.bypasses) {
+          debugLog("bypass", change.filePath, bypass)
+          bypassNotes.push(`${change.filePath}:${bypass.line} ${bypass.kind}${bypass.reason ? ` (${bypass.reason})` : ""}`)
+        }
+
+        const grouped = new Map<string, typeof result.findings>()
+        for (const finding of result.findings) {
+          const list = grouped.get(finding.rule) ?? []
+          list.push(finding)
+          grouped.set(finding.rule, list)
+        }
+
+        for (const [rule, ruleFindings] of grouped) {
+          const level = resolved.checks[rule] ?? "off"
+          if (level === "off") continue
+          if (!budget.shouldEmit(input.sessionID, rule, change.filePath)) continue
+          budget.record(input.sessionID, change.filePath)
+          for (const finding of ruleFindings) {
+            findings.push({
+              rule: finding.rule,
+              filePath: change.filePath,
+              line: finding.line,
+              message: finding.message,
+              severity: level,
+              excerpt: finding.excerpt,
+            })
+          }
+        }
+      }
+
+      let message = findings.length > 0
+        ? renderFeedback(findings, { customPrompt: resolved.customPrompt, appendPrompt: resolved.appendPrompt })
+        : ""
+      if (bypassNotes.length > 0) {
+        const footer = `Test guard bypass recorded:\n${bypassNotes.map(note => `- ${note}`).join("\n")}`
+        message = message.length > 0 ? `${message}\n\n${footer}` : footer
+      }
+      if (message.length === 0) return
+      appendFeedback(output, message)
+    } catch (err) {
+      debugLog("after failed (fail-open):", err)
+    }
+  }
+
+  return { before, after }
+}

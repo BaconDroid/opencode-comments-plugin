@@ -1,4 +1,3 @@
-import { spawn } from "bun"
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
 import { existsSync } from "node:fs"
@@ -10,7 +9,7 @@ import {
   getLatestCommentCheckerVersion,
   getPreferredCommentCheckerVersionSync,
 } from "./downloader"
-import { DEFAULT_CLI_TIMEOUT_MS } from "./constants"
+import { runProcess } from "./core/runner"
 import type { CheckResult, HookInput } from "./types"
 
 const DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1"
@@ -138,66 +137,28 @@ export async function runCommentChecker(input: HookInput, options: RunOptions = 
   const jsonInput = JSON.stringify(input)
   debugLog("running comment-checker with input:", jsonInput.substring(0, 200))
 
-  try {
-    const args = [binaryPath]
-    if (options.prompt && options.prompt.trim().length > 0) {
-      args.push("--prompt", options.prompt)
-    }
+  const args = [binaryPath]
+  if (options.prompt && options.prompt.trim().length > 0) {
+    args.push("--prompt", options.prompt)
+  }
 
-    const proc = spawn(args, { stdin: "pipe", stdout: "pipe", stderr: "pipe" })
-
-    proc.stdin.write(jsonInput)
-    proc.stdin.end()
-
-    const TIMEOUT_MS = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_CLI_TIMEOUT_MS
-    const outcome = await new Promise<{ stdout: string; stderr: string; exitCode: number } | "timeout">(resolve => {
-      const timer = setTimeout(() => {
-        debugLog("comment-checker timed out; killing")
-        try {
-          proc.kill()
-        } catch {
-          debugLog("comment-checker already exited")
-        }
-        proc.stdout.cancel().catch(() => {})
-        proc.stderr.cancel().catch(() => {})
-        resolve("timeout")
-      }, TIMEOUT_MS)
-
-      void (async () => {
-        try {
-          const stdout = await new Response(proc.stdout).text()
-          const stderr = await new Response(proc.stderr).text()
-          const exitCode = await proc.exited
-          clearTimeout(timer)
-          resolve({ stdout, stderr, exitCode })
-        } catch (err) {
-          debugLog("comment-checker stream failed:", err)
-          clearTimeout(timer)
-          resolve("timeout")
-        }
-      })()
-    })
-
-    if (outcome === "timeout") {
-      debugLog("comment-checker abandoned after timeout or stream failure")
-      return { hasComments: false, message: "" }
-    }
-
-    const { stdout, stderr, exitCode } = outcome
-    debugLog("exit code:", exitCode, "stdout length:", stdout.length, "stderr length:", stderr.length)
-
-    if (exitCode === 0) {
-      return { hasComments: false, message: "" }
-    }
-
-    if (exitCode === 2) {
-      return { hasComments: true, message: stderr }
-    }
-
-    debugLog("unexpected exit code:", exitCode, "stderr:", stderr)
-    return { hasComments: false, message: "" }
-  } catch (err) {
-    debugLog("failed to run comment-checker:", err)
+  const outcome = await runProcess(args, { stdin: jsonInput, timeoutMs: options.timeoutMs })
+  if (outcome === "timeout") {
+    debugLog("comment-checker abandoned after timeout or stream failure")
     return { hasComments: false, message: "" }
   }
+
+  const { stdout, stderr, exitCode } = outcome
+  debugLog("exit code:", exitCode, "stdout length:", stdout.length, "stderr length:", stderr.length)
+
+  if (exitCode === 0) {
+    return { hasComments: false, message: "" }
+  }
+
+  if (exitCode === 2) {
+    return { hasComments: true, message: stderr }
+  }
+
+  debugLog("unexpected exit code:", exitCode, "stderr:", stderr)
+  return { hasComments: false, message: "" }
 }

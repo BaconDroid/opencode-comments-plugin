@@ -1,0 +1,24 @@
+import type { Language } from "../../core/diff";
+export declare const DEFAULT_TEST_PATTERNS: string[];
+export declare function isTestPath(filePath: string, patterns: string[]): boolean;
+export declare const SKIP_FOCUS_PATTERNS: Partial<Record<Language, RegExp[]>>;
+export declare const CONDITIONAL_SKIP_PATTERNS: RegExp[];
+export declare const TAUTOLOGICAL_PATTERNS: RegExp[];
+export declare const ASSERTION_PATTERNS: RegExp[];
+export declare const ASSERTION_COUNT_PATTERNS: RegExp[];
+export interface MatcherLoosening {
+    before: RegExp;
+    after: RegExp;
+    message: string;
+}
+export declare const MATCHER_LOOSENINGS: MatcherLoosening[];
+export declare const SWALLOWED_ERROR_PATTERNS: Partial<Record<Language, RegExp[]>>;
+export declare const MOCK_IDENTIFIER_PATTERNS: RegExp[];
+export declare const WEAKENED_CONFIG_PATTERNS: RegExp[];
+export declare const TESTS_NOT_RUN_PATTERNS: RegExp[];
+export declare const TEST_DECLARATION_PATTERNS: Partial<Record<Language, RegExp>>;
+export declare const HELPER_DECLARATION_PATTERNS: RegExp[];
+export declare const PLACEHOLDER_PATTERN: RegExp;
+export declare function hasAssertion(text: string): boolean;
+export declare function countAssertions(lines: string[]): number;
+export declare function isConditionalSkip(line: string): boolean;

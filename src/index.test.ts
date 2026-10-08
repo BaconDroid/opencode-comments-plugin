@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { APPLY_PATCH_TOOL_NAME } from "./constants"
 import { CommentCheckerPlugin } from "./index"
+import { TEST_GUARD_MARKER } from "./core/feedback"
 import { getCommentCheckerVersion } from "./downloader"
 import type { HookInput } from "./types"
 
@@ -45,6 +46,7 @@ type AfterOutput = { title: string; output: string; metadata: unknown }
 
 interface CommentCheckerHooks {
   config?: (config: unknown) => Promise<void>
+  tool?: Record<string, unknown>
   "tool.execute.before": (input: BeforeInput, output: { args: Record<string, unknown> }) => Promise<void>
   "tool.execute.after": (input: BeforeInput, output: AfterOutput) => Promise<void>
 }
@@ -504,6 +506,53 @@ test("appends append_prompt on top of a custom prompt", async () => {
 
   expect((await cliInvocations())[0]!.args).toContain("CUSTOM")
   expect(output.output).toBe("Wrote file successfully.\n\nCOMMENT/DOCSTRING DETECTED\n\nSUFFIX")
+})
+
+// --- test guard (coexistence with the comment guard) ---
+
+test("registers the guard_audit tool", async () => {
+  const hooks = await newSession()
+  expect(hooks.tool).toBeDefined()
+  expect(hooks.tool!.guard_audit).toBeDefined()
+})
+
+test("registers the /guard-audit command without overwriting existing commands", async () => {
+  const hooks = await newSession()
+  const config: Record<string, unknown> = { command: { build: { template: "build it" } } }
+  await hooks.config?.(config)
+  const commands = config.command as Record<string, unknown>
+  expect(commands["guard-audit"]).toBeDefined()
+  expect(commands.build).toEqual({ template: "build it" })
+})
+
+test("adds the command map when the config has none", async () => {
+  const hooks = await newSession()
+  const config: Record<string, unknown> = {}
+  await hooks.config?.(config)
+  expect((config.command as Record<string, unknown>)["guard-audit"]).toBeDefined()
+})
+
+test("test guard warns on a focused test without clobbering the output", async () => {
+  const hooks = await newSession({ comment_checker: { tools: ["none"] }, test_guard: {} })
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"](TOOL_AFTER_INPUT, {
+    args: { filePath: "/work/a.test.ts", content: "it.only('a', () => {\n  expect(1).toBe(1)\n})\n" },
+  })
+  await hooks["tool.execute.after"](TOOL_AFTER_INPUT, output)
+
+  expect(output.output.startsWith("Wrote file successfully.")).toBe(true)
+  expect(output.output).toContain("skip-focus-added")
+  expect(output.output.split(TEST_GUARD_MARKER).length - 1).toBe(1)
+})
+
+test("test guard after hook never throws on malformed metadata", async () => {
+  const hooks = await newSession({ comment_checker: { tools: ["none"] } })
+  const output = writeOutput("ok")
+
+  await hooks["tool.execute.after"]({ tool: APPLY_PATCH_TOOL_NAME, sessionID: "s", callID: "x" }, output)
+
+  expect(output.output).toBe("ok")
 })
 
 
