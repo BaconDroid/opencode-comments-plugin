@@ -465,7 +465,7 @@ function asRecord(value) {
 }
 
 // src/core/dispatch.ts
-import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
+import { existsSync as existsSync4 } from "fs";
 import { join as join3 } from "path";
 
 // src/core/budget.ts
@@ -528,6 +528,7 @@ class GuardBudget {
 }
 
 // src/core/diff.ts
+import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
 var EXTENSION_LANGUAGE = {
   ".js": "js",
   ".jsx": "js",
@@ -726,6 +727,13 @@ function firstString(record, ...keys) {
       return value;
   }
   return;
+}
+function readPreimage(filePath) {
+  try {
+    return existsSync3(filePath) ? readFileSync2(filePath, "utf8") : undefined;
+  } catch {
+    return;
+  }
 }
 function extractToolChange(tool, args, preimage) {
   const filePath = firstString(args, "filePath", "file_path", "path");
@@ -1668,7 +1676,7 @@ function createTestGuard(getResolved) {
   }
   function pathExists(filePath) {
     try {
-      return existsSync3(filePath) || existsSync3(join3(process.cwd(), filePath));
+      return existsSync4(filePath) || existsSync4(join3(process.cwd(), filePath));
     } catch {
       return false;
     }
@@ -1730,10 +1738,7 @@ function createTestGuard(getResolved) {
       let preimage;
       const filePath = firstString(args, "filePath", "file_path", "path");
       if (toolLower !== APPLY_PATCH_TOOL_NAME && filePath && typeof args.content === "string") {
-        try {
-          if (existsSync3(filePath))
-            preimage = readFileSync2(filePath, "utf8");
-        } catch {}
+        preimage = readPreimage(filePath);
       }
       pending.set(input.callID, { args, preimage, timestamp: Date.now() });
     } catch (err) {
@@ -1839,7 +1844,7 @@ ${footer}` : footer;
 }
 
 // src/core/ci.ts
-import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
+import { existsSync as existsSync5, readFileSync as readFileSync3 } from "fs";
 import { isAbsolute, join as join4, relative } from "path";
 function run(args, cwd) {
   const result = Bun.spawnSync(args, { cwd, stdout: "pipe", stderr: "ignore" });
@@ -1869,7 +1874,7 @@ function readOldRevision(directory, base, relativePath) {
 }
 function readWorktree(filePath) {
   try {
-    return existsSync4(filePath) ? readFileSync3(filePath, "utf8") : "";
+    return existsSync5(filePath) ? readFileSync3(filePath, "utf8") : "";
   } catch {
     return;
   }
@@ -2304,7 +2309,7 @@ function createMutationAdapter(options) {
 }
 
 // src/rules/comments/index.ts
-import { existsSync as existsSync5, readFileSync as readFileSync4 } from "fs";
+import { existsSync as existsSync6 } from "fs";
 var DEBUG4 = process.env.COMMENT_CHECKER_DEBUG === "1";
 function debugLog4(...args) {
   if (!DEBUG4)
@@ -2369,7 +2374,7 @@ function createCommentGuard(getConfig) {
         return;
       }
       const cliPath = await getCommentCheckerPath();
-      if (!cliPath || !existsSync5(cliPath)) {
+      if (!cliPath || !existsSync6(cliPath)) {
         debugLog4("CLI not available, skipping comment check");
         return;
       }
@@ -2433,12 +2438,7 @@ ${message}`;
     }
     let preimage;
     if (typeof content === "string") {
-      try {
-        if (existsSync5(filePath))
-          preimage = readFileSync4(filePath, "utf8");
-      } catch (err) {
-        debugLog4("could not read preimage:", err);
-      }
+      preimage = readPreimage(filePath);
     }
     pendingCalls.set(input.callID, {
       filePath,
@@ -2487,7 +2487,7 @@ ${message}`;
 }
 
 // src/core/test-command.ts
-import { existsSync as existsSync6, readFileSync as readFileSync5 } from "fs";
+import { existsSync as existsSync7, readFileSync as readFileSync4 } from "fs";
 import { join as join5 } from "path";
 var CANDIDATES = [
   { file: "pytest.ini", command: "pytest" },
@@ -2500,7 +2500,7 @@ var CANDIDATES = [
 ];
 function readIfExists(filePath) {
   try {
-    return existsSync6(filePath) ? readFileSync5(filePath, "utf8") : undefined;
+    return existsSync7(filePath) ? readFileSync4(filePath, "utf8") : undefined;
   } catch {
     return;
   }
@@ -2529,7 +2529,7 @@ function detectTestCommand(directory) {
 
 // src/audit.ts
 import { tool as tool2 } from "@opencode-ai/plugin";
-import { readFileSync as readFileSync6, readdirSync as readdirSync2, statSync } from "fs";
+import { readFileSync as readFileSync5, readdirSync as readdirSync2, statSync } from "fs";
 import { isAbsolute as isAbsolute2, join as join6, relative as relative2 } from "path";
 var EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "build", "vendor", ".cache", "coverage"]);
 var SECRET_PATTERNS = [/(?:^|\/)\.env(?:\.|$)/, /\.pem$/, /\.key$/, /(?:^|\/)id_(?:rsa|ed25519)$/, /\.p12$/];
@@ -2688,7 +2688,7 @@ function auditTestFile(file, includeAdvisory) {
 }
 function readText(filePath) {
   try {
-    return readFileSync6(filePath, "utf8");
+    return readFileSync5(filePath, "utf8");
   } catch {
     return;
   }

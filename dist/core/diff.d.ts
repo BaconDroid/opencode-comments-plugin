@@ -30,6 +30,7 @@ export declare function isCommentLine(line: string, language: Language): boolean
 export declare function countRealLines(text: string, language: Language): number;
 export declare function readString(record: Record<string, unknown>, ...keys: string[]): string | undefined;
 export declare function firstString(record: Record<string, unknown>, ...keys: string[]): string | undefined;
+export declare function readPreimage(filePath: string): string | undefined;
 export declare function extractToolChange(tool: string, args: Record<string, unknown>, preimage: string | undefined): ExtractedChange | undefined;
 export declare function splitPatch(patch: string): {
     oldText: string;

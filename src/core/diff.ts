@@ -4,6 +4,8 @@
 // comments are stripped before counting, real lines ignore blank/comment-only
 // lines, and net-delta semantics are used for removed vs added.
 
+import { existsSync, readFileSync } from "node:fs"
+
 export type Language = "js" | "ts" | "python" | "go" | "rust" | "unknown"
 
 const EXTENSION_LANGUAGE: Record<string, Language> = {
@@ -233,6 +235,16 @@ export function firstString(record: Record<string, unknown>, ...keys: string[]):
     if (typeof value === "string" && value.length > 0) return value
   }
   return undefined
+}
+
+// Reads the on-disk content before a write, used by both guards so only net-new
+// lines are candidates. An unreadable or missing file is not fatal.
+export function readPreimage(filePath: string): string | undefined {
+  try {
+    return existsSync(filePath) ? readFileSync(filePath, "utf8") : undefined
+  } catch {
+    return undefined
+  }
 }
 
 // Extracts a per-file change from a tool call. `preimage` is the on-disk

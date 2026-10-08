@@ -2,10 +2,10 @@
 // comment-checker binary on added lines and appends its warning to the tool
 // output. Extracted from `index.ts` so the test guard can reuse the engine.
 
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync } from "node:fs"
 import { APPLY_PATCH_TOOL_NAME, COMMENT_CHECKER_EVENT } from "../../constants"
 import { getCommentCheckerPath, runCommentChecker } from "../../cli"
-import { detectLanguage, diffLines, isCommentLine, splitPatch, toPatchEntries } from "../../core/diff"
+import { detectLanguage, diffLines, isCommentLine, readPreimage, splitPatch, toPatchEntries } from "../../core/diff"
 import type { HookInput, PendingCall } from "../../types"
 
 const DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1"
@@ -182,11 +182,7 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
 
     let preimage: string | undefined
     if (typeof content === "string") {
-      try {
-        if (existsSync(filePath)) preimage = readFileSync(filePath, "utf8")
-      } catch (err) {
-        debugLog("could not read preimage:", err)
-      }
+      preimage = readPreimage(filePath)
     }
 
     pendingCalls.set(input.callID, {
