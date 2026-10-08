@@ -16,6 +16,7 @@ function config(overrides: Partial<ResolvedTestGuard> = {}): ResolvedTestGuard {
     checks: { "skip-focus-added": "warn", "protected-paths": "warn" },
     maxWarningsPerFile: 0,
     netAssertionLossThreshold: 2,
+    mutationEnabled: false,
     ...overrides,
   }
 }
@@ -212,6 +213,27 @@ test("after alerts when a block rule was bypassed", async () => {
   }
   await guard.after({ tool: "apply_patch", sessionID: "s", callID: freshCallID() }, output)
   expect(output.output).toContain("BLOCK BYPASSED")
+})
+
+test("mutation adapter surfaces survivors on the next tool call", async () => {
+  const guard = guarded(
+    config({
+      mutationEnabled: true,
+      mutationCommand: `printf '%s' '{"survivors":[{"file":"a.ts","line":3,"mutator":"X"}]}'`,
+    }),
+  )
+  await guard.onIdle()
+  const output: Output = { title: "", output: "bash output", metadata: {} }
+  await guard.after({ tool: "bash", sessionID: "s", callID: freshCallID() }, output)
+  expect(output.output).toContain("Mutation survivors detected")
+})
+
+test("mutation adapter is off by default", async () => {
+  const guard = guarded(config())
+  await guard.onIdle()
+  const output: Output = { title: "", output: "bash output", metadata: {} }
+  await guard.after({ tool: "bash", sessionID: "s", callID: freshCallID() }, output)
+  expect(output.output).toBe("bash output")
 })
 
 test("coexists with another plugin without clobbering or duplicating output", async () => {

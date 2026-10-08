@@ -25,6 +25,7 @@ function config(): ResolvedTestGuard {
     checks: {},
     maxWarningsPerFile: 0,
     netAssertionLossThreshold: 2,
+    mutationEnabled: false,
   }
 }
 

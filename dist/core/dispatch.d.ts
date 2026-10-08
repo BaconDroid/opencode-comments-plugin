@@ -6,6 +6,9 @@ export interface ResolvedTestGuard {
     checks: Record<string, Severity>;
     maxWarningsPerFile: number;
     netAssertionLossThreshold: number;
+    mutationEnabled: boolean;
+    mutationCommand?: string;
+    mutationTimeoutMs?: number;
     customPrompt?: string;
     appendPrompt?: string;
 }
@@ -32,6 +35,7 @@ export interface TestGuard {
     }): void;
     after(input: BeforeInput, output: AfterOutput): Promise<void>;
     permission(input: PermissionLike, output: PermissionDecision): void;
+    onIdle(): Promise<void>;
 }
 export declare function extractPatchEntries(patchText: string): Array<{
     kind: string;

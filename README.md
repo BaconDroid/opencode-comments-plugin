@@ -124,7 +124,8 @@ tests. It reuses the same tuple, under a sibling `test_guard` key:
         "enabled": true,
         "test_patterns": ["**/*.test.*", "**/*_test.*", "**/test_*.py", "**/tests/**"],
         "net_assertion_loss_threshold": 2,
-        "checks": { "protected-paths": "warn", "skip-focus-added": "warn" }
+        "checks": { "protected-paths": "warn", "skip-focus-added": "warn" },
+        "mutation": { "enabled": false, "command": "npx stryker run --reporters json", "timeout_ms": 120000 }
       }
     }]
   ]
@@ -164,8 +165,17 @@ file-level `// test-guard-disable-file`.
 Env vars mirror the comment guard: `TEST_GUARD_ENABLED`,
 `TEST_GUARD_TEST_PATTERNS`, `TEST_GUARD_MAX_WARNINGS_PER_FILE`,
 `TEST_GUARD_NET_ASSERTION_LOSS_THRESHOLD`, `TEST_GUARD_CUSTOM_PROMPT`,
-`TEST_GUARD_APPEND_PROMPT`, and `TEST_GUARD_CHECK_<RULE>`
-(env > tuple options > config hook).
+`TEST_GUARD_APPEND_PROMPT`, `TEST_GUARD_MUTATION_ENABLED`,
+`TEST_GUARD_MUTATION_COMMAND`, `TEST_GUARD_MUTATION_TIMEOUT_MS`, and
+`TEST_GUARD_CHECK_<RULE>` (env > tuple options > config hook).
+
+### Mutation (opt-in, phase 2)
+
+The plugin does not bundle a mutation engine. If `mutation.enabled` is set with
+a `mutation.command` (Stryker, mutmut, PIT, …), it runs on `session.idle`,
+parses the report (Stryker JSON `files[].mutants[]` or a generic
+`{ "survivors": [...] }`) and queues the survivors for the next tool call's
+output. Disabled by default, fail-open, never runs a destructive command.
 
 ### Audit
 

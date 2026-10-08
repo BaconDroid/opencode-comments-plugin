@@ -5,6 +5,7 @@ import {
   asBoolean,
   asCount,
   asPatterns,
+  asRecord,
   asString,
   asTools,
   optionContainer,
@@ -79,6 +80,7 @@ const resolvedTestGuard: ResolvedTestGuard = {
   checks: { ...DEFAULT_TEST_CHECKS },
   maxWarningsPerFile: 0,
   netAssertionLossThreshold: 2,
+  mutationEnabled: false,
 }
 
 function resolveTestGuardConfiguration(config?: unknown): void {
@@ -127,6 +129,24 @@ function resolveTestGuardConfiguration(config?: unknown): void {
       { options, config: fromConfig },
     ) ?? 2
 
+  const optionsMutation = asRecord(options?.mutation)
+  const configMutation = asRecord(fromConfig?.mutation)
+  const mutationInputs = { options: optionsMutation, config: configMutation }
+  resolvedTestGuard.mutationEnabled =
+    resolveOption(
+      value => (value === undefined ? undefined : asBoolean(value, false)),
+      "TEST_GUARD_MUTATION_ENABLED",
+      "enabled",
+      mutationInputs,
+    ) ?? false
+  resolvedTestGuard.mutationCommand = resolveOption(asString, "TEST_GUARD_MUTATION_COMMAND", "command", mutationInputs)
+  resolvedTestGuard.mutationTimeoutMs = resolveOption(
+    value => asCount(value, 1),
+    "TEST_GUARD_MUTATION_TIMEOUT_MS",
+    "timeout_ms",
+    mutationInputs,
+  )
+
   resolvedTestGuard.checks = resolveRuleConfig(DEFAULT_TEST_CHECKS, {
     envPrefix: "TEST_GUARD_",
     options,
@@ -169,6 +189,9 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
     },
     tool: {
       guard_audit: auditTool,
+    },
+    event: async ({ event }) => {
+      if (event.type === "session.idle") await testGuard.onIdle()
     },
     "permission.ask": async (input, output) => {
       testGuard.permission(input, output)
