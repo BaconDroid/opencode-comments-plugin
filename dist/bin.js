@@ -2056,8 +2056,7 @@ async function auditCommand(parsed) {
       testPatterns: [],
       testCommand: detectTestCommand(process.cwd()),
       checks: {},
-      maxWarningsPerFile: 0,
-      mutationEnabled: false
+      maxWarningsPerFile: 0
     })
   });
   process.stdout.write(`${output}

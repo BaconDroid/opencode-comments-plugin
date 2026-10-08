@@ -50,7 +50,12 @@ interface AfterOutput {
 interface PendingGuardCall {
   args: Record<string, unknown>
   preimage?: string
+  timestamp: number
 }
+
+// Parity with the comment guard: an abandoned `before` (no matching `after`)
+// must not leak forever.
+const PENDING_CALL_TTL = 60_000
 
 const DEFAULT_TEST_GUARD: ResolvedTestGuard = {
   enabled: true,
@@ -94,6 +99,12 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
   const pendingNotes: string[] = []
   function queueNote(message: string): void {
     if (message.length > 0) pendingNotes.push(message)
+  }
+
+  function prunePending(now = Date.now()): void {
+    for (const [callID, call] of pending) {
+      if (now - call.timestamp > PENDING_CALL_TTL) pending.delete(callID)
+    }
   }
 
   function consumeNotes(): string[] {
@@ -163,6 +174,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
 
       if (!triggersTool(resolved, toolLower)) return
 
+      prunePending()
       if (isBlocking()) {
         if (toolLower === APPLY_PATCH_TOOL_NAME) {
           const patchText = firstString(args, "patchText", "patch", "patch_text") ?? ""
@@ -195,7 +207,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
           // unreadable preimage is not fatal
         }
       }
-      pending.set(input.callID, { args, preimage })
+      pending.set(input.callID, { args, preimage, timestamp: Date.now() })
     } catch (err) {
       if (err instanceof Error && err.message.startsWith("[test-guard]")) throw err
       debugLog("before failed (fail-open):", err)

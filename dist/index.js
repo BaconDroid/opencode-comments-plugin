@@ -1616,6 +1616,7 @@ function debugLog3(...args) {
   process.stderr.write(msg);
 }
 var DEFAULT_TEST_TRIGGER_TOOLS = new Set(DEFAULT_TRIGGER_TOOLS);
+var PENDING_CALL_TTL = 60000;
 var DEFAULT_TEST_GUARD = {
   enabled: true,
   testPatterns: [],
@@ -1639,6 +1640,12 @@ function createTestGuard(getResolved) {
   function queueNote(message) {
     if (message.length > 0)
       pendingNotes.push(message);
+  }
+  function prunePending(now = Date.now()) {
+    for (const [callID, call] of pending) {
+      if (now - call.timestamp > PENDING_CALL_TTL)
+        pending.delete(callID);
+    }
   }
   function consumeNotes() {
     return pendingNotes.splice(0, pendingNotes.length);
@@ -1700,6 +1707,7 @@ function createTestGuard(getResolved) {
       const patterns = resolved.testPatterns.length > 0 ? resolved.testPatterns : [];
       if (!triggersTool(resolved, toolLower))
         return;
+      prunePending();
       if (isBlocking()) {
         if (toolLower === APPLY_PATCH_TOOL_NAME) {
           const patchText = firstString(args, "patchText", "patch", "patch_text") ?? "";
@@ -1727,7 +1735,7 @@ function createTestGuard(getResolved) {
             preimage = readFileSync2(filePath, "utf8");
         } catch {}
       }
-      pending.set(input.callID, { args, preimage });
+      pending.set(input.callID, { args, preimage, timestamp: Date.now() });
     } catch (err) {
       if (err instanceof Error && err.message.startsWith("[test-guard]"))
         throw err;
@@ -2305,18 +2313,18 @@ function debugLog4(...args) {
 `;
   process.stderr.write(msg);
 }
-var PENDING_CALL_TTL = 60000;
+var PENDING_CALL_TTL2 = 60000;
 function createCommentGuard(getConfig) {
   const pendingCalls = new Map;
   const warningCounts = new Map;
   function cleanupStaleState() {
     const now = Date.now();
     for (const [callID, call] of pendingCalls) {
-      if (now - call.timestamp > PENDING_CALL_TTL)
+      if (now - call.timestamp > PENDING_CALL_TTL2)
         pendingCalls.delete(callID);
     }
     for (const [sessionID, session] of warningCounts) {
-      if (now - session.lastSeen > PENDING_CALL_TTL)
+      if (now - session.lastSeen > PENDING_CALL_TTL2)
         warningCounts.delete(sessionID);
     }
   }
