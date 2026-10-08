@@ -15,6 +15,14 @@ test("rejects a bad test_guard.tools value", () => {
   expect(result.errors.join()).toContain("tools")
 })
 
+test("accepts dedup_window_ms on both guards and rejects a negative one", () => {
+  expect(validateTupleOptions({ comment_checker: { dedup_window_ms: 0 } }).valid).toBe(true)
+  expect(validateTupleOptions({ test_guard: { dedup_window_ms: 30_000 } }).valid).toBe(true)
+  const result = validateTupleOptions({ test_guard: { dedup_window_ms: -1 } })
+  expect(result.valid).toBe(false)
+  expect(result.errors.join()).toContain("dedup_window_ms")
+})
+
 test("accepts a valid comment_checker judge block", () => {
   expect(
     validateTupleOptions({ comment_checker: { judge: { enabled: true, model: "anthropic/claude-3", timeout_ms: 30000 } } }).valid,

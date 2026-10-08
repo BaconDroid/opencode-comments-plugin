@@ -513,6 +513,36 @@ test("appends append_prompt on top of a custom prompt", async () => {
   expect(output.output).toBe("Wrote file successfully.\n\nCOMMENT/DOCSTRING DETECTED\n\nSUFFIX")
 })
 
+test("does not dedup comment warnings by default", async () => {
+  const hooks = await newSession({ comment_checker: {} })
+  const session = "session-dedup-default"
+
+  for (let i = 0; i < 2; i++) {
+    const output = writeOutput("Wrote file successfully.")
+    await hooks["tool.execute.before"]({ tool: "write", sessionID: session, callID: `dedup-default-${i}` }, writeArgs("// explain\n"))
+    await hooks["tool.execute.after"]({ tool: "write", sessionID: session, callID: `dedup-default-${i}` }, output)
+    expect(output.output).toContain("COMMENT/DOCSTRING DETECTED")
+  }
+
+  expect(await cliInvocations()).toHaveLength(2)
+})
+
+test("dedups comment warnings when dedup_window_ms is set", async () => {
+  const hooks = await newSession({ comment_checker: { dedup_window_ms: 60_000 } })
+  const session = "session-dedup-on"
+
+  const first = writeOutput("Wrote file successfully.")
+  await hooks["tool.execute.before"]({ tool: "write", sessionID: session, callID: "dedup-on-1" }, writeArgs("// explain\n"))
+  await hooks["tool.execute.after"]({ tool: "write", sessionID: session, callID: "dedup-on-1" }, first)
+  expect(first.output).toContain("COMMENT/DOCSTRING DETECTED")
+
+  const second = writeOutput("Wrote file successfully.")
+  await hooks["tool.execute.before"]({ tool: "write", sessionID: session, callID: "dedup-on-2" }, writeArgs("// explain\n"))
+  await hooks["tool.execute.after"]({ tool: "write", sessionID: session, callID: "dedup-on-2" }, second)
+  expect(second.output).toBe("Wrote file successfully.")
+  expect(await cliInvocations()).toHaveLength(1)
+})
+
 test("suppresses the warning when the file has a comment-guard-disable-file marker", async () => {
   const hooks = await newSession()
   const output = writeOutput("Wrote file successfully.")

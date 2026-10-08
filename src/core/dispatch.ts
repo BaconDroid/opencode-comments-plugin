@@ -26,6 +26,7 @@ export interface ResolvedTestGuard {
   testCommand?: string | null
   checks: Record<string, Severity>
   maxWarningsPerFile: number
+  dedupWindowMs?: number
   customPrompt?: string
   appendPrompt?: string
   triggerTools?: Set<string>
@@ -236,6 +237,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       const parts: string[] = []
       if (changes.length > 0) {
         budget.setMaxWarningsPerFile(resolved.maxWarningsPerFile)
+        budget.setDedupWindowMs(resolved.dedupWindowMs ?? 30_000)
 
         const findings: Finding[] = []
         const bypassNotes: string[] = []
@@ -263,7 +265,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
             const level = resolved.checks[rule] ?? "off"
             if (level === "off") continue
             if (!budget.shouldEmit(input.sessionID, rule, change.filePath)) continue
-            budget.record(input.sessionID, change.filePath)
+            budget.record(input.sessionID, rule, change.filePath)
             for (const finding of ruleFindings) {
               findings.push({
                 rule: finding.rule,

@@ -483,6 +483,9 @@ class GuardBudget {
   setMaxWarningsPerFile(value) {
     this.maxWarningsPerFile = value;
   }
+  setDedupWindowMs(value) {
+    this.dedupWindowMs = value;
+  }
   key(sessionID, ruleID, filePath) {
     return `${sessionID}\x00${ruleID}\x00${filePath}`;
   }
@@ -510,19 +513,26 @@ class GuardBudget {
       if (counter && counter.count >= this.maxWarningsPerFile)
         return false;
     }
-    this.seen.set(key, now);
     return true;
   }
-  record(sessionID, filePath) {
+  record(sessionID, ruleID, filePath, now = Date.now()) {
+    this.seen.set(this.key(sessionID, ruleID, filePath), now);
     if (this.maxWarningsPerFile <= 0)
       return;
     const key = this.fileKey(sessionID, filePath);
     const existing = this.perFile.get(key);
     if (existing) {
       existing.count += 1;
-      existing.lastSeen = Date.now();
+      existing.lastSeen = now;
     } else {
-      this.perFile.set(key, { count: 1, lastSeen: Date.now() });
+      this.perFile.set(key, { count: 1, lastSeen: now });
+    }
+  }
+  touch(sessionID, now = Date.now()) {
+    const prefix = `${sessionID}\x00`;
+    for (const [key, counter] of this.perFile) {
+      if (key.startsWith(prefix))
+        counter.lastSeen = now;
     }
   }
 }
@@ -1773,6 +1783,7 @@ function createTestGuard(getResolved) {
       const parts = [];
       if (changes.length > 0) {
         budget.setMaxWarningsPerFile(resolved.maxWarningsPerFile);
+        budget.setDedupWindowMs(resolved.dedupWindowMs ?? 30000);
         const findings = [];
         const bypassNotes = [];
         for (const change of changes) {
@@ -1799,7 +1810,7 @@ function createTestGuard(getResolved) {
               continue;
             if (!budget.shouldEmit(input.sessionID, rule, change.filePath))
               continue;
-            budget.record(input.sessionID, change.filePath);
+            budget.record(input.sessionID, rule, change.filePath);
             for (const finding of ruleFindings) {
               findings.push({
                 rule: finding.rule,
@@ -2457,46 +2468,15 @@ function changeOf(call) {
   }
   return { oldText: call.oldString ?? "", newText: call.newString ?? "" };
 }
+var COMMENT_RULE = "comment";
 function createCommentGuard(getConfig) {
   const pendingCalls = new Map;
-  const warningCounts = new Map;
-  function cleanupStaleState() {
-    const now = Date.now();
+  const budget = new GuardBudget({ dedupWindowMs: 0 });
+  function prunePending(now = Date.now()) {
     for (const [callID, call] of pendingCalls) {
       if (now - call.timestamp > PENDING_CALL_TTL2)
         pendingCalls.delete(callID);
     }
-    for (const [sessionID, session] of warningCounts) {
-      if (now - session.lastSeen > PENDING_CALL_TTL2)
-        warningCounts.delete(sessionID);
-    }
-  }
-  const interval = setInterval(cleanupStaleState, 1e4);
-  interval.unref?.();
-  function canWarn(sessionID, filePath) {
-    const { maxWarningsPerFile } = getConfig();
-    if (maxWarningsPerFile <= 0)
-      return true;
-    const session = warningCounts.get(sessionID);
-    if (!session)
-      return true;
-    return (session.files.get(filePath) ?? 0) < maxWarningsPerFile;
-  }
-  function recordWarning(sessionID, filePath) {
-    const { maxWarningsPerFile } = getConfig();
-    if (maxWarningsPerFile <= 0)
-      return;
-    let session = warningCounts.get(sessionID);
-    if (!session) {
-      session = { lastSeen: Date.now(), files: new Map };
-      warningCounts.set(sessionID, session);
-    }
-    session.files.set(filePath, (session.files.get(filePath) ?? 0) + 1);
-  }
-  function touchSession(sessionID) {
-    const session = warningCounts.get(sessionID);
-    if (session)
-      session.lastSeen = Date.now();
   }
   function hasNewCommentLines(preimage, content, filePath) {
     const language = detectLanguage(filePath);
@@ -2505,7 +2485,7 @@ function createCommentGuard(getConfig) {
   }
   async function reportComments(sessionID, toolName, toolInput, output, change) {
     try {
-      const { customPrompt, appendPrompt, timeoutMs } = getConfig();
+      const { customPrompt, appendPrompt, timeoutMs, maxWarningsPerFile, dedupWindowMs } = getConfig();
       const filePath = toolInput.file_path ?? "";
       const bypass = bypassState(change.newText, change.oldText, detectLanguage(filePath));
       if (bypass.suppress) {
@@ -2516,7 +2496,9 @@ function createCommentGuard(getConfig) {
 ${renderBypassFooter(filePath, bypass.notes)}`;
         return;
       }
-      if (!canWarn(sessionID, filePath)) {
+      budget.setMaxWarningsPerFile(maxWarningsPerFile);
+      budget.setDedupWindowMs(dedupWindowMs);
+      if (!budget.shouldEmit(sessionID, COMMENT_RULE, filePath)) {
         debugLog4("warning budget spent for", filePath);
         return;
       }
@@ -2535,7 +2517,7 @@ ${renderBypassFooter(filePath, bypass.notes)}`;
       };
       const result = await runCommentChecker(hookInput, { prompt: customPrompt, timeoutMs });
       if (result.hasComments && result.message) {
-        recordWarning(sessionID, filePath);
+        budget.record(sessionID, COMMENT_RULE, filePath);
         const message = appendPrompt ? `${result.message}
 
 ${appendPrompt}` : result.message;
@@ -2574,6 +2556,7 @@ ${renderBypassFooter(filePath, bypass.notes)}`;
     if (toolLower === APPLY_PATCH_TOOL_NAME || !triggerTools.has(toolLower)) {
       return;
     }
+    prunePending();
     const filePath = output.args.filePath ?? output.args.file_path ?? output.args.path;
     const content = output.args.content;
     const oldString = output.args.oldString ?? output.args.old_string;
@@ -2604,7 +2587,7 @@ ${renderBypassFooter(filePath, bypass.notes)}`;
     if (input.tool.toLowerCase() === APPLY_PATCH_TOOL_NAME) {
       if (!triggerTools.has(APPLY_PATCH_TOOL_NAME))
         return;
-      touchSession(input.sessionID);
+      budget.touch(input.sessionID);
       await checkApplyPatch(input.sessionID, output);
       return;
     }
@@ -2612,7 +2595,7 @@ ${renderBypassFooter(filePath, bypass.notes)}`;
     if (!pendingCall)
       return;
     pendingCalls.delete(input.callID);
-    touchSession(input.sessionID);
+    budget.touch(input.sessionID);
     const isToolFailure = output.output.toLowerCase().startsWith("error");
     if (isToolFailure) {
       debugLog4("skipping due to tool failure in output");
@@ -3030,6 +3013,7 @@ var pluginOptions;
 var projectDirectory = process.cwd();
 var resolvedCommentConfig = {
   maxWarningsPerFile: 0,
+  dedupWindowMs: 0,
   triggerTools: new Set(DEFAULT_TRIGGER_TOOLS),
   timeoutMs: DEFAULT_CLI_TIMEOUT_MS
 };
@@ -3056,6 +3040,7 @@ function resolveConfiguration(config) {
   resolvedCommentConfig.customPrompt = resolveOption(asString, "COMMENT_CHECKER_CUSTOM_PROMPT", "custom_prompt", inputs);
   resolvedCommentConfig.appendPrompt = resolveOption(asString, "COMMENT_CHECKER_APPEND_PROMPT", "append_prompt", inputs);
   resolvedCommentConfig.maxWarningsPerFile = resolveOption((value) => asCount(value, 1), "COMMENT_CHECKER_MAX_WARNINGS_PER_FILE", "max_warnings_per_file", inputs) ?? 0;
+  resolvedCommentConfig.dedupWindowMs = resolveOption((value) => asCount(value, 0), "COMMENT_CHECKER_DEDUP_WINDOW_MS", "dedup_window_ms", inputs) ?? 0;
   resolvedCommentConfig.triggerTools = new Set(resolveOption(asTools, "COMMENT_CHECKER_TOOLS", "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS);
   resolvedCommentConfig.timeoutMs = resolveOption((value) => asCount(value, 1), "COMMENT_CHECKER_TIMEOUT_MS", "timeout_ms", inputs) ?? DEFAULT_CLI_TIMEOUT_MS;
   resolveJudge(resolvedCommentJudge, "COMMENT_CHECKER_JUDGE", subConfigInputs(options, fromConfig, "judge"));
@@ -3079,6 +3064,7 @@ function resolveTestGuardConfiguration(config) {
   resolvedTestGuard.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, true), "TEST_GUARD_ENABLED", "enabled", inputs) ?? true;
   resolvedTestGuard.testPatterns = resolveOption(asPatterns, "TEST_GUARD_TEST_PATTERNS", "test_patterns", inputs) ?? [...DEFAULT_TEST_PATTERNS];
   resolvedTestGuard.maxWarningsPerFile = resolveOption((value) => asCount(value, 1), "TEST_GUARD_MAX_WARNINGS_PER_FILE", "max_warnings_per_file", inputs) ?? 0;
+  resolvedTestGuard.dedupWindowMs = resolveOption((value) => asCount(value, 0), "TEST_GUARD_DEDUP_WINDOW_MS", "dedup_window_ms", inputs) ?? 30000;
   resolvedTestGuard.triggerTools = new Set(resolveOption(asTools, "TEST_GUARD_TOOLS", "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS);
   resolvedTestGuard.customPrompt = resolveOption(asString, "TEST_GUARD_CUSTOM_PROMPT", "custom_prompt", inputs);
   resolvedTestGuard.appendPrompt = resolveOption(asString, "TEST_GUARD_APPEND_PROMPT", "append_prompt", inputs);
