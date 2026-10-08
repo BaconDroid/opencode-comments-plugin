@@ -896,6 +896,40 @@ ${TEST_GUARD_MARKER}
 ${message}`;
 }
 
+// src/core/result-pipeline.ts
+function formatBypassNote(filePath, bypass) {
+  return `${filePath}:${bypass.line} ${bypass.kind}${bypass.reason ? ` (${bypass.reason})` : ""}`;
+}
+function renderBypassFooter(title, entries) {
+  return `${title}:
+${entries.map((entry) => `- ${entry}`).join(`
+`)}`;
+}
+function renderAnalyzerResults(results, options = {}) {
+  try {
+    const findings = [];
+    const raws = [];
+    for (const result of results) {
+      if (result.findings)
+        findings.push(...result.findings);
+      if (result.raw)
+        raws.push(result.raw);
+    }
+    if (findings.length > 0)
+      return renderFeedback(findings, options);
+    if (raws.length === 0)
+      return "";
+    const raw = raws.join(`
+
+`);
+    return options.appendPrompt ? `${raw}
+
+${options.appendPrompt}` : raw;
+  } catch {
+    return "";
+  }
+}
+
 // src/core/glob.ts
 function globToRegExp(glob) {
   const normalized = glob.replace(/\\/g, "/");
@@ -1871,7 +1905,7 @@ function createTestGuard(getResolved) {
           }
           for (const bypass of changeBypasses) {
             debugLog3("bypass", change.filePath, bypass);
-            bypassNotes.push(`${change.filePath}:${bypass.line} ${bypass.kind}${bypass.reason ? ` (${bypass.reason})` : ""}`);
+            bypassNotes.push(formatBypassNote(change.filePath, bypass));
           }
           const grouped = new Map;
           for (const finding of changeFindings) {
@@ -1890,16 +1924,17 @@ function createTestGuard(getResolved) {
               findings.push(finding);
           }
         }
-        let message = findings.length > 0 ? renderFeedback(findings, { customPrompt: resolved.customPrompt, appendPrompt: resolved.appendPrompt }) : "";
+        let message = renderAnalyzerResults([{ findings }], {
+          customPrompt: resolved.customPrompt,
+          appendPrompt: resolved.appendPrompt
+        });
         if (findings.some((finding) => finding.severity === "block")) {
           message = `BLOCK BYPASSED \u2014 a rule configured as "block" reached the after hook; the change was not stopped.
 
 ${message}`;
         }
         if (bypassNotes.length > 0) {
-          const footer = `Test guard bypass recorded:
-${bypassNotes.map((note) => `- ${note}`).join(`
-`)}`;
+          const footer = renderBypassFooter("Test guard bypass recorded", bypassNotes);
           message = message.length > 0 ? `${message}
 
 ${footer}` : footer;
@@ -2502,11 +2537,8 @@ function bypassState(newText, oldText, language) {
   }
   return { suppress: true, notes };
 }
-function renderBypassFooter(filePath, notes) {
-  const lines = notes.map((note) => `- ${filePath}:${note.line} ${note.kind}${note.reason ? ` (${note.reason})` : ""}`);
-  return `Comment guard bypass recorded:
-${lines.join(`
-`)}`;
+function commentBypassFooter(filePath, notes) {
+  return renderBypassFooter("Comment guard bypass recorded", notes.map((note) => formatBypassNote(filePath, note)));
 }
 function changeOf(call) {
   if (typeof call.content === "string")
@@ -2525,9 +2557,36 @@ var COMMENT_RULE = "comment";
 function isCheckedPath(filePath, paths) {
   return paths.length === 0 || matchesAnyGlob(paths, filePath);
 }
+function createCommentBinaryAnalyzer(getConfig) {
+  return {
+    id: "comment-binary",
+    trigger: "after",
+    isEnabled: () => getConfig().enabled,
+    analyze: async (ctx) => {
+      const config = getConfig();
+      const cliPath = await getCommentCheckerPath();
+      if (!cliPath || !existsSync6(cliPath)) {
+        debugLog4("CLI not available, skipping comment check");
+        return {};
+      }
+      const hookInput = {
+        session_id: ctx.sessionID,
+        tool_name: ctx.tool,
+        transcript_path: "",
+        cwd: process.cwd(),
+        hook_event_name: COMMENT_CHECKER_EVENT,
+        tool_input: ctx.args ?? {}
+      };
+      const result = await runCommentChecker(hookInput, { prompt: config.customPrompt, timeoutMs: config.timeoutMs });
+      return result.hasComments && result.message ? { raw: result.message } : {};
+    }
+  };
+}
 function createCommentGuard(getConfig) {
   const pendingCalls = new Map;
   const budget = new GuardBudget({ dedupWindowMs: 0 });
+  const registry = new AnalyzerRegistry;
+  registry.register(createCommentBinaryAnalyzer(getConfig));
   function prunePending(now = Date.now()) {
     for (const [callID, call] of pendingCalls) {
       if (now - call.timestamp > PENDING_CALL_TTL2)
@@ -2541,7 +2600,7 @@ function createCommentGuard(getConfig) {
   }
   async function reportComments(sessionID, toolName, toolInput, output, change) {
     try {
-      const { customPrompt, appendPrompt, timeoutMs, maxWarningsPerFile, dedupWindowMs } = getConfig();
+      const { appendPrompt, maxWarningsPerFile, dedupWindowMs } = getConfig();
       const filePath = toolInput.file_path ?? "";
       const bypass = bypassState(change.newText, change.oldText, detectLanguage(filePath));
       if (bypass.suppress) {
@@ -2549,7 +2608,7 @@ function createCommentGuard(getConfig) {
         if (bypass.notes.length > 0)
           output.output += `
 
-${renderBypassFooter(filePath, bypass.notes)}`;
+${commentBypassFooter(filePath, bypass.notes)}`;
         return;
       }
       budget.setMaxWarningsPerFile(maxWarningsPerFile);
@@ -2558,32 +2617,22 @@ ${renderBypassFooter(filePath, bypass.notes)}`;
         debugLog4("warning budget spent for", filePath);
         return;
       }
-      const cliPath = await getCommentCheckerPath();
-      if (!cliPath || !existsSync6(cliPath)) {
-        debugLog4("CLI not available, skipping comment check");
-        return;
-      }
-      const hookInput = {
-        session_id: sessionID,
-        tool_name: toolName,
-        transcript_path: "",
-        cwd: process.cwd(),
-        hook_event_name: COMMENT_CHECKER_EVENT,
-        tool_input: toolInput
-      };
-      const result = await runCommentChecker(hookInput, { prompt: customPrompt, timeoutMs });
-      if (result.hasComments && result.message) {
+      const results = await registry.run("after", {
+        tool: toolName,
+        sessionID,
+        args: toolInput,
+        directory: process.cwd()
+      });
+      const message = renderAnalyzerResults(results, { appendPrompt });
+      if (message.length > 0) {
         budget.record(sessionID, COMMENT_RULE, filePath);
-        const message = appendPrompt ? `${result.message}
-
-${appendPrompt}` : result.message;
         output.output += `
 
 ${message}`;
         if (bypass.notes.length > 0)
           output.output += `
 
-${renderBypassFooter(filePath, bypass.notes)}`;
+${commentBypassFooter(filePath, bypass.notes)}`;
       }
     } catch (err) {
       debugLog4("comment check failed:", err);

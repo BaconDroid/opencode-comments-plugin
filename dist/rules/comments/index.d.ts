@@ -1,3 +1,4 @@
+import { type Analyzer } from "../../core/analyzer";
 export interface ResolvedCommentConfig {
     enabled: boolean;
     customPrompt?: string;
@@ -8,6 +9,7 @@ export interface ResolvedCommentConfig {
     paths: string[];
     timeoutMs: number;
 }
+export declare function createCommentBinaryAnalyzer(getConfig: () => ResolvedCommentConfig): Analyzer;
 interface BeforeInput {
     tool: string;
     sessionID: string;
