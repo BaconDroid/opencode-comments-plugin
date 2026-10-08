@@ -29,7 +29,7 @@ export const DISABLE_FILE_MARKER = /test-guard-disable-file\b/i
 const BYPASS_WINDOW = 2
 
 function codeText(line: string, language: Language): string {
-  return stripStringLiterals(stripComments(line, language), language)
+  return stripStringLiterals(stripComments(line, language))
 }
 
 // Uses the once-per-file blocks when available, else parses on demand.
@@ -257,7 +257,7 @@ export function findTestBlocks(text: string, language: Language): TestBlock[] {
   // Strings are masked (same length) so fixtures like `'test("x", () => {'`
   // are not mistaken for real test declarations, while the extracted bodies
   // keep their string content for duplicate comparison.
-  const searchable = maskStrings(stripped, language)
+  const searchable = maskStrings(stripped)
 
   if (language === "python") return findPythonBlocks(stripped.split("\n"), searchable.split("\n"), declaration)
   return findBraceBlocks(searchable, stripped, declaration)

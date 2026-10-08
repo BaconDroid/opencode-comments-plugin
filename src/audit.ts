@@ -14,7 +14,7 @@ import type { ResolvedTestGuard } from "./core/dispatch"
 import { ALL_TEST_RULES, runTestRules } from "./rules/tests"
 import { findCrossFileDuplicates } from "./rules/tests/content"
 import { PLACEHOLDER_PATTERN, isTestPath } from "./rules/tests/patterns"
-import type { RuleContext, RuleFinding } from "./rules/tests/types"
+import type { RuleContext } from "./rules/tests/types"
 
 const EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "build", "vendor", ".cache", "coverage"])
 const SECRET_PATTERNS = [/(?:^|\/)\.env(?:\.|$)/, /\.pem$/, /\.key$/, /(?:^|\/)id_(?:rsa|ed25519)$/, /\.p12$/]
