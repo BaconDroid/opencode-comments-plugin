@@ -5,8 +5,386 @@
 import { readFileSync as readFileSync5 } from "fs";
 
 // src/core/ci.ts
-import { existsSync, readFileSync } from "fs";
-import { isAbsolute, join, relative } from "path";
+import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
+import { isAbsolute, join as join3, relative } from "path";
+
+// src/cli.ts
+import { createRequire as createRequire2 } from "module";
+import { dirname, join as join2 } from "path";
+import { existsSync as existsSync2 } from "fs";
+
+// src/downloader.ts
+var {spawn } = globalThis.Bun;
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
+import { createRequire } from "module";
+var DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1";
+function debugLog(...args) {
+  if (!DEBUG)
+    return;
+  const msg = `[${new Date().toISOString()}] [comment-checker:downloader] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
+`;
+  process.stderr.write(msg);
+}
+var REPO = "code-yeongyu/go-claude-code-comment-checker";
+var LATEST_URL = `https://github.com/${REPO}/releases/latest`;
+var LATEST_TTL_MS = 24 * 60 * 60 * 1000;
+var LATEST_CACHE_FILE = "latest.json";
+var PLATFORM_MAP = {
+  "darwin-arm64": { os: "darwin", arch: "arm64", ext: "tar.gz" },
+  "darwin-x64": { os: "darwin", arch: "amd64", ext: "tar.gz" },
+  "linux-arm64": { os: "linux", arch: "arm64", ext: "tar.gz" },
+  "linux-x64": { os: "linux", arch: "amd64", ext: "tar.gz" },
+  "win32-x64": { os: "windows", arch: "amd64", ext: "zip" }
+};
+function getCacheDir() {
+  const xdgCache = process.env.XDG_CACHE_HOME;
+  const base = xdgCache || join(homedir(), ".cache");
+  return join(base, "opencode-comments-plugin", "bin");
+}
+function getBinaryName() {
+  return process.platform === "win32" ? "comment-checker.exe" : "comment-checker";
+}
+function getCachedBinaryPath(version) {
+  if (!version)
+    return null;
+  const binaryPath = join(getCacheDir(), version, getBinaryName());
+  return existsSync(binaryPath) ? binaryPath : null;
+}
+function getCommentCheckerVersion() {
+  try {
+    const require2 = createRequire(import.meta.url);
+    const pkg = require2("@code-yeongyu/comment-checker/package.json");
+    const version = pkg?.version;
+    return typeof version === "string" && version.length > 0 ? version : null;
+  } catch {
+    return null;
+  }
+}
+function parseLatestTag(location) {
+  if (!location)
+    return null;
+  const match = location.match(/\/tag\/v?(\d+\.\d+\.\d+)$/);
+  return match ? match[1] : null;
+}
+function getLatestCachePath() {
+  return join(getCacheDir(), LATEST_CACHE_FILE);
+}
+function readLatestCache() {
+  try {
+    const parsed = JSON.parse(readFileSync(getLatestCachePath(), "utf8"));
+    if (typeof parsed.version === "string" && parsed.version.length > 0 && typeof parsed.checkedAt === "number") {
+      return { version: parsed.version, checkedAt: parsed.checkedAt };
+    }
+  } catch {
+    debugLog("no latest-version cache");
+  }
+  return null;
+}
+function writeLatestCache(version) {
+  try {
+    const dir = getCacheDir();
+    if (!existsSync(dir))
+      mkdirSync(dir, { recursive: true });
+    writeFileSync(getLatestCachePath(), JSON.stringify({ version, checkedAt: Date.now() }));
+  } catch (err) {
+    debugLog("failed to cache latest version:", err);
+  }
+}
+function getPreferredCommentCheckerVersionSync() {
+  return readLatestCache()?.version ?? getCommentCheckerVersion();
+}
+async function getLatestCommentCheckerVersion() {
+  const cached = readLatestCache();
+  if (cached && Date.now() - cached.checkedAt < LATEST_TTL_MS) {
+    return cached.version;
+  }
+  try {
+    const response = await fetch(LATEST_URL, { redirect: "manual" });
+    const version = parseLatestTag(response.headers.get("location"));
+    if (version) {
+      debugLog("resolved latest comment-checker release:", version);
+      writeLatestCache(version);
+      return version;
+    }
+    debugLog("could not parse latest release location:", response.headers.get("location"));
+  } catch (err) {
+    debugLog("failed to resolve latest release:", err);
+  }
+  if (cached)
+    return cached.version;
+  return getCommentCheckerVersion();
+}
+function cleanupStaleCache(version) {
+  let entries;
+  try {
+    entries = readdirSync(getCacheDir());
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry === version || entry === LATEST_CACHE_FILE)
+      continue;
+    try {
+      rmSync(join(getCacheDir(), entry), { recursive: true, force: true });
+    } catch (err) {
+      debugLog("Failed to remove stale cache entry:", entry, err);
+    }
+  }
+}
+async function extractTarGz(archivePath, destDir) {
+  debugLog("Extracting tar.gz:", archivePath, "to", destDir);
+  const proc = spawn(["tar", "-xzf", archivePath, "-C", destDir], {
+    stdout: "pipe",
+    stderr: "pipe"
+  });
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    const stderr = await new Response(proc.stderr).text();
+    throw new Error(`tar extraction failed (exit ${exitCode}): ${stderr}`);
+  }
+}
+async function extractZip(archivePath, destDir) {
+  debugLog("Extracting zip:", archivePath, "to", destDir);
+  const proc = process.platform === "win32" ? spawn(["powershell", "-command", `Expand-Archive -Path '${archivePath}' -DestinationPath '${destDir}' -Force`], {
+    stdout: "pipe",
+    stderr: "pipe"
+  }) : spawn(["unzip", "-o", archivePath, "-d", destDir], {
+    stdout: "pipe",
+    stderr: "pipe"
+  });
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    const stderr = await new Response(proc.stderr).text();
+    throw new Error(`zip extraction failed (exit ${exitCode}): ${stderr}`);
+  }
+}
+async function downloadCommentChecker(versionOverride) {
+  const platformKey = `${process.platform}-${process.arch}`;
+  const platformInfo = PLATFORM_MAP[platformKey];
+  if (!platformInfo) {
+    debugLog("Unsupported platform:", platformKey);
+    return null;
+  }
+  const version = versionOverride ?? getCommentCheckerVersion();
+  if (!version) {
+    debugLog("Cannot resolve a comment-checker version; refusing to download a stale binary");
+    return null;
+  }
+  const cacheDir = join(getCacheDir(), version);
+  const binaryName = getBinaryName();
+  const binaryPath = join(cacheDir, binaryName);
+  if (existsSync(binaryPath)) {
+    debugLog("Binary already cached at:", binaryPath);
+    return binaryPath;
+  }
+  const { os, arch, ext } = platformInfo;
+  const assetName = `comment-checker_v${version}_${os}_${arch}.${ext}`;
+  const downloadUrl = `https://github.com/${REPO}/releases/download/v${version}/${assetName}`;
+  debugLog("Downloading from:", downloadUrl);
+  console.log("[opencode-comments-plugin] Downloading comment-checker binary...");
+  try {
+    if (!existsSync(cacheDir)) {
+      mkdirSync(cacheDir, { recursive: true });
+    }
+    const response = await fetch(downloadUrl, { redirect: "follow" });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    const archivePath = join(cacheDir, assetName);
+    const arrayBuffer = await response.arrayBuffer();
+    await Bun.write(archivePath, arrayBuffer);
+    debugLog("Downloaded archive to:", archivePath);
+    if (ext === "tar.gz") {
+      await extractTarGz(archivePath, cacheDir);
+    } else {
+      await extractZip(archivePath, cacheDir);
+    }
+    if (existsSync(archivePath)) {
+      unlinkSync(archivePath);
+    }
+    if (process.platform !== "win32" && existsSync(binaryPath)) {
+      chmodSync(binaryPath, 493);
+    }
+    debugLog("Successfully downloaded binary to:", binaryPath);
+    console.log("[opencode-comments-plugin] comment-checker binary ready.");
+    cleanupStaleCache(version);
+    return binaryPath;
+  } catch (err) {
+    debugLog("Failed to download:", err);
+    console.error(`[opencode-comments-plugin] Failed to download comment-checker: ${err instanceof Error ? err.message : err}`);
+    console.error("[opencode-comments-plugin] Comment checking disabled.");
+    return null;
+  }
+}
+async function ensureCommentCheckerBinary(versionOverride) {
+  const version = versionOverride ?? await getLatestCommentCheckerVersion();
+  if (!version)
+    return null;
+  const cachedPath = getCachedBinaryPath(version);
+  if (cachedPath) {
+    debugLog("Using cached binary:", cachedPath);
+    cleanupStaleCache(version);
+    return cachedPath;
+  }
+  return downloadCommentChecker(version);
+}
+
+// src/core/runner.ts
+var {spawn: spawn2 } = globalThis.Bun;
+
+// src/constants.ts
+var COMMENT_CHECKER_EVENT = "PostToolUse";
+var DEFAULT_CLI_TIMEOUT_MS = 5000;
+
+// src/core/runner.ts
+async function runProcess(args, options = {}) {
+  const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_CLI_TIMEOUT_MS;
+  try {
+    const proc = spawn2(args, { stdin: options.stdin === undefined ? "ignore" : "pipe", stdout: "pipe", stderr: "pipe" });
+    if (options.stdin !== undefined && proc.stdin) {
+      proc.stdin.write(options.stdin);
+      proc.stdin.end();
+    }
+    const outcome = await new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        try {
+          proc.kill();
+        } catch {}
+        proc.stdout.cancel().catch(() => {});
+        proc.stderr.cancel().catch(() => {});
+        resolve("timeout");
+      }, timeoutMs);
+      (async () => {
+        try {
+          const stdout = await new Response(proc.stdout).text();
+          const stderr = await new Response(proc.stderr).text();
+          const exitCode = await proc.exited;
+          clearTimeout(timer);
+          resolve({ stdout, stderr, exitCode });
+        } catch {
+          clearTimeout(timer);
+          resolve("timeout");
+        }
+      })();
+    });
+    return outcome;
+  } catch {
+    return "timeout";
+  }
+}
+
+// src/cli.ts
+var DEBUG2 = process.env.COMMENT_CHECKER_DEBUG === "1";
+function debugLog2(...args) {
+  if (!DEBUG2)
+    return;
+  const msg = `[${new Date().toISOString()}] [comment-checker:cli] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
+`;
+  process.stderr.write(msg);
+}
+function getBinaryName2() {
+  return process.platform === "win32" ? "comment-checker.exe" : "comment-checker";
+}
+function findCommentCheckerPathSync() {
+  const binaryName = getBinaryName2();
+  const version = getPreferredCommentCheckerVersionSync();
+  if (!version) {
+    debugLog2("cannot resolve comment-checker version; comment checking disabled");
+    return null;
+  }
+  if (getCommentCheckerVersion() === version) {
+    try {
+      const require2 = createRequire2(import.meta.url);
+      const cliPkgPath = require2.resolve("@code-yeongyu/comment-checker/package.json");
+      const cliDir = dirname(cliPkgPath);
+      const binaryPath = join2(cliDir, "bin", binaryName);
+      if (existsSync2(binaryPath)) {
+        debugLog2("found binary in main package:", binaryPath);
+        return binaryPath;
+      }
+    } catch {
+      debugLog2("main package not installed");
+    }
+  }
+  const cachedPath = getCachedBinaryPath(version);
+  if (cachedPath) {
+    debugLog2("found binary in cache:", cachedPath);
+    cleanupStaleCache(version);
+    return cachedPath;
+  }
+  debugLog2("no binary found in known locations");
+  return null;
+}
+var resolvedCliPath = null;
+var initPromise = null;
+async function getCommentCheckerPath() {
+  if (resolvedCliPath !== null) {
+    return resolvedCliPath;
+  }
+  if (initPromise) {
+    return initPromise;
+  }
+  initPromise = (async () => {
+    const version = await getLatestCommentCheckerVersion();
+    if (!version) {
+      debugLog2("cannot resolve a comment-checker version; comment checking disabled");
+      return null;
+    }
+    const syncPath = findCommentCheckerPathSync();
+    if (syncPath && existsSync2(syncPath)) {
+      resolvedCliPath = syncPath;
+      debugLog2("using sync-resolved path:", syncPath);
+      return syncPath;
+    }
+    debugLog2("triggering lazy download...");
+    const downloadedPath = await ensureCommentCheckerBinary(version);
+    if (downloadedPath) {
+      resolvedCliPath = downloadedPath;
+      debugLog2("using downloaded path:", downloadedPath);
+      return downloadedPath;
+    }
+    debugLog2("no binary available");
+    return null;
+  })();
+  return initPromise;
+}
+function getCommentCheckerPathSync() {
+  return resolvedCliPath ?? findCommentCheckerPathSync();
+}
+async function runCommentChecker(input, options = {}) {
+  const binaryPath = options.cliPath ?? resolvedCliPath ?? getCommentCheckerPathSync();
+  if (!binaryPath) {
+    debugLog2("comment-checker binary not found");
+    return { hasComments: false, message: "" };
+  }
+  if (!existsSync2(binaryPath)) {
+    debugLog2("comment-checker binary does not exist:", binaryPath);
+    return { hasComments: false, message: "" };
+  }
+  const jsonInput = JSON.stringify(input);
+  debugLog2("running comment-checker with input:", jsonInput.substring(0, 200));
+  const args = [binaryPath];
+  if (options.prompt && options.prompt.trim().length > 0) {
+    args.push("--prompt", options.prompt);
+  }
+  const outcome = await runProcess(args, { stdin: jsonInput, timeoutMs: options.timeoutMs });
+  if (outcome === "timeout") {
+    debugLog2("comment-checker abandoned after timeout or stream failure");
+    return { hasComments: false, message: "" };
+  }
+  const { stdout, stderr, exitCode } = outcome;
+  debugLog2("exit code:", exitCode, "stdout length:", stdout.length, "stderr length:", stderr.length);
+  if (exitCode === 0) {
+    return { hasComments: false, message: "" };
+  }
+  if (exitCode === 2) {
+    return { hasComments: true, message: stderr };
+  }
+  debugLog2("unexpected exit code:", exitCode, "stderr:", stderr);
+  return { hasComments: false, message: "" };
+}
 
 // src/core/diff.ts
 var EXTENSION_LANGUAGE = {
@@ -1002,7 +1380,7 @@ function readOldRevision(directory, base, relativePath) {
 }
 function readWorktree(filePath) {
   try {
-    return existsSync(filePath) ? readFileSync(filePath, "utf8") : "";
+    return existsSync3(filePath) ? readFileSync2(filePath, "utf8") : "";
   } catch {
     return;
   }
@@ -1013,7 +1391,7 @@ function changedTestChanges(directory, base, testPatterns) {
 function diffChanges(directory, base) {
   const changes = [];
   for (const relativePath of changedFiles(directory, base)) {
-    const absolute = isAbsolute(relativePath) ? relativePath : join(directory, relativePath);
+    const absolute = isAbsolute(relativePath) ? relativePath : join3(directory, relativePath);
     const newText = readWorktree(absolute);
     if (newText === undefined)
       continue;
@@ -1094,6 +1472,46 @@ function runDiffCheck(options) {
   return { findings, output: `${header}
 
 ${body}` };
+}
+async function defaultCommentCheck(change, directory) {
+  const cliPath = await getCommentCheckerPath();
+  if (!cliPath || !existsSync3(cliPath))
+    return { hasComments: false, message: "" };
+  return runCommentChecker({
+    session_id: "guard-check",
+    tool_name: "Edit",
+    transcript_path: "",
+    cwd: directory,
+    hook_event_name: COMMENT_CHECKER_EVENT,
+    tool_input: { file_path: change.filePath, old_string: change.oldText, new_string: change.newText }
+  }, { cliPath });
+}
+async function runCommentDiffCheck(options, deps = {}) {
+  const directory = options.directory;
+  const base = options.base ?? "HEAD";
+  const runCheck = deps.runCheck ?? ((change) => defaultCommentCheck(change, directory));
+  const changes = diffChanges(directory, base).filter((change) => isSupportedLanguage(change.language) && change.addedLines.length > 0);
+  const entries = [];
+  for (const change of changes) {
+    try {
+      const result = await runCheck(change);
+      if (result.hasComments && result.message) {
+        entries.push({ file: relative(directory, change.filePath) || change.filePath, message: result.message });
+      }
+    } catch {}
+  }
+  if (options.format === "json") {
+    return { output: JSON.stringify({ comments: entries }, null, 2), count: entries.length };
+  }
+  const header = `# Comment guard check (${base})`;
+  const body = entries.length === 0 ? "No findings." : entries.map((entry) => `## ${entry.file}
+
+${entry.message}`).join(`
+
+`);
+  return { output: `${header}
+
+${body}`, count: entries.length };
 }
 
 // src/core/config.ts
@@ -1289,8 +1707,8 @@ function isRecord(value) {
 }
 
 // src/core/test-command.ts
-import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
-import { join as join2 } from "path";
+import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
+import { join as join4 } from "path";
 var CANDIDATES = [
   { file: "pytest.ini", command: "pytest" },
   { file: "pyproject.toml", contains: "[tool.pytest", command: "pytest" },
@@ -1302,13 +1720,13 @@ var CANDIDATES = [
 ];
 function readIfExists(filePath) {
   try {
-    return existsSync2(filePath) ? readFileSync2(filePath, "utf8") : undefined;
+    return existsSync4(filePath) ? readFileSync3(filePath, "utf8") : undefined;
   } catch {
     return;
   }
 }
 function detectTestCommand(directory) {
-  const packageJson = readIfExists(join2(directory, "package.json"));
+  const packageJson = readIfExists(join4(directory, "package.json"));
   if (packageJson) {
     try {
       const parsed = JSON.parse(packageJson);
@@ -1319,7 +1737,7 @@ function detectTestCommand(directory) {
     } catch {}
   }
   for (const candidate of CANDIDATES) {
-    const content = readIfExists(join2(directory, candidate.file));
+    const content = readIfExists(join4(directory, candidate.file));
     if (content === undefined)
       continue;
     if (candidate.contains && !content.includes(candidate.contains))
@@ -1333,386 +1751,6 @@ function detectTestCommand(directory) {
 import { tool } from "@opencode-ai/plugin";
 import { readFileSync as readFileSync4, readdirSync as readdirSync2, statSync } from "fs";
 import { isAbsolute as isAbsolute2, join as join5, relative as relative2 } from "path";
-
-// src/cli.ts
-import { createRequire as createRequire2 } from "module";
-import { dirname, join as join4 } from "path";
-import { existsSync as existsSync4 } from "fs";
-
-// src/downloader.ts
-var {spawn } = globalThis.Bun;
-import { chmodSync, existsSync as existsSync3, mkdirSync, readFileSync as readFileSync3, readdirSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { join as join3 } from "path";
-import { homedir } from "os";
-import { createRequire } from "module";
-var DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1";
-function debugLog(...args) {
-  if (!DEBUG)
-    return;
-  const msg = `[${new Date().toISOString()}] [comment-checker:downloader] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
-`;
-  process.stderr.write(msg);
-}
-var REPO = "code-yeongyu/go-claude-code-comment-checker";
-var LATEST_URL = `https://github.com/${REPO}/releases/latest`;
-var LATEST_TTL_MS = 24 * 60 * 60 * 1000;
-var LATEST_CACHE_FILE = "latest.json";
-var PLATFORM_MAP = {
-  "darwin-arm64": { os: "darwin", arch: "arm64", ext: "tar.gz" },
-  "darwin-x64": { os: "darwin", arch: "amd64", ext: "tar.gz" },
-  "linux-arm64": { os: "linux", arch: "arm64", ext: "tar.gz" },
-  "linux-x64": { os: "linux", arch: "amd64", ext: "tar.gz" },
-  "win32-x64": { os: "windows", arch: "amd64", ext: "zip" }
-};
-function getCacheDir() {
-  const xdgCache = process.env.XDG_CACHE_HOME;
-  const base = xdgCache || join3(homedir(), ".cache");
-  return join3(base, "opencode-comments-plugin", "bin");
-}
-function getBinaryName() {
-  return process.platform === "win32" ? "comment-checker.exe" : "comment-checker";
-}
-function getCachedBinaryPath(version) {
-  if (!version)
-    return null;
-  const binaryPath = join3(getCacheDir(), version, getBinaryName());
-  return existsSync3(binaryPath) ? binaryPath : null;
-}
-function getCommentCheckerVersion() {
-  try {
-    const require2 = createRequire(import.meta.url);
-    const pkg = require2("@code-yeongyu/comment-checker/package.json");
-    const version = pkg?.version;
-    return typeof version === "string" && version.length > 0 ? version : null;
-  } catch {
-    return null;
-  }
-}
-function parseLatestTag(location) {
-  if (!location)
-    return null;
-  const match = location.match(/\/tag\/v?(\d+\.\d+\.\d+)$/);
-  return match ? match[1] : null;
-}
-function getLatestCachePath() {
-  return join3(getCacheDir(), LATEST_CACHE_FILE);
-}
-function readLatestCache() {
-  try {
-    const parsed = JSON.parse(readFileSync3(getLatestCachePath(), "utf8"));
-    if (typeof parsed.version === "string" && parsed.version.length > 0 && typeof parsed.checkedAt === "number") {
-      return { version: parsed.version, checkedAt: parsed.checkedAt };
-    }
-  } catch {
-    debugLog("no latest-version cache");
-  }
-  return null;
-}
-function writeLatestCache(version) {
-  try {
-    const dir = getCacheDir();
-    if (!existsSync3(dir))
-      mkdirSync(dir, { recursive: true });
-    writeFileSync(getLatestCachePath(), JSON.stringify({ version, checkedAt: Date.now() }));
-  } catch (err) {
-    debugLog("failed to cache latest version:", err);
-  }
-}
-function getPreferredCommentCheckerVersionSync() {
-  return readLatestCache()?.version ?? getCommentCheckerVersion();
-}
-async function getLatestCommentCheckerVersion() {
-  const cached = readLatestCache();
-  if (cached && Date.now() - cached.checkedAt < LATEST_TTL_MS) {
-    return cached.version;
-  }
-  try {
-    const response = await fetch(LATEST_URL, { redirect: "manual" });
-    const version = parseLatestTag(response.headers.get("location"));
-    if (version) {
-      debugLog("resolved latest comment-checker release:", version);
-      writeLatestCache(version);
-      return version;
-    }
-    debugLog("could not parse latest release location:", response.headers.get("location"));
-  } catch (err) {
-    debugLog("failed to resolve latest release:", err);
-  }
-  if (cached)
-    return cached.version;
-  return getCommentCheckerVersion();
-}
-function cleanupStaleCache(version) {
-  let entries;
-  try {
-    entries = readdirSync(getCacheDir());
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    if (entry === version || entry === LATEST_CACHE_FILE)
-      continue;
-    try {
-      rmSync(join3(getCacheDir(), entry), { recursive: true, force: true });
-    } catch (err) {
-      debugLog("Failed to remove stale cache entry:", entry, err);
-    }
-  }
-}
-async function extractTarGz(archivePath, destDir) {
-  debugLog("Extracting tar.gz:", archivePath, "to", destDir);
-  const proc = spawn(["tar", "-xzf", archivePath, "-C", destDir], {
-    stdout: "pipe",
-    stderr: "pipe"
-  });
-  const exitCode = await proc.exited;
-  if (exitCode !== 0) {
-    const stderr = await new Response(proc.stderr).text();
-    throw new Error(`tar extraction failed (exit ${exitCode}): ${stderr}`);
-  }
-}
-async function extractZip(archivePath, destDir) {
-  debugLog("Extracting zip:", archivePath, "to", destDir);
-  const proc = process.platform === "win32" ? spawn(["powershell", "-command", `Expand-Archive -Path '${archivePath}' -DestinationPath '${destDir}' -Force`], {
-    stdout: "pipe",
-    stderr: "pipe"
-  }) : spawn(["unzip", "-o", archivePath, "-d", destDir], {
-    stdout: "pipe",
-    stderr: "pipe"
-  });
-  const exitCode = await proc.exited;
-  if (exitCode !== 0) {
-    const stderr = await new Response(proc.stderr).text();
-    throw new Error(`zip extraction failed (exit ${exitCode}): ${stderr}`);
-  }
-}
-async function downloadCommentChecker(versionOverride) {
-  const platformKey = `${process.platform}-${process.arch}`;
-  const platformInfo = PLATFORM_MAP[platformKey];
-  if (!platformInfo) {
-    debugLog("Unsupported platform:", platformKey);
-    return null;
-  }
-  const version = versionOverride ?? getCommentCheckerVersion();
-  if (!version) {
-    debugLog("Cannot resolve a comment-checker version; refusing to download a stale binary");
-    return null;
-  }
-  const cacheDir = join3(getCacheDir(), version);
-  const binaryName = getBinaryName();
-  const binaryPath = join3(cacheDir, binaryName);
-  if (existsSync3(binaryPath)) {
-    debugLog("Binary already cached at:", binaryPath);
-    return binaryPath;
-  }
-  const { os, arch, ext } = platformInfo;
-  const assetName = `comment-checker_v${version}_${os}_${arch}.${ext}`;
-  const downloadUrl = `https://github.com/${REPO}/releases/download/v${version}/${assetName}`;
-  debugLog("Downloading from:", downloadUrl);
-  console.log("[opencode-comments-plugin] Downloading comment-checker binary...");
-  try {
-    if (!existsSync3(cacheDir)) {
-      mkdirSync(cacheDir, { recursive: true });
-    }
-    const response = await fetch(downloadUrl, { redirect: "follow" });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    const archivePath = join3(cacheDir, assetName);
-    const arrayBuffer = await response.arrayBuffer();
-    await Bun.write(archivePath, arrayBuffer);
-    debugLog("Downloaded archive to:", archivePath);
-    if (ext === "tar.gz") {
-      await extractTarGz(archivePath, cacheDir);
-    } else {
-      await extractZip(archivePath, cacheDir);
-    }
-    if (existsSync3(archivePath)) {
-      unlinkSync(archivePath);
-    }
-    if (process.platform !== "win32" && existsSync3(binaryPath)) {
-      chmodSync(binaryPath, 493);
-    }
-    debugLog("Successfully downloaded binary to:", binaryPath);
-    console.log("[opencode-comments-plugin] comment-checker binary ready.");
-    cleanupStaleCache(version);
-    return binaryPath;
-  } catch (err) {
-    debugLog("Failed to download:", err);
-    console.error(`[opencode-comments-plugin] Failed to download comment-checker: ${err instanceof Error ? err.message : err}`);
-    console.error("[opencode-comments-plugin] Comment checking disabled.");
-    return null;
-  }
-}
-async function ensureCommentCheckerBinary(versionOverride) {
-  const version = versionOverride ?? await getLatestCommentCheckerVersion();
-  if (!version)
-    return null;
-  const cachedPath = getCachedBinaryPath(version);
-  if (cachedPath) {
-    debugLog("Using cached binary:", cachedPath);
-    cleanupStaleCache(version);
-    return cachedPath;
-  }
-  return downloadCommentChecker(version);
-}
-
-// src/core/runner.ts
-var {spawn: spawn2 } = globalThis.Bun;
-
-// src/constants.ts
-var COMMENT_CHECKER_EVENT = "PostToolUse";
-var DEFAULT_CLI_TIMEOUT_MS = 5000;
-
-// src/core/runner.ts
-async function runProcess(args, options = {}) {
-  const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_CLI_TIMEOUT_MS;
-  try {
-    const proc = spawn2(args, { stdin: options.stdin === undefined ? "ignore" : "pipe", stdout: "pipe", stderr: "pipe" });
-    if (options.stdin !== undefined && proc.stdin) {
-      proc.stdin.write(options.stdin);
-      proc.stdin.end();
-    }
-    const outcome = await new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        try {
-          proc.kill();
-        } catch {}
-        proc.stdout.cancel().catch(() => {});
-        proc.stderr.cancel().catch(() => {});
-        resolve("timeout");
-      }, timeoutMs);
-      (async () => {
-        try {
-          const stdout = await new Response(proc.stdout).text();
-          const stderr = await new Response(proc.stderr).text();
-          const exitCode = await proc.exited;
-          clearTimeout(timer);
-          resolve({ stdout, stderr, exitCode });
-        } catch {
-          clearTimeout(timer);
-          resolve("timeout");
-        }
-      })();
-    });
-    return outcome;
-  } catch {
-    return "timeout";
-  }
-}
-
-// src/cli.ts
-var DEBUG2 = process.env.COMMENT_CHECKER_DEBUG === "1";
-function debugLog2(...args) {
-  if (!DEBUG2)
-    return;
-  const msg = `[${new Date().toISOString()}] [comment-checker:cli] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
-`;
-  process.stderr.write(msg);
-}
-function getBinaryName2() {
-  return process.platform === "win32" ? "comment-checker.exe" : "comment-checker";
-}
-function findCommentCheckerPathSync() {
-  const binaryName = getBinaryName2();
-  const version = getPreferredCommentCheckerVersionSync();
-  if (!version) {
-    debugLog2("cannot resolve comment-checker version; comment checking disabled");
-    return null;
-  }
-  if (getCommentCheckerVersion() === version) {
-    try {
-      const require2 = createRequire2(import.meta.url);
-      const cliPkgPath = require2.resolve("@code-yeongyu/comment-checker/package.json");
-      const cliDir = dirname(cliPkgPath);
-      const binaryPath = join4(cliDir, "bin", binaryName);
-      if (existsSync4(binaryPath)) {
-        debugLog2("found binary in main package:", binaryPath);
-        return binaryPath;
-      }
-    } catch {
-      debugLog2("main package not installed");
-    }
-  }
-  const cachedPath = getCachedBinaryPath(version);
-  if (cachedPath) {
-    debugLog2("found binary in cache:", cachedPath);
-    cleanupStaleCache(version);
-    return cachedPath;
-  }
-  debugLog2("no binary found in known locations");
-  return null;
-}
-var resolvedCliPath = null;
-var initPromise = null;
-async function getCommentCheckerPath() {
-  if (resolvedCliPath !== null) {
-    return resolvedCliPath;
-  }
-  if (initPromise) {
-    return initPromise;
-  }
-  initPromise = (async () => {
-    const version = await getLatestCommentCheckerVersion();
-    if (!version) {
-      debugLog2("cannot resolve a comment-checker version; comment checking disabled");
-      return null;
-    }
-    const syncPath = findCommentCheckerPathSync();
-    if (syncPath && existsSync4(syncPath)) {
-      resolvedCliPath = syncPath;
-      debugLog2("using sync-resolved path:", syncPath);
-      return syncPath;
-    }
-    debugLog2("triggering lazy download...");
-    const downloadedPath = await ensureCommentCheckerBinary(version);
-    if (downloadedPath) {
-      resolvedCliPath = downloadedPath;
-      debugLog2("using downloaded path:", downloadedPath);
-      return downloadedPath;
-    }
-    debugLog2("no binary available");
-    return null;
-  })();
-  return initPromise;
-}
-function getCommentCheckerPathSync() {
-  return resolvedCliPath ?? findCommentCheckerPathSync();
-}
-async function runCommentChecker(input, options = {}) {
-  const binaryPath = options.cliPath ?? resolvedCliPath ?? getCommentCheckerPathSync();
-  if (!binaryPath) {
-    debugLog2("comment-checker binary not found");
-    return { hasComments: false, message: "" };
-  }
-  if (!existsSync4(binaryPath)) {
-    debugLog2("comment-checker binary does not exist:", binaryPath);
-    return { hasComments: false, message: "" };
-  }
-  const jsonInput = JSON.stringify(input);
-  debugLog2("running comment-checker with input:", jsonInput.substring(0, 200));
-  const args = [binaryPath];
-  if (options.prompt && options.prompt.trim().length > 0) {
-    args.push("--prompt", options.prompt);
-  }
-  const outcome = await runProcess(args, { stdin: jsonInput, timeoutMs: options.timeoutMs });
-  if (outcome === "timeout") {
-    debugLog2("comment-checker abandoned after timeout or stream failure");
-    return { hasComments: false, message: "" };
-  }
-  const { stdout, stderr, exitCode } = outcome;
-  debugLog2("exit code:", exitCode, "stdout length:", stdout.length, "stderr length:", stderr.length);
-  if (exitCode === 0) {
-    return { hasComments: false, message: "" };
-  }
-  if (exitCode === 2) {
-    return { hasComments: true, message: stderr };
-  }
-  debugLog2("unexpected exit code:", exitCode, "stderr:", stderr);
-  return { hasComments: false, message: "" };
-}
-
-// src/audit.ts
 var EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "build", "vendor", ".cache", "coverage"]);
 var SECRET_PATTERNS = [/(?:^|\/)\.env(?:\.|$)/, /\.pem$/, /\.key$/, /(?:^|\/)id_(?:rsa|ed25519)$/, /\.p12$/];
 var MAX_FILES = 500;
@@ -2097,23 +2135,41 @@ async function auditCommand(parsed) {
 `);
   return 0;
 }
-function checkCommand(parsed) {
+async function checkCommand(parsed) {
   const base = typeof parsed.flags.base === "string" ? parsed.flags.base : "HEAD";
-  const result = runDiffCheck({
-    directory: process.cwd(),
-    base,
-    includeAdvisory: Boolean(parsed.flags["include-advisory"]),
-    format: parsed.flags.json ? "json" : "markdown"
-  });
-  process.stdout.write(`${result.output}
+  const scope = parsed.flags.scope ?? "tests";
+  if (scope !== "tests" && scope !== "comments" && scope !== "both") {
+    process.stderr.write(`--scope must be tests, comments or both
 `);
-  return result.findings.length > 0 ? 1 : 0;
+    return 2;
+  }
+  const format = parsed.flags.json ? "json" : "markdown";
+  const includeAdvisory = Boolean(parsed.flags["include-advisory"]);
+  const parts = [];
+  let failed = false;
+  if (scope === "tests" || scope === "both") {
+    const result = runDiffCheck({ directory: process.cwd(), base, includeAdvisory, format });
+    parts.push(result.output);
+    if (result.findings.length > 0)
+      failed = true;
+  }
+  if (scope === "comments" || scope === "both") {
+    const result = await runCommentDiffCheck({ directory: process.cwd(), base, format });
+    parts.push(result.output);
+    if (result.count > 0)
+      failed = true;
+  }
+  process.stdout.write(`${parts.join(`
+
+`)}
+`);
+  return failed ? 1 : 0;
 }
 function usage() {
   process.stdout.write([
     "opencode-comments-plugin guard <command>",
     "",
-    "  check [--diff] [--base <rev>] [--json] [--include-advisory]",
+    "  check [--diff] [--base <rev>] [--scope tests|comments|both] [--json] [--include-advisory]",
     "  validate-config [file]",
     "  audit [--scope comments|tests|both] [--paths a,b] [--json] [--include-advisory]",
     ""

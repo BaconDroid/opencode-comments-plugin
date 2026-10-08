@@ -266,12 +266,14 @@ auto-detected from `package.json`, `pytest.ini`/`pyproject.toml`, `go.mod`,
 `test_command` option or `TEST_GUARD_TEST_COMMAND`.
 
 ```bash
-opencode-comments-plugin guard check --diff [--base <rev>] [--json] [--include-advisory]
+opencode-comments-plugin guard check --diff [--base <rev>] [--scope tests|comments|both] [--json] [--include-advisory]
 opencode-comments-plugin guard validate-config [config.json]
 opencode-comments-plugin guard audit [--scope comments|tests|both] [--paths a,b] [--json]
 ```
 
 `guard check` exits non-zero when the diff trips a rule, so it can gate a PR.
+`--scope` defaults to `tests`; `comments` runs the comment-checker binary over
+the added lines of the changed files, and `both` runs both.
 
 ### Language matrix and limits
 

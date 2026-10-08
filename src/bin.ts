@@ -6,7 +6,7 @@
 //   opencode-comments-plugin guard audit [--scope comments|tests|both] [--paths a,b] [--json]
 
 import { readFileSync } from "node:fs"
-import { runDiffCheck } from "./core/ci"
+import { runCommentDiffCheck, runDiffCheck } from "./core/ci"
 import { validateTupleOptions } from "./core/schema"
 import { detectTestCommand } from "./core/test-command"
 import { runAudit } from "./audit"
@@ -88,16 +88,33 @@ async function auditCommand(parsed: ParsedArgs): Promise<number> {
   return 0
 }
 
-function checkCommand(parsed: ParsedArgs): number {
+async function checkCommand(parsed: ParsedArgs): Promise<number> {
   const base = typeof parsed.flags.base === "string" ? parsed.flags.base : "HEAD"
-  const result = runDiffCheck({
-    directory: process.cwd(),
-    base,
-    includeAdvisory: Boolean(parsed.flags["include-advisory"]),
-    format: parsed.flags.json ? "json" : "markdown",
-  })
-  process.stdout.write(`${result.output}\n`)
-  return result.findings.length > 0 ? 1 : 0
+  const scope = (parsed.flags.scope as string | undefined) ?? "tests"
+  if (scope !== "tests" && scope !== "comments" && scope !== "both") {
+    process.stderr.write("--scope must be tests, comments or both\n")
+    return 2
+  }
+  const format = parsed.flags.json ? "json" : "markdown"
+  const includeAdvisory = Boolean(parsed.flags["include-advisory"])
+
+  const parts: string[] = []
+  let failed = false
+
+  if (scope === "tests" || scope === "both") {
+    const result = runDiffCheck({ directory: process.cwd(), base, includeAdvisory, format })
+    parts.push(result.output)
+    if (result.findings.length > 0) failed = true
+  }
+
+  if (scope === "comments" || scope === "both") {
+    const result = await runCommentDiffCheck({ directory: process.cwd(), base, format })
+    parts.push(result.output)
+    if (result.count > 0) failed = true
+  }
+
+  process.stdout.write(`${parts.join("\n\n")}\n`)
+  return failed ? 1 : 0
 }
 
 function usage(): void {
@@ -105,7 +122,7 @@ function usage(): void {
     [
       "opencode-comments-plugin guard <command>",
       "",
-      "  check [--diff] [--base <rev>] [--json] [--include-advisory]",
+      "  check [--diff] [--base <rev>] [--scope tests|comments|both] [--json] [--include-advisory]",
       "  validate-config [file]",
       "  audit [--scope comments|tests|both] [--paths a,b] [--json] [--include-advisory]",
       "",
