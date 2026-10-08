@@ -15,6 +15,8 @@ import {
   type Severity,
 } from "./core/config"
 import { createTestGuard, type ResolvedTestGuard } from "./core/dispatch"
+import { AnalyzerRegistry } from "./core/analyzer"
+import { createIdleAnalyzer } from "./core/idle-advisory"
 import { createGuardJudgeTool, createJudge, createModelJudgeRunner, resolveJudgeModel, type JudgeConfig, createCommentJudge, createGuardCommentJudgeTool } from "./core/judge"
 import { createGuardParseTool, createParserAdapter, type ParserAdapterConfig } from "./core/parser-adapter"
 import { createMutationAdapter, type MutationConfig } from "./core/mutation"
@@ -223,6 +225,12 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
   const parseTool = createGuardParseTool(parser)
   const mutation = createMutationAdapter({ getConfig: () => resolvedMutation })
 
+  const analyzers = new AnalyzerRegistry()
+  analyzers.register(createIdleAnalyzer("mutation", mutation))
+  analyzers.register(createIdleAnalyzer("test-judge", judge))
+  analyzers.register(createIdleAnalyzer("parser", parser))
+  analyzers.register(createIdleAnalyzer("comment-judge", commentJudge))
+
   return {
     config: async (config: unknown) => {
       resolveConfiguration(config)
@@ -238,9 +246,9 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
     event: async ({ event }) => {
       if (event.type !== "session.idle") return
       const sessionID = event.properties?.sessionID ?? ""
-      for (const analyzer of [mutation, judge, parser, commentJudge]) {
-        const message = await analyzer.onIdle(sessionID)
-        if (message) testGuard.queueNote(message)
+      const results = await analyzers.run("idle", { tool: "", sessionID, directory: projectDirectory })
+      for (const result of results) {
+        if (result.note) testGuard.queueNote(result.note)
       }
     },
     "permission.ask": async (input, output) => {
