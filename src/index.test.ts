@@ -513,6 +513,40 @@ test("appends append_prompt on top of a custom prompt", async () => {
   expect(output.output).toBe("Wrote file successfully.\n\nCOMMENT/DOCSTRING DETECTED\n\nSUFFIX")
 })
 
+test("suppresses the warning when the file has a comment-guard-disable-file marker", async () => {
+  const hooks = await newSession()
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// comment-guard-disable-file\n// explain\n"))
+  await hooks["tool.execute.after"](TOOL_AFTER_INPUT, output)
+
+  expect(output.output).not.toContain("COMMENT/DOCSTRING DETECTED")
+  expect(output.output).toContain("Comment guard bypass recorded")
+  expect(await cliInvocations()).toHaveLength(0)
+})
+
+test("suppresses the warning when an added comment is covered by an allow marker", async () => {
+  const hooks = await newSession()
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// comment-guard: allow legacy\n// explain\n"))
+  await hooks["tool.execute.after"](TOOL_AFTER_INPUT, output)
+
+  expect(output.output).not.toContain("COMMENT/DOCSTRING DETECTED")
+  expect(await cliInvocations()).toHaveLength(0)
+})
+
+test("still warns when the allow marker is out of range", async () => {
+  const hooks = await newSession()
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// explain\nconst a = 1\nconst b = 2\nconst c = 3\n// comment-guard: allow x\n"))
+  await hooks["tool.execute.after"](TOOL_AFTER_INPUT, output)
+
+  expect(output.output).toContain("COMMENT/DOCSTRING DETECTED")
+  expect(await cliInvocations()).toHaveLength(1)
+})
+
 // --- test guard (coexistence with the comment guard) ---
 
 test("registers the guard_audit tool", async () => {

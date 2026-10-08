@@ -18,6 +18,78 @@ function debugLog(...args: unknown[]) {
 
 const PENDING_CALL_TTL = 60_000
 
+// Inline/file bypass, mirroring the test guard's `test-guard: allow` /
+// `test-guard-disable-file`. A comment whose added lines are all within
+// +/-2 lines of an allow marker suppresses the file's warning; a file-level
+// disable marker suppresses it outright.
+const BYPASS_WINDOW = 2
+const ALLOW_MARKER = /comment-guard:\s*allow\b/i
+const DISABLE_FILE_MARKER = /comment-guard-disable-file\b/i
+
+interface BypassNote {
+  kind: "allow" | "disable-file"
+  line: number
+  reason: string
+}
+
+function collectBypasses(text: string): BypassNote[] {
+  const notes: BypassNote[] = []
+  const lines = text.split("\n")
+  for (let i = 0; i < lines.length; i++) {
+    const allow = lines[i]!.match(/comment-guard:\s*allow\s*(.*)$/i)
+    if (allow) notes.push({ kind: "allow", line: i + 1, reason: allow[1]!.trim() })
+    if (DISABLE_FILE_MARKER.test(lines[i]!)) notes.push({ kind: "disable-file", line: i + 1, reason: "" })
+  }
+  return notes
+}
+
+function withinAllow(text: string, line: number): boolean {
+  const lines = text.split("\n")
+  const from = Math.max(0, line - 1 - BYPASS_WINDOW)
+  const to = Math.min(lines.length, line + BYPASS_WINDOW)
+  for (let i = from; i < to; i++) if (ALLOW_MARKER.test(lines[i] ?? "")) return true
+  return false
+}
+
+function bypassState(
+  newText: string,
+  oldText: string,
+  language: ReturnType<typeof detectLanguage>,
+): { suppress: boolean; notes: BypassNote[] } {
+  const notes = collectBypasses(newText)
+  if (notes.some(note => note.kind === "disable-file")) return { suppress: true, notes }
+
+  const { added } = diffLines(oldText, newText)
+  const addedComments = added.filter(line => isCommentLine(line, language))
+  if (addedComments.length === 0) return { suppress: false, notes }
+
+  const lines = newText.split("\n")
+  const used = new Set<number>()
+  for (const comment of addedComments) {
+    const index = lines.findIndex((line, i) => !used.has(i) && line === comment)
+    if (index < 0 || !withinAllow(newText, index + 1)) return { suppress: false, notes }
+    used.add(index)
+  }
+  return { suppress: true, notes }
+}
+
+function renderBypassFooter(filePath: string, notes: BypassNote[]): string {
+  const lines = notes.map(note => `- ${filePath}:${note.line} ${note.kind}${note.reason ? ` (${note.reason})` : ""}`)
+  return `Comment guard bypass recorded:\n${lines.join("\n")}`
+}
+
+// The old/new text a pending call represents, for the bypass check.
+function changeOf(call: PendingCall): { oldText: string; newText: string } {
+  if (typeof call.content === "string") return { oldText: call.preimage ?? "", newText: call.content }
+  if (Array.isArray(call.edits) && call.edits.length > 0) {
+    return {
+      oldText: call.edits.map(edit => edit.old_string ?? "").join("\n"),
+      newText: call.edits.map(edit => edit.new_string ?? "").join("\n"),
+    }
+  }
+  return { oldText: call.oldString ?? "", newText: call.newString ?? "" }
+}
+
 export interface ResolvedCommentConfig {
   customPrompt?: string
   appendPrompt?: string
@@ -102,10 +174,18 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
     toolName: string,
     toolInput: HookInput["tool_input"],
     output: { output: string },
+    change: { oldText: string; newText: string },
   ): Promise<void> {
     try {
       const { customPrompt, appendPrompt, timeoutMs } = getConfig()
       const filePath = toolInput.file_path ?? ""
+
+      const bypass = bypassState(change.newText, change.oldText, detectLanguage(filePath))
+      if (bypass.suppress) {
+        debugLog("comment guard bypassed for", filePath)
+        if (bypass.notes.length > 0) output.output += `\n\n${renderBypassFooter(filePath, bypass.notes)}`
+        return
+      }
 
       if (!canWarn(sessionID, filePath)) {
         debugLog("warning budget spent for", filePath)
@@ -132,6 +212,7 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
         recordWarning(sessionID, filePath)
         const message = appendPrompt ? `${result.message}\n\n${appendPrompt}` : result.message
         output.output += `\n\n${message}`
+        if (bypass.notes.length > 0) output.output += `\n\n${renderBypassFooter(filePath, bypass.notes)}`
       }
     } catch (err) {
       debugLog("comment check failed:", err)
@@ -158,7 +239,7 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
         file_path: filePath,
         old_string: sides.oldText,
         new_string: sides.newText,
-      }, output)
+      }, output, { oldText: sides.oldText, newText: sides.newText })
     }
   }
 
@@ -235,7 +316,7 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
       old_string: pendingCall.oldString,
       new_string: pendingCall.newString,
       edits: pendingCall.edits,
-    }, output)
+    }, output, changeOf(pendingCall))
   }
 
   return { before, after }
