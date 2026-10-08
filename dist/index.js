@@ -2460,6 +2460,9 @@ function changeOf(call) {
   return { oldText: call.oldString ?? "", newText: call.newString ?? "" };
 }
 var COMMENT_RULE = "comment";
+function isCheckedPath(filePath, paths) {
+  return paths.length === 0 || matchesAnyGlob(paths, filePath);
+}
 function createCommentGuard(getConfig) {
   const pendingCalls = new Map;
   const budget = new GuardBudget({ dedupWindowMs: 0 });
@@ -2534,6 +2537,8 @@ ${renderBypassFooter(filePath, bypass.notes)}`;
         debugLog4("no file path or no added lines in patch entry for apply_patch");
         continue;
       }
+      if (!isCheckedPath(change.filePath, getConfig().paths))
+        continue;
       await reportComments(sessionID, APPLY_PATCH_TOOL_NAME, {
         file_path: change.filePath,
         old_string: change.oldText,
@@ -2557,6 +2562,10 @@ ${renderBypassFooter(filePath, bypass.notes)}`;
     const edits = output.args.edits;
     if (!filePath) {
       debugLog4("no filePath found for tool:", toolLower);
+      return;
+    }
+    if (!isCheckedPath(filePath, getConfig().paths)) {
+      debugLog4("path not in comment_checker.paths; skipping:", filePath);
       return;
     }
     let preimage;
@@ -3011,6 +3020,7 @@ var resolvedCommentConfig = {
   maxWarningsPerFile: 0,
   dedupWindowMs: 0,
   triggerTools: new Set(DEFAULT_TRIGGER_TOOLS),
+  paths: [],
   timeoutMs: DEFAULT_CLI_TIMEOUT_MS
 };
 function asOptionalBoolean(value) {
@@ -3039,6 +3049,7 @@ function resolveConfiguration(config) {
   resolvedCommentConfig.maxWarningsPerFile = resolveOption((value) => asCount(value, 1), "COMMENT_CHECKER_MAX_WARNINGS_PER_FILE", "max_warnings_per_file", inputs) ?? 0;
   resolvedCommentConfig.dedupWindowMs = resolveOption((value) => asCount(value, 0), "COMMENT_CHECKER_DEDUP_WINDOW_MS", "dedup_window_ms", inputs) ?? 0;
   resolvedCommentConfig.triggerTools = new Set(resolveOption(asTools, "COMMENT_CHECKER_TOOLS", "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS);
+  resolvedCommentConfig.paths = resolveOption(asPatterns, "COMMENT_CHECKER_PATHS", "paths", inputs) ?? [];
   resolvedCommentConfig.timeoutMs = resolveOption((value) => asCount(value, 1), "COMMENT_CHECKER_TIMEOUT_MS", "timeout_ms", inputs) ?? DEFAULT_CLI_TIMEOUT_MS;
   resolveJudge(resolvedCommentJudge, "COMMENT_CHECKER_JUDGE", subConfigInputs(options, fromConfig, "judge"));
 }

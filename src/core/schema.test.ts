@@ -28,6 +28,11 @@ test("accepts comment_checker.enabled and rejects a non-boolean", () => {
   expect(validateTupleOptions({ comment_checker: { enabled: "no" } }).valid).toBe(false)
 })
 
+test("accepts comment_checker.paths and rejects a bad value", () => {
+  expect(validateTupleOptions({ comment_checker: { paths: ["**/*.ts"] } }).valid).toBe(true)
+  expect(validateTupleOptions({ comment_checker: { paths: 3 } }).valid).toBe(false)
+})
+
 test("accepts a valid comment_checker judge block", () => {
   expect(
     validateTupleOptions({ comment_checker: { judge: { enabled: true, model: "anthropic/claude-3", timeout_ms: 30000 } } }).valid,

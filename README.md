@@ -73,6 +73,7 @@ Available options (all under `comment_checker`):
 | `max_warnings_per_file` | number | `0` | Stop warning after N warnings about the same file in one session. `0` = unlimited. |
 | `dedup_window_ms` | number | `0` | Suppress a repeat warning about the same file within this window. `0` = no dedup. |
 | `tools` | string[] or CSV string | `["write","edit","apply_patch"]` | Which tools trigger the check. |
+| `paths` | string[] or CSV string | unset | Only check files matching these globs. Unset = every file. |
 | `timeout_ms` | number | `5000` | How long to wait for the CLI before ignoring it. |
 | `append_prompt` | string | unset | Opt-in text appended after the warning, keeping the default (or `custom_prompt`) message intact. |
 
@@ -99,6 +100,7 @@ Every option can also be set (and overridden) through the environment, which alw
 | `COMMENT_CHECKER_MAX_WARNINGS_PER_FILE` | `max_warnings_per_file` |
 | `COMMENT_CHECKER_DEDUP_WINDOW_MS` | `dedup_window_ms` |
 | `COMMENT_CHECKER_TOOLS` | `tools` (comma separated) |
+| `COMMENT_CHECKER_PATHS` | `paths` (comma separated) |
 | `COMMENT_CHECKER_TIMEOUT_MS` | `timeout_ms` |
 | `COMMENT_CHECKER_APPEND_PROMPT` | `append_prompt` |
 

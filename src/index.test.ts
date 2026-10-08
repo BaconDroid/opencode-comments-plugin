@@ -513,6 +513,26 @@ test("appends append_prompt on top of a custom prompt", async () => {
   expect(output.output).toBe("Wrote file successfully.\n\nCOMMENT/DOCSTRING DETECTED\n\nSUFFIX")
 })
 
+test("only checks files matching comment_checker.paths", async () => {
+  const hooks = await newSession({ comment_checker: { paths: ["**/*.ts"] } })
+
+  const skipped = writeOutput("Wrote file successfully.")
+  await hooks["tool.execute.before"]({ tool: "write", sessionID: "s", callID: "paths-1" }, {
+    args: { filePath: "/tmp/notes.md", content: "// explain\n" },
+  })
+  await hooks["tool.execute.after"]({ tool: "write", sessionID: "s", callID: "paths-1" }, skipped)
+  expect(skipped.output).toBe("Wrote file successfully.")
+
+  const checked = writeOutput("Wrote file successfully.")
+  await hooks["tool.execute.before"]({ tool: "write", sessionID: "s", callID: "paths-2" }, {
+    args: { filePath: "/tmp/app.ts", content: "// explain\n" },
+  })
+  await hooks["tool.execute.after"]({ tool: "write", sessionID: "s", callID: "paths-2" }, checked)
+  expect(checked.output).toContain("COMMENT/DOCSTRING DETECTED")
+
+  expect(await cliInvocations()).toHaveLength(1)
+})
+
 test("does not run the comment check when the comment guard is disabled", async () => {
   const hooks = await newSession({ comment_checker: { enabled: false } })
   const output = writeOutput("Wrote file successfully.")
