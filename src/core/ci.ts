@@ -3,12 +3,10 @@
 
 import { existsSync, readFileSync } from "node:fs"
 import { isAbsolute, join, relative } from "node:path"
-import type { Severity } from "./config"
 import { extractChange, isSupportedLanguage, stripComments, type ExtractedChange, type Language } from "./diff"
 import { formatFindings, type Finding } from "./feedback"
-import { ADVISORY_RULES, DETERMINISTIC_RULES } from "../rules/tests/content"
 import { ASSERTION_COUNT_PATTERNS, DEFAULT_TEST_PATTERNS, isTestPath } from "../rules/tests/patterns"
-import { runTestRules } from "../rules/tests"
+import { buildRuleChecks, runTestRules } from "../rules/tests"
 import type { RuleContext } from "../rules/tests/types"
 
 function run(args: string[], cwd: string): { stdout: string; exitCode: number } {
@@ -100,18 +98,11 @@ export interface DiffCheckResult {
   findings: Finding[]
 }
 
-export function buildChecks(includeAdvisory: boolean): Record<string, Severity> {
-  const checks: Record<string, Severity> = {}
-  for (const rule of DETERMINISTIC_RULES) checks[rule.id] = "warn"
-  for (const rule of ADVISORY_RULES) checks[rule.id] = includeAdvisory ? "warn" : "off"
-  return checks
-}
-
 export function runDiffCheck(options: DiffCheckOptions): DiffCheckResult {
   const directory = options.directory
   const base = options.base ?? "HEAD"
   const testPatterns = options.testPatterns && options.testPatterns.length > 0 ? options.testPatterns : [...DEFAULT_TEST_PATTERNS]
-  const checks = buildChecks(options.includeAdvisory ?? false)
+  const checks = buildRuleChecks(options.includeAdvisory ?? false)
 
   const changes = diffChanges(directory, base).filter(
     change => isSupportedLanguage(change.language) && isTestPath(change.filePath, testPatterns),

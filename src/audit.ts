@@ -11,7 +11,7 @@ import { getCommentCheckerPath, runCommentChecker } from "./cli"
 import { COMMENT_CHECKER_EVENT } from "./constants"
 import { detectLanguage, extractChange, isSupportedLanguage, type Language } from "./core/diff"
 import type { ResolvedTestGuard } from "./core/dispatch"
-import { ALL_TEST_RULES, runTestRules } from "./rules/tests"
+import { buildRuleChecks, runTestRules } from "./rules/tests"
 import { findCrossFileDuplicates } from "./rules/tests/content"
 import { PLACEHOLDER_PATTERN, isTestPath } from "./rules/tests/patterns"
 import type { RuleContext } from "./rules/tests/types"
@@ -195,16 +195,7 @@ export function auditTestFile(file: AuditFile, includeAdvisory: boolean): TestAu
     isDelete: false,
   })
 
-  const checks: Record<string, "warn" | "off"> = {}
-  for (const rule of ALL_TEST_RULES) {
-    const advisory =
-      rule.id === "over-mocking" ||
-      rule.id === "assertion-roulette" ||
-      rule.id === "weakened-config" ||
-      rule.id === "redundant-assertion" ||
-      rule.id === "tests-not-run"
-    checks[rule.id] = advisory && !includeAdvisory ? "off" : "warn"
-  }
+  const checks = buildRuleChecks(includeAdvisory)
 
   const ctx: RuleContext = {
     change,
