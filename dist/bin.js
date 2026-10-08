@@ -991,6 +991,9 @@ function readWorktree(filePath) {
     return;
   }
 }
+function changedTestChanges(directory, base, testPatterns) {
+  return diffChanges(directory, base).filter((change) => isSupportedLanguage(change.language) && isTestPath(change.filePath, testPatterns));
+}
 function diffChanges(directory, base) {
   const changes = [];
   for (const relativePath of changedFiles(directory, base)) {
@@ -1041,7 +1044,7 @@ function runDiffCheck(options) {
   const base = options.base ?? "HEAD";
   const testPatterns = options.testPatterns && options.testPatterns.length > 0 ? options.testPatterns : [...DEFAULT_TEST_PATTERNS];
   const checks = buildRuleChecks(options.includeAdvisory ?? false);
-  const changes = diffChanges(directory, base).filter((change) => isSupportedLanguage(change.language) && isTestPath(change.filePath, testPatterns));
+  const changes = changedTestChanges(directory, base, testPatterns);
   const addedByFile = new Map;
   for (const change of changes)
     addedByFile.set(change.filePath, assertionLines(change.addedLines, change.language));

@@ -40,6 +40,13 @@ function readWorktree(filePath: string): string | undefined {
   }
 }
 
+// Changed files that are test files in a supported language.
+export function changedTestChanges(directory: string, base: string, testPatterns: string[]): ExtractedChange[] {
+  return diffChanges(directory, base).filter(
+    change => isSupportedLanguage(change.language) && isTestPath(change.filePath, testPatterns),
+  )
+}
+
 export function diffChanges(directory: string, base: string): ExtractedChange[] {
   const changes: ExtractedChange[] = []
   for (const relativePath of changedFiles(directory, base)) {
@@ -104,9 +111,7 @@ export function runDiffCheck(options: DiffCheckOptions): DiffCheckResult {
   const testPatterns = options.testPatterns && options.testPatterns.length > 0 ? options.testPatterns : [...DEFAULT_TEST_PATTERNS]
   const checks = buildRuleChecks(options.includeAdvisory ?? false)
 
-  const changes = diffChanges(directory, base).filter(
-    change => isSupportedLanguage(change.language) && isTestPath(change.filePath, testPatterns),
-  )
+  const changes = changedTestChanges(directory, base, testPatterns)
 
   const addedByFile = new Map<string, Set<string>>()
   for (const change of changes) addedByFile.set(change.filePath, assertionLines(change.addedLines, change.language))

@@ -1919,9 +1919,6 @@ ${footer}` : footer;
   return { before, after, permission, onIdle, queueNote };
 }
 
-// src/core/judge.ts
-import { tool } from "@opencode-ai/plugin";
-
 // src/core/ci.ts
 import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
 import { isAbsolute, join as join4, relative } from "path";
@@ -1958,6 +1955,9 @@ function readWorktree(filePath) {
     return;
   }
 }
+function changedTestChanges(directory, base, testPatterns) {
+  return diffChanges(directory, base).filter((change) => isSupportedLanguage(change.language) && isTestPath(change.filePath, testPatterns));
+}
 function diffChanges(directory, base) {
   const changes = [];
   for (const relativePath of changedFiles(directory, base)) {
@@ -1977,6 +1977,46 @@ function diffChanges(directory, base) {
     }));
   }
   return changes;
+}
+
+// src/core/idle-advisory.ts
+import { tool } from "@opencode-ai/plugin";
+function createIdleAdvisory(options) {
+  const cooldownMs = options.cooldownMs ?? 60000;
+  const lastRun = new Map;
+  return {
+    async onIdle(sessionID) {
+      try {
+        if (!options.isEnabled())
+          return null;
+        const now = Date.now();
+        if (now - (lastRun.get(sessionID) ?? 0) < cooldownMs)
+          return null;
+        lastRun.set(sessionID, now);
+        return await options.analyze();
+      } catch {
+        return null;
+      }
+    },
+    async analyzeNow() {
+      try {
+        if (!options.isEnabled())
+          return options.disabledMessage;
+        return await options.analyze() ?? options.emptyMessage;
+      } catch {
+        return options.unavailableMessage;
+      }
+    }
+  };
+}
+function createAdvisoryTool(description, controller) {
+  return tool({
+    description,
+    args: {},
+    async execute() {
+      return controller.analyzeNow();
+    }
+  });
 }
 
 // src/core/judge.ts
@@ -2127,53 +2167,24 @@ function createModelJudgeRunner(client, directory) {
   };
 }
 function createJudge(options) {
-  const cooldownMs = options.cooldownMs ?? 60000;
-  const lastRun = new Map;
-  function collectTestChanges() {
-    const patterns = options.getTestPatterns();
-    return diffChanges(options.directory, "HEAD").filter((change) => isSupportedLanguage(change.language) && isTestPath(change.filePath, patterns));
-  }
-  async function judge() {
-    const findings = await runJudge(collectTestChanges(), options.getConfig(), options.runner);
-    return findings.length > 0 ? formatJudgeFindings(findings) : null;
-  }
-  return {
-    async onIdle(sessionID) {
-      try {
-        if (!options.getConfig().enabled)
-          return null;
-        const now = Date.now();
-        if (now - (lastRun.get(sessionID) ?? 0) < cooldownMs)
-          return null;
-        lastRun.set(sessionID, now);
-        return await judge();
-      } catch {
-        return null;
-      }
-    },
-    async judgeNow() {
-      try {
-        if (!options.getConfig().enabled)
-          return "LLM judge: disabled (set test_guard.judge.enabled).";
-        return await judge() ?? "LLM judge: no findings.";
-      } catch {
-        return "LLM judge: unavailable.";
-      }
-    }
-  };
-}
-function createGuardJudgeTool(judge) {
-  return tool({
-    description: "Run the opt-in LLM judge over the current test diff. Read-only and advisory; requires test_guard.judge.enabled.",
-    args: {},
-    async execute() {
-      return judge.judgeNow();
+  return createIdleAdvisory({
+    isEnabled: () => options.getConfig().enabled,
+    cooldownMs: options.cooldownMs,
+    disabledMessage: "LLM judge: disabled (set test_guard.judge.enabled).",
+    unavailableMessage: "LLM judge: unavailable.",
+    emptyMessage: "LLM judge: no findings.",
+    analyze: async () => {
+      const changes = changedTestChanges(options.directory, "HEAD", options.getTestPatterns());
+      const findings = await runJudge(changes, options.getConfig(), options.runner);
+      return findings.length > 0 ? formatJudgeFindings(findings) : null;
     }
   });
 }
+function createGuardJudgeTool(judge) {
+  return createAdvisoryTool("Run the opt-in LLM judge over the current test diff. Read-only and advisory; requires test_guard.judge.enabled.", judge);
+}
 
 // src/core/parser-adapter.ts
-import { tool as tool2 } from "@opencode-ai/plugin";
 var MAX_FINDINGS2 = 20;
 function buildParserPayload(changes) {
   const files = [];
@@ -2258,49 +2269,21 @@ async function runParserAdapter(changes, config, run = defaultRun) {
   }
 }
 function createParserAdapter(options) {
-  const cooldownMs = options.cooldownMs ?? 60000;
-  const lastRun = new Map;
-  function collectTestChanges() {
-    const patterns = options.getTestPatterns();
-    return diffChanges(options.directory, "HEAD").filter((change) => isSupportedLanguage(change.language) && isTestPath(change.filePath, patterns));
-  }
-  async function analyze() {
-    const findings = await runParserAdapter(collectTestChanges(), options.getConfig(), options.run);
-    return findings.length > 0 ? formatParserFindings(findings) : null;
-  }
-  return {
-    async onIdle(sessionID) {
-      try {
-        if (!options.getConfig().enabled)
-          return null;
-        const now = Date.now();
-        if (now - (lastRun.get(sessionID) ?? 0) < cooldownMs)
-          return null;
-        lastRun.set(sessionID, now);
-        return await analyze();
-      } catch {
-        return null;
-      }
-    },
-    async analyzeNow() {
-      try {
-        if (!options.getConfig().enabled)
-          return "External parser: disabled (set test_guard.parser.enabled).";
-        return await analyze() ?? "External parser: no findings.";
-      } catch {
-        return "External parser: unavailable.";
-      }
-    }
-  };
-}
-function createGuardParseTool(controller) {
-  return tool2({
-    description: "Run the opt-in external parser adapter over the current test diff. Read-only and advisory; requires test_guard.parser.enabled.",
-    args: {},
-    async execute() {
-      return controller.analyzeNow();
+  return createIdleAdvisory({
+    isEnabled: () => options.getConfig().enabled,
+    cooldownMs: options.cooldownMs,
+    disabledMessage: "External parser: disabled (set test_guard.parser.enabled).",
+    unavailableMessage: "External parser: unavailable.",
+    emptyMessage: "External parser: no findings.",
+    analyze: async () => {
+      const changes = changedTestChanges(options.directory, "HEAD", options.getTestPatterns());
+      const findings = await runParserAdapter(changes, options.getConfig(), options.run);
+      return findings.length > 0 ? formatParserFindings(findings) : null;
     }
   });
+}
+function createGuardParseTool(controller) {
+  return createAdvisoryTool("Run the opt-in external parser adapter over the current test diff. Read-only and advisory; requires test_guard.parser.enabled.", controller);
 }
 
 // src/rules/comments/index.ts
@@ -2528,7 +2511,7 @@ function detectTestCommand(directory) {
 }
 
 // src/audit.ts
-import { tool as tool3 } from "@opencode-ai/plugin";
+import { tool as tool2 } from "@opencode-ai/plugin";
 import { readFileSync as readFileSync6, readdirSync as readdirSync2, statSync } from "fs";
 import { isAbsolute as isAbsolute2, join as join6, relative as relative2 } from "path";
 var EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "build", "vendor", ".cache", "coverage"]);
@@ -2837,13 +2820,13 @@ async function runAudit(options, deps = {}) {
   return renderAudit({ scope, comments, tests, skipped, generatedAt: new Date().toISOString(), testCommand: config?.testCommand ?? null }, format);
 }
 function createGuardAuditTool(options) {
-  return tool3({
+  return tool2({
     description: "Read-only audit of existing comments and tests. Produces a cleanup plan (markdown or json) that the agent applies afterwards. Never modifies files.",
     args: {
-      scope: tool3.schema.enum(["comments", "tests", "both"]).optional(),
-      paths: tool3.schema.array(tool3.schema.string()).optional(),
-      format: tool3.schema.enum(["markdown", "json"]).optional(),
-      include_advisory: tool3.schema.boolean().optional()
+      scope: tool2.schema.enum(["comments", "tests", "both"]).optional(),
+      paths: tool2.schema.array(tool2.schema.string()).optional(),
+      format: tool2.schema.enum(["markdown", "json"]).optional(),
+      include_advisory: tool2.schema.boolean().optional()
     },
     async execute(args) {
       return runAudit({
