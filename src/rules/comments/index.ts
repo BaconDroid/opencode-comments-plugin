@@ -66,6 +66,7 @@ function changeOf(call: PendingCall): { oldText: string; newText: string } {
 }
 
 export interface ResolvedCommentConfig {
+  enabled: boolean
   customPrompt?: string
   appendPrompt?: string
   maxWarningsPerFile: number
@@ -185,6 +186,7 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
 
   async function before(input: BeforeInput, output: { args: Record<string, unknown> }): Promise<void> {
     const { triggerTools } = getConfig()
+    if (!getConfig().enabled) return
     const toolLower = input.tool.toLowerCase()
     if (toolLower === APPLY_PATCH_TOOL_NAME || !triggerTools.has(toolLower)) {
       return
@@ -222,6 +224,7 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
 
   async function after(input: BeforeInput, output: AfterOutput): Promise<void> {
     const { triggerTools } = getConfig()
+    if (!getConfig().enabled) return
     if (input.tool.toLowerCase() === APPLY_PATCH_TOOL_NAME) {
       if (!triggerTools.has(APPLY_PATCH_TOOL_NAME)) return
       budget.touch(input.sessionID)

@@ -1,4 +1,5 @@
 export interface ResolvedCommentConfig {
+    enabled: boolean;
     customPrompt?: string;
     appendPrompt?: string;
     maxWarningsPerFile: number;

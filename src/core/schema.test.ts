@@ -23,6 +23,11 @@ test("accepts dedup_window_ms on both guards and rejects a negative one", () => 
   expect(result.errors.join()).toContain("dedup_window_ms")
 })
 
+test("accepts comment_checker.enabled and rejects a non-boolean", () => {
+  expect(validateTupleOptions({ comment_checker: { enabled: false } }).valid).toBe(true)
+  expect(validateTupleOptions({ comment_checker: { enabled: "no" } }).valid).toBe(false)
+})
+
 test("accepts a valid comment_checker judge block", () => {
   expect(
     validateTupleOptions({ comment_checker: { judge: { enabled: true, model: "anthropic/claude-3", timeout_ms: 30000 } } }).valid,

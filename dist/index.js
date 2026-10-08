@@ -2543,6 +2543,8 @@ ${renderBypassFooter(filePath, bypass.notes)}`;
   }
   async function before(input, output) {
     const { triggerTools } = getConfig();
+    if (!getConfig().enabled)
+      return;
     const toolLower = input.tool.toLowerCase();
     if (toolLower === APPLY_PATCH_TOOL_NAME || !triggerTools.has(toolLower)) {
       return;
@@ -2575,6 +2577,8 @@ ${renderBypassFooter(filePath, bypass.notes)}`;
   }
   async function after(input, output) {
     const { triggerTools } = getConfig();
+    if (!getConfig().enabled)
+      return;
     if (input.tool.toLowerCase() === APPLY_PATCH_TOOL_NAME) {
       if (!triggerTools.has(APPLY_PATCH_TOOL_NAME))
         return;
@@ -3003,6 +3007,7 @@ var DEFAULT_TEST_CHECKS = {
 var pluginOptions;
 var projectDirectory = process.cwd();
 var resolvedCommentConfig = {
+  enabled: true,
   maxWarningsPerFile: 0,
   dedupWindowMs: 0,
   triggerTools: new Set(DEFAULT_TRIGGER_TOOLS),
@@ -3028,6 +3033,7 @@ function resolveConfiguration(config) {
   const options = optionContainer(pluginOptions, "comment_checker");
   const fromConfig = optionContainer(config, "comment_checker");
   const inputs = { options, config: fromConfig };
+  resolvedCommentConfig.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, true), "COMMENT_CHECKER_ENABLED", "enabled", inputs) ?? true;
   resolvedCommentConfig.customPrompt = resolveOption(asString, "COMMENT_CHECKER_CUSTOM_PROMPT", "custom_prompt", inputs);
   resolvedCommentConfig.appendPrompt = resolveOption(asString, "COMMENT_CHECKER_APPEND_PROMPT", "append_prompt", inputs);
   resolvedCommentConfig.maxWarningsPerFile = resolveOption((value) => asCount(value, 1), "COMMENT_CHECKER_MAX_WARNINGS_PER_FILE", "max_warnings_per_file", inputs) ?? 0;

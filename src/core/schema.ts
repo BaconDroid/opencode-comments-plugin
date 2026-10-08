@@ -33,6 +33,7 @@ export function validateTupleOptions(value: unknown): ValidationResult {
 }
 
 function validateCommentChecker(record: Record<string, unknown>, path: string, errors: string[]): void {
+  if (record.enabled !== undefined && typeof record.enabled !== "boolean") errors.push(`${path}.enabled must be a boolean`)
   for (const key of ["custom_prompt", "append_prompt"]) {
     if (record[key] !== undefined && asString(record[key]) === undefined) errors.push(`${path}.${key} must be a non-empty string`)
   }
@@ -52,7 +53,7 @@ function validateCommentChecker(record: Record<string, unknown>, path: string, e
     if (!isRecord(record.judge)) errors.push(`${path}.judge must be an object`)
     else validateJudge(record.judge, `${path}.judge`, errors)
   }
-  rejectUnknown(record, ["custom_prompt", "append_prompt", "max_warnings_per_file", "dedup_window_ms", "timeout_ms", "tools", "judge"], path, errors)
+  rejectUnknown(record, ["enabled", "custom_prompt", "append_prompt", "max_warnings_per_file", "dedup_window_ms", "timeout_ms", "tools", "judge"], path, errors)
 }
 
 function validateTestGuard(record: Record<string, unknown>, path: string, errors: string[]): void {

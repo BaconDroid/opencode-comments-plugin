@@ -44,6 +44,7 @@ let pluginOptions: unknown
 let projectDirectory = process.cwd()
 
 const resolvedCommentConfig: ResolvedCommentConfig = {
+  enabled: true,
   maxWarningsPerFile: 0,
   dedupWindowMs: 0,
   triggerTools: new Set(DEFAULT_TRIGGER_TOOLS),
@@ -82,6 +83,14 @@ function resolveConfiguration(config?: unknown): void {
   const options = optionContainer(pluginOptions, "comment_checker")
   const fromConfig = optionContainer(config, "comment_checker")
   const inputs = { options, config: fromConfig }
+
+  resolvedCommentConfig.enabled =
+    resolveOption(
+      value => (value === undefined ? undefined : asBoolean(value, true)),
+      "COMMENT_CHECKER_ENABLED",
+      "enabled",
+      inputs,
+    ) ?? true
 
   resolvedCommentConfig.customPrompt = resolveOption(
     asString,
