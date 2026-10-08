@@ -25,10 +25,10 @@ writeFileSync(join(cacheBase, "latest.json"), JSON.stringify({ version, checkedA
 writeFileSync(binaryPath, `#!/bin/sh
 {
   printf 'ARGS:'
-  printf '%s\\x1f' "$@"
+  printf '%s\\037' "$@"
   printf '\\nSTDIN:'
   cat
-  printf '\\x1e===END===\\x1e\\n'
+  printf '\\036===END===\\036\\n'
 } >> '${logPath}'
 case "$(cat '${modePath}')" in
   clean) exit 0 ;;
