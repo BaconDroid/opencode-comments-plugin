@@ -126,7 +126,7 @@ tests. It reuses the same tuple, under a sibling `test_guard` key:
         "net_assertion_loss_threshold": 2,
         "checks": { "protected-paths": "warn", "skip-focus-added": "warn" },
         "mutation": { "enabled": false, "command": "npx stryker run --reporters json", "timeout_ms": 120000 },
-        "judge": { "enabled": false, "model": "anthropic/claude-3-5-haiku", "timeout_ms": 30000 }
+        "judge": { "enabled": false, "model": "opencode/big-pickle", "timeout_ms": 30000 }
       }
     }]
   ]
@@ -183,8 +183,9 @@ never runs a destructive command.
 
 ### LLM judge (opt-in, phase 2B)
 
-If `judge.enabled` is set, the plugin reviews the current test diff with the
-model already configured in opencode (or `judge.model`, `provider/model`),
+If `judge.enabled` is set, the plugin reviews the current test diff with
+`judge.model` (default `opencode/big-pickle`, a free OpenCode Zen model; set it
+to `host` to reuse the model opencode is already configured with),
 inside a sandboxed session with tools disabled, on `session.idle` (at most once
 per minute per session) and on demand via the `guard_judge` tool. It returns
 **advisory** findings only, is fail-open, and never handles provider

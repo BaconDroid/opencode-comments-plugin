@@ -1,4 +1,6 @@
 import { type ExtractedChange } from "./diff";
+export declare const DEFAULT_JUDGE_MODEL = "opencode/big-pickle";
+export declare function resolveJudgeModel(configured: string | undefined): string | undefined;
 export interface JudgeConfig {
     enabled: boolean;
     model?: string;

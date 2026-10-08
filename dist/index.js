@@ -2019,6 +2019,12 @@ function diffChanges(directory, base) {
 }
 
 // src/core/judge.ts
+var DEFAULT_JUDGE_MODEL = "opencode/big-pickle";
+function resolveJudgeModel(configured) {
+  if (configured === "host")
+    return;
+  return configured ?? DEFAULT_JUDGE_MODEL;
+}
 var JUDGE_SYSTEM = "You are a read-only test-quality reviewer. Do not call any tool. Reply with JSON only.";
 var MAX_FINDINGS = 20;
 function buildJudgePrompt(changes) {
@@ -2834,7 +2840,7 @@ function resolveTestGuardConfiguration(config) {
   const configJudge = asRecord(fromConfig?.judge);
   const judgeInputs = { options: optionsJudge, config: configJudge };
   resolvedJudge.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, false), "TEST_GUARD_JUDGE_ENABLED", "enabled", judgeInputs) ?? false;
-  resolvedJudge.model = resolveOption(asString, "TEST_GUARD_JUDGE_MODEL", "model", judgeInputs);
+  resolvedJudge.model = resolveJudgeModel(resolveOption(asString, "TEST_GUARD_JUDGE_MODEL", "model", judgeInputs));
   resolvedJudge.timeoutMs = resolveOption((value) => asCount(value, 1), "TEST_GUARD_JUDGE_TIMEOUT_MS", "timeout_ms", judgeInputs);
   resolvedTestGuard.checks = resolveRuleConfig(DEFAULT_TEST_CHECKS, {
     envPrefix: "TEST_GUARD_",
