@@ -2186,6 +2186,8 @@ function createJudge(options) {
     },
     async judgeNow() {
       try {
+        if (!options.getConfig().enabled)
+          return "LLM judge: disabled (set test_guard.judge.enabled).";
         return await judge() ?? "LLM judge: no findings.";
       } catch {
         return "LLM judge: unavailable.";

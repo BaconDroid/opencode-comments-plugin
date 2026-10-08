@@ -188,7 +188,9 @@ model already configured in opencode (or `judge.model`, `provider/model`),
 inside a sandboxed session with tools disabled, on `session.idle` (at most once
 per minute per session) and on demand via the `guard_judge` tool. It returns
 **advisory** findings only, is fail-open, and never handles provider
-credentials — the model and keys stay in opencode. Disabled by default.
+credentials — the model and keys stay in opencode. Note that, when enabled,
+the test diff (test code only, not the whole repo) is sent to the configured
+model. Disabled by default.
 
 ### Audit
 
