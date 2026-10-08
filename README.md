@@ -125,7 +125,8 @@ tests. It reuses the same tuple, under a sibling `test_guard` key:
         "test_patterns": ["**/*.test.*", "**/*_test.*", "**/test_*.py", "**/tests/**"],
         "checks": { "protected-paths": "warn", "skip-focus-added": "warn" },
         "mutation": { "enabled": false, "command": "npx stryker run --reporters json", "timeout_ms": 120000 },
-        "judge": { "enabled": false, "model": "opencode/big-pickle", "timeout_ms": 30000 }
+        "judge": { "enabled": false, "model": "opencode/big-pickle", "timeout_ms": 30000 },
+        "parser": { "enabled": false, "command": "my-ast-check --json", "timeout_ms": 30000 }
       }
     }]
   ]
@@ -167,8 +168,9 @@ Env vars mirror the comment guard: `TEST_GUARD_ENABLED`,
 `TEST_GUARD_APPEND_PROMPT`, `TEST_GUARD_MUTATION_ENABLED`,
 `TEST_GUARD_MUTATION_COMMAND`, `TEST_GUARD_MUTATION_TIMEOUT_MS`,
 `TEST_GUARD_JUDGE_ENABLED`, `TEST_GUARD_JUDGE_MODEL`,
-`TEST_GUARD_JUDGE_TIMEOUT_MS`, and `TEST_GUARD_CHECK_<RULE>`
-(env > tuple options > config hook).
+`TEST_GUARD_JUDGE_TIMEOUT_MS`, `TEST_GUARD_PARSER_ENABLED`,
+`TEST_GUARD_PARSER_COMMAND`, `TEST_GUARD_PARSER_TIMEOUT_MS`, and
+`TEST_GUARD_CHECK_<RULE>` (env > tuple options > config hook).
 
 ### Mutation (opt-in, phase 2)
 
@@ -190,6 +192,15 @@ per minute per session) and on demand via the `guard_judge` tool. It returns
 credentials — the model and keys stay in opencode. Note that, when enabled,
 the test diff (test code only, not the whole repo) is sent to the configured
 model. Disabled by default.
+
+### External parser adapter (opt-in)
+
+For AST-grade precision without bundling a parser, `parser.enabled` runs a
+configured command over the current test diff. The command receives
+`{"files":[{"path","language","added","removed"}]}` on stdin and must return
+`{"findings":[{"file","line","rule?","message","confidence?"}]}` on stdout. It
+runs on `session.idle` (per-session cooldown) and on demand via the
+`guard_parse` tool. Findings are advisory, fail-open, and disabled by default.
 
 ### Audit
 
@@ -223,10 +234,12 @@ tampercheck Apache-2.0, pr-test-guard MIT and veredicto up to v0.3.3). Other
 languages are ignored by the test guard rather than matched with unvalidated
 rules.
 
-Known limits: rules are regex-based (no AST), so a test declaration written
-inside a string or a regex literal can be misread; `block` is not airtight because sub-agents may bypass
-`tool.execute.before` (opencode issue #5894); cross-file duplicate detection
-runs in the audit/CI paths, not the live per-file hook.
+Known limits: the built-in rules are regex-based (no AST), so a test
+declaration written inside a string or a regex literal can be misread — use the
+opt-in external parser adapter for AST-grade precision. `block` is not airtight
+because sub-agents may bypass `tool.execute.before` (opencode issue #5894);
+cross-file duplicate detection runs in the audit/CI paths, not the live
+per-file hook.
 
 ## Debug
 
