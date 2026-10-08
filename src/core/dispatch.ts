@@ -1,12 +1,12 @@
 // Test-guard orchestration: config-driven rule dispatch shared by the
 // `tool.execute.before` (block) and `tool.execute.after` (warn) hooks.
 
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { APPLY_PATCH_TOOL_NAME, DEFAULT_TRIGGER_TOOLS } from "../constants"
 import { GuardBudget } from "./budget"
 import type { Severity } from "./config"
-import { extractPatchChanges, extractToolChange, firstString, type ExtractedChange } from "./diff"
+import { extractPatchChanges, extractToolChange, firstString, readPreimage, type ExtractedChange } from "./diff"
 import { appendFeedback, renderFeedback, type Finding } from "./feedback"
 import { isTestPath } from "../rules/tests/patterns"
 import { runTestRules } from "../rules/tests"
@@ -201,11 +201,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       let preimage: string | undefined
       const filePath = firstString(args, "filePath", "file_path", "path")
       if (toolLower !== APPLY_PATCH_TOOL_NAME && filePath && typeof args.content === "string") {
-        try {
-          if (existsSync(filePath)) preimage = readFileSync(filePath, "utf8")
-        } catch {
-          // unreadable preimage is not fatal
-        }
+        preimage = readPreimage(filePath)
       }
       pending.set(input.callID, { args, preimage, timestamp: Date.now() })
     } catch (err) {
