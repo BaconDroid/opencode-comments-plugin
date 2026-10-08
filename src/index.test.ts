@@ -513,6 +513,17 @@ test("appends append_prompt on top of a custom prompt", async () => {
   expect(output.output).toBe("Wrote file successfully.\n\nCOMMENT/DOCSTRING DETECTED\n\nSUFFIX")
 })
 
+test("does not run the comment check when the comment guard is disabled", async () => {
+  const hooks = await newSession({ comment_checker: { enabled: false } })
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// explain\n"))
+  await hooks["tool.execute.after"](TOOL_AFTER_INPUT, output)
+
+  expect(output.output).toBe("Wrote file successfully.")
+  expect(await cliInvocations()).toHaveLength(0)
+})
+
 test("does not dedup comment warnings by default", async () => {
   const hooks = await newSession({ comment_checker: {} })
   const session = "session-dedup-default"

@@ -68,6 +68,7 @@ Available options (all under `comment_checker`):
 
 | Option | Type | Default | Meaning |
 |---|---|---|---|
+| `enabled` | boolean | `true` | Disable the comment guard entirely. |
 | `custom_prompt` | string | CLI default | Replaces the warning message. `{{comments}}` is replaced by the detected comments. |
 | `max_warnings_per_file` | number | `0` | Stop warning after N warnings about the same file in one session. `0` = unlimited. |
 | `dedup_window_ms` | number | `0` | Suppress a repeat warning about the same file within this window. `0` = no dedup. |
@@ -93,6 +94,7 @@ Every option can also be set (and overridden) through the environment, which alw
 
 | Env var | Option |
 |---|---|
+| `COMMENT_CHECKER_ENABLED` | `enabled` |
 | `COMMENT_CHECKER_CUSTOM_PROMPT` | `custom_prompt` |
 | `COMMENT_CHECKER_MAX_WARNINGS_PER_FILE` | `max_warnings_per_file` |
 | `COMMENT_CHECKER_DEDUP_WINDOW_MS` | `dedup_window_ms` |
