@@ -153,7 +153,7 @@ function findCommentIndex(line: string, marker: string): number {
 
 // Replaces string-literal characters with spaces while preserving length and
 // newlines, so offsets/line numbers stay valid for structure detection.
-export function maskStrings(text: string, language: Language): string {
+export function maskStrings(text: string): string {
   const chars = text.split("")
   let quote: string | undefined
   for (let i = 0; i < chars.length; i++) {
@@ -183,7 +183,7 @@ export function maskStrings(text: string, language: Language): string {
 
 // Blanks out string literals so a pattern that only appears inside a test
 // fixture string (e.g. `'it.only(...)'`) does not trigger a rule.
-export function stripStringLiterals(text: string, language: Language): string {
+export function stripStringLiterals(text: string): string {
   let out = ""
   let quote: string | undefined
   for (let i = 0; i < text.length; i++) {

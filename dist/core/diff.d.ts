@@ -24,8 +24,8 @@ export declare function diffLines(oldText: string, newText: string): {
 };
 export declare function extractChange(raw: RawChange): ExtractedChange;
 export declare function stripComments(text: string, language: Language): string;
-export declare function maskStrings(text: string, language: Language): string;
-export declare function stripStringLiterals(text: string, language: Language): string;
+export declare function maskStrings(text: string): string;
+export declare function stripStringLiterals(text: string): string;
 export declare function isCommentLine(line: string, language: Language): boolean;
 export declare function countRealLines(text: string, language: Language): number;
 export declare function readString(record: Record<string, unknown>, ...keys: string[]): string | undefined;

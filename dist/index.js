@@ -643,7 +643,7 @@ function findCommentIndex(line, marker) {
   }
   return -1;
 }
-function maskStrings(text, language) {
+function maskStrings(text) {
   const chars = text.split("");
   let quote;
   for (let i = 0;i < chars.length; i++) {
@@ -673,7 +673,7 @@ function maskStrings(text, language) {
   }
   return chars.join("");
 }
-function stripStringLiterals(text, language) {
+function stripStringLiterals(text) {
   let out = "";
   let quote;
   for (let i = 0;i < text.length; i++) {
@@ -1045,7 +1045,7 @@ var ALLOW_MARKER = /test-guard:\s*allow\b/i;
 var DISABLE_FILE_MARKER = /test-guard-disable-file\b/i;
 var BYPASS_WINDOW = 2;
 function codeText(line, language) {
-  return stripStringLiterals(stripComments(line, language), language);
+  return stripStringLiterals(stripComments(line, language));
 }
 function blocksOf(ctx) {
   return ctx.blocks ?? findTestBlocks(ctx.change.newText, ctx.change.language);
@@ -1247,7 +1247,7 @@ function findTestBlocks(text, language) {
   if (!declaration)
     return [];
   const stripped = stripComments(text, language);
-  const searchable = maskStrings(stripped, language);
+  const searchable = maskStrings(stripped);
   if (language === "python")
     return findPythonBlocks(stripped.split(`
 `), searchable.split(`
