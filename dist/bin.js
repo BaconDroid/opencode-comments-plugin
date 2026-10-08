@@ -365,13 +365,6 @@ var TEST_DECLARATION_PATTERNS = {
   go: /^\s*func\s+Test\w*\s*\(/,
   rust: /#\[test\]/
 };
-var HELPER_DECLARATION_PATTERNS = [
-  /^\s*def\s+(?!test_)\w+\s*\(/,
-  /^\s*(?:async\s+)?function\s+\w+\s*\(/,
-  /^\s*const\s+\w+\s*=\s*(?:async\s*)?\(/,
-  /parametrize/i,
-  /@pytest\.fixture/
-];
 var PLACEHOLDER_PATTERN = /^(?:<replace:[^>]+>|placeholder|todo|tbd|n\/a|stub)$/i;
 function hasAssertion(text) {
   return ASSERTION_PATTERNS.some((pattern) => pattern.test(text));
@@ -522,36 +515,6 @@ var swallowedErrorRule = {
       break;
     }
     return findings;
-  }
-};
-var netAssertionLossRule = {
-  id: "net-assertion-loss",
-  run(ctx) {
-    if (ctx.change.removedLines.length === 0)
-      return [];
-    const removed = uniqueAssertions(ctx.change.removedLines, ctx.change.language).length;
-    const added = uniqueAssertions(ctx.change.addedLines, ctx.change.language).length;
-    const threshold = ctx.config.netAssertionLossThreshold ?? 2;
-    if (removed - added < threshold)
-      return [];
-    const learned = ctx.change.addedLines.some((line) => HELPER_DECLARATION_PATTERNS.some((p) => p.test(codeText(line, ctx.change.language))));
-    if (learned)
-      return [];
-    const declarations = TEST_DECLARATION_PATTERNS[ctx.change.language];
-    if (declarations) {
-      const before = ctx.change.removedLines.filter((line) => declarations.test(codeText(line, ctx.change.language))).length;
-      const after = ctx.change.addedLines.filter((line) => declarations.test(codeText(line, ctx.change.language))).length;
-      if (before !== after)
-        return [];
-    }
-    const sample = ctx.change.removedLines.find((line) => ASSERTION_COUNT_PATTERNS.some((p) => p.test(codeText(line, ctx.change.language)))) ?? "";
-    const lineNumber = locateLine(ctx.change.oldText, sample);
-    return [{
-      rule: "net-assertion-loss",
-      line: lineNumber,
-      message: `Net assertion loss of ${removed - added} without added helper or parametrization.`,
-      excerpt: sample.trim()
-    }];
   }
 };
 var guttedTestRule = {
@@ -951,7 +914,6 @@ var DETERMINISTIC_RULES = [
   tautologicalAssertionRule,
   emptyTestRule,
   unknownTestRule,
-  netAssertionLossRule,
   guttedTestRule,
   matcherLoosenedRule,
   swallowedErrorRule,
@@ -1092,7 +1054,7 @@ function runDiffCheck(options) {
     };
     const result = runTestRules(ctx);
     for (const finding of result.findings) {
-      if ((finding.rule === "net-assertion-loss" || finding.rule === "gutted-test") && isMovedTest(change, addedByFile)) {
+      if (finding.rule === "gutted-test" && isMovedTest(change, addedByFile)) {
         continue;
       }
       findings.push({
@@ -1198,9 +1160,6 @@ function validateTestGuard(record, path, errors) {
   if (record.max_warnings_per_file !== undefined && asCount(record.max_warnings_per_file, 0) === undefined) {
     errors.push(`${path}.max_warnings_per_file must be an integer >= 0`);
   }
-  if (record.net_assertion_loss_threshold !== undefined && asCount(record.net_assertion_loss_threshold, 1) === undefined) {
-    errors.push(`${path}.net_assertion_loss_threshold must be an integer >= 1`);
-  }
   if (record.checks !== undefined) {
     if (!isRecord(record.checks))
       errors.push(`${path}.checks must be an object`);
@@ -1235,7 +1194,6 @@ function validateTestGuard(record, path, errors) {
     "test_command",
     "checks",
     "max_warnings_per_file",
-    "net_assertion_loss_threshold",
     "custom_prompt",
     "append_prompt",
     "mutation",
@@ -1801,7 +1759,6 @@ var TEST_ACTION = {
   "duplicate-test": "remove",
   "skip-focus-added": "remove",
   "matcher-loosened": "adjust",
-  "net-assertion-loss": "adjust",
   "gutted-test": "adjust",
   "swallowed-error": "adjust",
   "over-mocking": "adjust",
@@ -2076,7 +2033,6 @@ async function auditCommand(parsed) {
       testCommand: detectTestCommand(process.cwd()),
       checks: {},
       maxWarningsPerFile: 0,
-      netAssertionLossThreshold: 2,
       mutationEnabled: false
     })
   });

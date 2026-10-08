@@ -42,7 +42,7 @@ test("is silent on an unrelated change", () => {
   expect(result.findings).toHaveLength(0)
 })
 
-test("suppresses net-assertion-loss when the assertions move to another file", () => {
+test("suppresses gutted-test when the assertions move to another file", () => {
   writeFileSync(
     join(dir, "a.test.ts"),
     "test('a', () => {\n  expect(a).toBe(1)\n  expect(b).toBe(2)\n  expect(c).toBe(3)\n})\n",
@@ -55,7 +55,6 @@ test("suppresses net-assertion-loss when the assertions move to another file", (
   writeFileSync(join(dir, "b.test.ts"), "test('b', () => {\n  expect(x).toBe(0)\n  expect(b).toBe(2)\n  expect(c).toBe(3)\n})\n")
 
   const result = runDiffCheck({ directory: dir, base: "HEAD" })
-  expect(result.findings.map(f => f.rule)).not.toContain("net-assertion-loss")
   expect(result.findings.map(f => f.rule)).not.toContain("gutted-test")
 })
 

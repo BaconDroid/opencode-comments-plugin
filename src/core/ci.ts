@@ -120,7 +120,7 @@ export function runDiffCheck(options: DiffCheckOptions): DiffCheckResult {
     }
     const result = runTestRules(ctx)
     for (const finding of result.findings) {
-      if ((finding.rule === "net-assertion-loss" || finding.rule === "gutted-test") && isMovedTest(change, addedByFile)) {
+      if (finding.rule === "gutted-test" && isMovedTest(change, addedByFile)) {
         continue
       }
       findings.push({

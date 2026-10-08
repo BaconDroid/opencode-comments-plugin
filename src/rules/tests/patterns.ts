@@ -145,14 +145,6 @@ export const TEST_DECLARATION_PATTERNS: Partial<Record<Language, RegExp>> = {
   rust: /#\[test\]/,
 }
 
-export const HELPER_DECLARATION_PATTERNS: RegExp[] = [
-  /^\s*def\s+(?!test_)\w+\s*\(/,
-  /^\s*(?:async\s+)?function\s+\w+\s*\(/,
-  /^\s*const\s+\w+\s*=\s*(?:async\s*)?\(/,
-  /parametrize/i,
-  /@pytest\.fixture/,
-]
-
 export const PLACEHOLDER_PATTERN = /^(?:<replace:[^>]+>|placeholder|todo|tbd|n\/a|stub)$/i
 
 export function hasAssertion(text: string): boolean {

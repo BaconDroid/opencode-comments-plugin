@@ -33,7 +33,6 @@ export const TUPLE_OPTIONS_SCHEMA = {
           additionalProperties: { type: "string", enum: SEVERITY },
         },
         max_warnings_per_file: { type: "integer", minimum: 0 },
-        net_assertion_loss_threshold: { type: "integer", minimum: 1 },
         custom_prompt: { type: "string" },
         append_prompt: { type: "string" },
         mutation: {
@@ -113,9 +112,6 @@ function validateTestGuard(record: Record<string, unknown>, path: string, errors
   if (record.max_warnings_per_file !== undefined && asCount(record.max_warnings_per_file, 0) === undefined) {
     errors.push(`${path}.max_warnings_per_file must be an integer >= 0`)
   }
-  if (record.net_assertion_loss_threshold !== undefined && asCount(record.net_assertion_loss_threshold, 1) === undefined) {
-    errors.push(`${path}.net_assertion_loss_threshold must be an integer >= 1`)
-  }
   if (record.checks !== undefined) {
     if (!isRecord(record.checks)) errors.push(`${path}.checks must be an object`)
     else {
@@ -146,7 +142,6 @@ function validateTestGuard(record: Record<string, unknown>, path: string, errors
       "test_command",
       "checks",
       "max_warnings_per_file",
-      "net_assertion_loss_threshold",
       "custom_prompt",
       "append_prompt",
       "mutation",
