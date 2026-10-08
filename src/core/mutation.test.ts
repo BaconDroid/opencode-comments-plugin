@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { formatSurvivors, parseMutationReport, runMutationCheck } from "./mutation"
+import { createMutationAdapter, formatSurvivors, parseMutationReport, runMutationCheck } from "./mutation"
 
 test("parses the Stryker JSON reporter", () => {
   const raw = JSON.stringify({
@@ -41,4 +41,17 @@ test("formats survivors for feedback", () => {
   const message = formatSurvivors([{ file: "a.ts", line: 3, mutator: "X" }])
   expect(message).toContain("Mutation survivors detected (1)")
   expect(message).toContain("a.ts:3")
+})
+
+test("mutation adapter surfaces survivors and respects the cooldown", async () => {
+  const adapter = createMutationAdapter({
+    getConfig: () => ({ enabled: true, command: `printf '%s' '{"survivors":[{"file":"a.ts","line":1}]}'` }),
+  })
+  expect(await adapter.onIdle("s")).toContain("Mutation survivors detected")
+  expect(await adapter.onIdle("s")).toBeNull()
+})
+
+test("mutation adapter reports disabled on demand", async () => {
+  const adapter = createMutationAdapter({ getConfig: () => ({ enabled: false }) })
+  expect(await adapter.analyzeNow()).toContain("disabled")
 })

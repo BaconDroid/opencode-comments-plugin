@@ -8,7 +8,6 @@ import { GuardBudget } from "./budget"
 import type { Severity } from "./config"
 import { extractPatchChanges, extractToolChange, firstString, type ExtractedChange } from "./diff"
 import { appendFeedback, renderFeedback, type Finding } from "./feedback"
-import { formatSurvivors, runMutationCheck } from "./mutation"
 import { isTestPath } from "../rules/tests/patterns"
 import { runTestRules } from "../rules/tests"
 import type { RuleContext } from "../rules/tests/types"
@@ -27,9 +26,6 @@ export interface ResolvedTestGuard {
   testCommand?: string | null
   checks: Record<string, Severity>
   maxWarningsPerFile: number
-  mutationEnabled: boolean
-  mutationCommand?: string
-  mutationTimeoutMs?: number
   customPrompt?: string
   appendPrompt?: string
 }
@@ -56,7 +52,6 @@ const DEFAULT_TEST_GUARD: ResolvedTestGuard = {
   testPatterns: [],
   checks: {},
   maxWarningsPerFile: 0,
-  mutationEnabled: false,
 }
 
 // Minimal shape of the `permission.ask` hook payload we consume.
@@ -73,11 +68,8 @@ export interface TestGuard {
   before(input: BeforeInput, output: { args: Record<string, unknown> }): void
   after(input: BeforeInput, output: AfterOutput): Promise<void>
   permission(input: PermissionLike, output: PermissionDecision): void
-  onIdle(sessionID?: string): Promise<void>
   queueNote(message: string): void
 }
-
-const MUTATION_COOLDOWN_MS = 60_000
 
 const PATCH_ENTRY = /^\*\*\* (Add|Update|Delete) File:\s*(.+?)\s*$/gm
 
@@ -95,8 +87,6 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
   const budget = new GuardBudget()
   const pending = new Map<string, PendingGuardCall>()
   const pendingNotes: string[] = []
-  const lastMutation = new Map<string, number>()
-
   function queueNote(message: string): void {
     if (message.length > 0) pendingNotes.push(message)
   }
@@ -150,25 +140,6 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       }
     } catch (err) {
       debugLog("permission failed (fail-open):", err)
-    }
-  }
-
-  // Runs the opt-in mutation adapter on session.idle and queues the survivors
-  // for the next tool call's output (there is no output channel on idle).
-  // Cooldown per session so a burst of idle events does not rerun the tool.
-  async function onIdle(sessionID = ""): Promise<void> {
-    try {
-      const resolved = resolve()
-      if (!resolved.enabled || !resolved.mutationEnabled || !resolved.mutationCommand) return
-      const now = Date.now()
-      if (now - (lastMutation.get(sessionID) ?? 0) < MUTATION_COOLDOWN_MS) return
-      lastMutation.set(sessionID, now)
-      const run = await runMutationCheck(resolved.mutationCommand, { timeoutMs: resolved.mutationTimeoutMs })
-      if (!run.ran || run.survivors.length === 0) return
-      debugLog("mutation survivors:", run.survivors.length)
-      queueNote(formatSurvivors(run.survivors))
-    } catch (err) {
-      debugLog("onIdle failed (fail-open):", err)
     }
   }
 
@@ -308,5 +279,5 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
     }
   }
 
-  return { before, after, permission, onIdle, queueNote }
+  return { before, after, permission, queueNote }
 }

@@ -1,3 +1,9 @@
+import { type IdleAdvisoryController } from "./idle-advisory";
+export interface MutationConfig {
+    enabled: boolean;
+    command?: string;
+    timeoutMs?: number;
+}
 export interface MutationSurvivor {
     file?: string;
     line?: number;
@@ -14,3 +20,7 @@ export declare function runMutationCheck(command: string, options?: {
     timeoutMs?: number;
 }): Promise<MutationRun>;
 export declare function formatSurvivors(survivors: MutationSurvivor[], max?: number): string;
+export declare function createMutationAdapter(options: {
+    getConfig: () => MutationConfig;
+    cooldownMs?: number;
+}): IdleAdvisoryController;

@@ -853,85 +853,6 @@ ${TEST_GUARD_MARKER}
 ${message}`;
 }
 
-// src/core/mutation.ts
-function isSurvivor(status) {
-  const normalized = status.toLowerCase();
-  return normalized === "survived" || normalized === "nocoverage" || normalized === "no coverage" || normalized === "timeout";
-}
-function parseMutationReport(raw) {
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  const root = asRecord(parsed);
-  if (!root)
-    return [];
-  const files = root.files;
-  if (Array.isArray(files) || asRecord(files)) {
-    const survivors = [];
-    const entries = Array.isArray(files) ? files.map((file) => [asRecord(file)?.file, file]) : Object.entries(asRecord(files));
-    for (const [name, file] of entries) {
-      const entry = asRecord(file);
-      if (!entry || !Array.isArray(entry.mutants))
-        continue;
-      for (const mutant of entry.mutants) {
-        const record = asRecord(mutant);
-        if (!record)
-          continue;
-        const status = typeof record.status === "string" ? record.status : "";
-        if (!isSurvivor(status))
-          continue;
-        const location = asRecord(record.location);
-        const start = location ? asRecord(location.start) : undefined;
-        survivors.push({
-          file: typeof entry.file === "string" ? entry.file : name,
-          line: start && typeof start.line === "number" ? start.line : undefined,
-          mutator: typeof record.mutatorName === "string" ? record.mutatorName : undefined,
-          status
-        });
-      }
-    }
-    return survivors;
-  }
-  if (Array.isArray(root.survivors)) {
-    const survivors = [];
-    for (const item of root.survivors) {
-      const record = asRecord(item);
-      if (!record)
-        continue;
-      survivors.push({
-        file: typeof record.file === "string" ? record.file : undefined,
-        line: typeof record.line === "number" ? record.line : undefined,
-        mutator: typeof record.mutator === "string" ? record.mutator : undefined,
-        status: typeof record.status === "string" ? record.status : "survived"
-      });
-    }
-    return survivors;
-  }
-  return [];
-}
-async function runMutationCheck(command, options = {}) {
-  if (!command.trim())
-    return { ran: false, survivors: [] };
-  const outcome = await runProcess(["/bin/sh", "-c", command], { timeoutMs: options.timeoutMs });
-  if (outcome === "timeout")
-    return { ran: false, survivors: [], error: "timeout" };
-  return { ran: true, survivors: parseMutationReport(outcome.stdout) };
-}
-function formatSurvivors(survivors, max = 20) {
-  const lines = survivors.slice(0, max).map((survivor) => {
-    const location = `${survivor.file ?? "?"}${survivor.line ? `:${survivor.line}` : ""}`;
-    return `- ${location}${survivor.mutator ? ` (${survivor.mutator})` : ""}`;
-  });
-  return `Mutation survivors detected (${survivors.length}):
-${lines.join(`
-`)}
-
-Add or strengthen tests to kill them.`;
-}
-
 // src/core/glob.ts
 function globToRegExp(glob) {
   const normalized = glob.replace(/\\/g, "/");
@@ -1695,10 +1616,8 @@ var DEFAULT_TEST_GUARD = {
   enabled: true,
   testPatterns: [],
   checks: {},
-  maxWarningsPerFile: 0,
-  mutationEnabled: false
+  maxWarningsPerFile: 0
 };
-var MUTATION_COOLDOWN_MS = 60000;
 var PATCH_ENTRY = /^\*\*\* (Add|Update|Delete) File:\s*(.+?)\s*$/gm;
 function extractPatchEntries(patchText) {
   const entries = [];
@@ -1713,7 +1632,6 @@ function createTestGuard(getResolved) {
   const budget = new GuardBudget;
   const pending = new Map;
   const pendingNotes = [];
-  const lastMutation = new Map;
   function queueNote(message) {
     if (message.length > 0)
       pendingNotes.push(message);
@@ -1763,24 +1681,6 @@ function createTestGuard(getResolved) {
       }
     } catch (err) {
       debugLog3("permission failed (fail-open):", err);
-    }
-  }
-  async function onIdle(sessionID = "") {
-    try {
-      const resolved = resolve();
-      if (!resolved.enabled || !resolved.mutationEnabled || !resolved.mutationCommand)
-        return;
-      const now = Date.now();
-      if (now - (lastMutation.get(sessionID) ?? 0) < MUTATION_COOLDOWN_MS)
-        return;
-      lastMutation.set(sessionID, now);
-      const run = await runMutationCheck(resolved.mutationCommand, { timeoutMs: resolved.mutationTimeoutMs });
-      if (!run.ran || run.survivors.length === 0)
-        return;
-      debugLog3("mutation survivors:", run.survivors.length);
-      queueNote(formatSurvivors(run.survivors));
-    } catch (err) {
-      debugLog3("onIdle failed (fail-open):", err);
     }
   }
   function before(input, output) {
@@ -1916,7 +1816,7 @@ ${footer}` : footer;
       debugLog3("after failed (fail-open):", err);
     }
   }
-  return { before, after, permission, onIdle, queueNote };
+  return { before, after, permission, queueNote };
 }
 
 // src/core/ci.ts
@@ -2284,6 +2184,104 @@ function createParserAdapter(options) {
 }
 function createGuardParseTool(controller) {
   return createAdvisoryTool("Run the opt-in external parser adapter over the current test diff. Read-only and advisory; requires test_guard.parser.enabled.", controller);
+}
+
+// src/core/mutation.ts
+function isSurvivor(status) {
+  const normalized = status.toLowerCase();
+  return normalized === "survived" || normalized === "nocoverage" || normalized === "no coverage" || normalized === "timeout";
+}
+function parseMutationReport(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  const root = asRecord(parsed);
+  if (!root)
+    return [];
+  const files = root.files;
+  if (Array.isArray(files) || asRecord(files)) {
+    const survivors = [];
+    const entries = Array.isArray(files) ? files.map((file) => [asRecord(file)?.file, file]) : Object.entries(asRecord(files));
+    for (const [name, file] of entries) {
+      const entry = asRecord(file);
+      if (!entry || !Array.isArray(entry.mutants))
+        continue;
+      for (const mutant of entry.mutants) {
+        const record = asRecord(mutant);
+        if (!record)
+          continue;
+        const status = typeof record.status === "string" ? record.status : "";
+        if (!isSurvivor(status))
+          continue;
+        const location = asRecord(record.location);
+        const start = location ? asRecord(location.start) : undefined;
+        survivors.push({
+          file: typeof entry.file === "string" ? entry.file : name,
+          line: start && typeof start.line === "number" ? start.line : undefined,
+          mutator: typeof record.mutatorName === "string" ? record.mutatorName : undefined,
+          status
+        });
+      }
+    }
+    return survivors;
+  }
+  if (Array.isArray(root.survivors)) {
+    const survivors = [];
+    for (const item of root.survivors) {
+      const record = asRecord(item);
+      if (!record)
+        continue;
+      survivors.push({
+        file: typeof record.file === "string" ? record.file : undefined,
+        line: typeof record.line === "number" ? record.line : undefined,
+        mutator: typeof record.mutator === "string" ? record.mutator : undefined,
+        status: typeof record.status === "string" ? record.status : "survived"
+      });
+    }
+    return survivors;
+  }
+  return [];
+}
+async function runMutationCheck(command, options = {}) {
+  if (!command.trim())
+    return { ran: false, survivors: [] };
+  const outcome = await runProcess(["/bin/sh", "-c", command], { timeoutMs: options.timeoutMs });
+  if (outcome === "timeout")
+    return { ran: false, survivors: [], error: "timeout" };
+  return { ran: true, survivors: parseMutationReport(outcome.stdout) };
+}
+function formatSurvivors(survivors, max = 20) {
+  const lines = survivors.slice(0, max).map((survivor) => {
+    const location = `${survivor.file ?? "?"}${survivor.line ? `:${survivor.line}` : ""}`;
+    return `- ${location}${survivor.mutator ? ` (${survivor.mutator})` : ""}`;
+  });
+  return `Mutation survivors detected (${survivors.length}):
+${lines.join(`
+`)}
+
+Add or strengthen tests to kill them.`;
+}
+function createMutationAdapter(options) {
+  return createIdleAdvisory({
+    isEnabled: () => {
+      const config = options.getConfig();
+      return config.enabled && Boolean(config.command);
+    },
+    cooldownMs: options.cooldownMs,
+    disabledMessage: "Mutation: disabled (set test_guard.mutation.enabled and command).",
+    unavailableMessage: "Mutation: unavailable.",
+    emptyMessage: "Mutation: no survivors.",
+    analyze: async () => {
+      const config = options.getConfig();
+      const run = await runMutationCheck(config.command ?? "", { timeoutMs: config.timeoutMs });
+      if (!run.ran || run.survivors.length === 0)
+        return null;
+      return formatSurvivors(run.survivors);
+    }
+  });
 }
 
 // src/rules/comments/index.ts
@@ -2885,9 +2883,9 @@ var resolvedTestGuard = {
   testPatterns: [...DEFAULT_TEST_PATTERNS],
   testCommand: null,
   checks: { ...DEFAULT_TEST_CHECKS },
-  maxWarningsPerFile: 0,
-  mutationEnabled: false
+  maxWarningsPerFile: 0
 };
+var resolvedMutation = { enabled: false };
 var resolvedJudge = { enabled: false };
 var resolvedParser = { enabled: false };
 function resolveTestGuardConfiguration(config) {
@@ -2905,9 +2903,9 @@ function resolveTestGuardConfiguration(config) {
   const optionsMutation = asRecord(options?.mutation);
   const configMutation = asRecord(fromConfig?.mutation);
   const mutationInputs = { options: optionsMutation, config: configMutation };
-  resolvedTestGuard.mutationEnabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, false), "TEST_GUARD_MUTATION_ENABLED", "enabled", mutationInputs) ?? false;
-  resolvedTestGuard.mutationCommand = resolveOption(asString, "TEST_GUARD_MUTATION_COMMAND", "command", mutationInputs);
-  resolvedTestGuard.mutationTimeoutMs = resolveOption((value) => asCount(value, 1), "TEST_GUARD_MUTATION_TIMEOUT_MS", "timeout_ms", mutationInputs);
+  resolvedMutation.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, false), "TEST_GUARD_MUTATION_ENABLED", "enabled", mutationInputs) ?? false;
+  resolvedMutation.command = resolveOption(asString, "TEST_GUARD_MUTATION_COMMAND", "command", mutationInputs);
+  resolvedMutation.timeoutMs = resolveOption((value) => asCount(value, 1), "TEST_GUARD_MUTATION_TIMEOUT_MS", "timeout_ms", mutationInputs);
   const optionsJudge = asRecord(options?.judge);
   const configJudge = asRecord(fromConfig?.judge);
   const judgeInputs = { options: optionsJudge, config: configJudge };
@@ -2965,6 +2963,7 @@ var CommentCheckerPlugin = async (input, options) => {
     getTestPatterns: () => resolvedTestGuard.testPatterns
   });
   const parseTool = createGuardParseTool(parser);
+  const mutation = createMutationAdapter({ getConfig: () => resolvedMutation });
   return {
     config: async (config) => {
       resolveConfiguration(config);
@@ -2980,13 +2979,11 @@ var CommentCheckerPlugin = async (input, options) => {
       if (event.type !== "session.idle")
         return;
       const sessionID = event.properties?.sessionID ?? "";
-      await testGuard.onIdle(sessionID);
-      const judgeMessage = await judge.onIdle(sessionID);
-      if (judgeMessage)
-        testGuard.queueNote(judgeMessage);
-      const parserMessage = await parser.onIdle(sessionID);
-      if (parserMessage)
-        testGuard.queueNote(parserMessage);
+      for (const analyzer of [mutation, judge, parser]) {
+        const message = await analyzer.onIdle(sessionID);
+        if (message)
+          testGuard.queueNote(message);
+      }
     },
     "permission.ask": async (input, output) => {
       testGuard.permission(input, output);

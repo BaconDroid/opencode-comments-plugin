@@ -3,7 +3,14 @@
 // Opt-in, fail-open, never destructive.
 
 import { asRecord } from "./config"
+import { createIdleAdvisory, type IdleAdvisoryController } from "./idle-advisory"
 import { runProcess } from "./runner"
+
+export interface MutationConfig {
+  enabled: boolean
+  command?: string
+  timeoutMs?: number
+}
 
 export interface MutationSurvivor {
   file?: string
@@ -95,4 +102,26 @@ export function formatSurvivors(survivors: MutationSurvivor[], max = 20): string
     return `- ${location}${survivor.mutator ? ` (${survivor.mutator})` : ""}`
   })
   return `Mutation survivors detected (${survivors.length}):\n${lines.join("\n")}\n\nAdd or strengthen tests to kill them.`
+}
+
+export function createMutationAdapter(options: {
+  getConfig: () => MutationConfig
+  cooldownMs?: number
+}): IdleAdvisoryController {
+  return createIdleAdvisory({
+    isEnabled: () => {
+      const config = options.getConfig()
+      return config.enabled && Boolean(config.command)
+    },
+    cooldownMs: options.cooldownMs,
+    disabledMessage: "Mutation: disabled (set test_guard.mutation.enabled and command).",
+    unavailableMessage: "Mutation: unavailable.",
+    emptyMessage: "Mutation: no survivors.",
+    analyze: async () => {
+      const config = options.getConfig()
+      const run = await runMutationCheck(config.command ?? "", { timeoutMs: config.timeoutMs })
+      if (!run.ran || run.survivors.length === 0) return null
+      return formatSurvivors(run.survivors)
+    },
+  })
 }
