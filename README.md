@@ -110,9 +110,97 @@ Detection is local and deterministic (tree-sitter parsing in the `comment-checke
 
 Directive and shebang handling is heuristic: `biome-ignore`, for example, is currently flagged.
 
+## Test guard
+
+The plugin also ships a deterministic **test guard** that discourages weakening
+tests. It reuses the same tuple, under a sibling `test_guard` key:
+
+```json
+{
+  "plugin": [
+    ["opencode-comments-plugin", {
+      "comment_checker": { "custom_prompt": "DETECTED:\n{{comments}}\nFix it." },
+      "test_guard": {
+        "enabled": true,
+        "test_patterns": ["**/*.test.*", "**/*_test.*", "**/test_*.py", "**/tests/**"],
+        "checks": { "protected-paths": "warn", "skip-focus-added": "warn" }
+      }
+    }]
+  ]
+}
+```
+
+Every content rule defaults to `warn`. `block` is opt-in per rule and only then
+can `tool.execute.before` throw. All internal guard errors are swallowed
+(fail-open), so the guard can never prevent the agent's action.
+
+| Rule | Signal | Default |
+|---|---|---|
+| `protected-paths` | edit/delete of an existing test file (new files exempt) | warn |
+| `skip-focus-added` | `.skip`/`.only`/`.todo`, `xit`, `skipif`, `#[ignore]`, `t.Skip` | warn |
+| `tautological-assertion` | `assert True`, `expect(true).toBe(true)`, `assertEquals(x,x)` | warn |
+| `empty-test` | test body with no executable statement | warn |
+| `unknown-test` | test with no assertion/expect/fail | warn |
+| `net-assertion-loss` | 2+ assertions removed with no replacement/helper | warn |
+| `gutted-test` | all assertions removed | warn |
+| `matcher-loosened` | `assertEqual -> assertTrue`, `toBe -> toBeTruthy`, ... | warn |
+| `swallowed-error` | `except Exception: pass`, empty `catch {}` | warn |
+| `duplicate-test` | identical test bodies in the same file | warn |
+| `over-mocking` | new mock identifiers (dummy/stub/mock/spy/fake) | off |
+| `assertion-roulette` | several assertions with no message | off |
+| `redundant-assertion` | the same assertion repeated in one test | off |
+| `weakened-config` | `\|\| true`, `--passWithNoTests`, `@ts-nocheck` | off |
+| `tests-not-run` | a test command excludes/skips tests | off |
+
+Only added (`+`) lines trigger a finding; comments are stripped before
+counting. Inline bypass: `// test-guard: allow <reason>` (within +/-2 lines) or
+file-level `// test-guard-disable-file`.
+
+Env vars mirror the comment guard: `TEST_GUARD_ENABLED`,
+`TEST_GUARD_TEST_PATTERNS`, `TEST_GUARD_MAX_WARNINGS_PER_FILE`,
+`TEST_GUARD_CUSTOM_PROMPT`, `TEST_GUARD_APPEND_PROMPT`, and
+`TEST_GUARD_CHECK_<RULE>` (env > tuple options > config hook).
+
+### Audit
+
+A read-only custom tool `guard_audit` (plus the `/guard-audit` command)
+reviews EXISTING comments and tests and returns a cleanup plan the agent
+applies afterwards:
+
+```jsonc
+{ "scope": "both", "paths": ["src/", "tests/"], "format": "markdown", "include_advisory": false }
+```
+
+### CLI (CI parity)
+
+The same engine is exposed as a CLI for pre-merge use. `test_command` is
+auto-detected from `package.json`, `pytest.ini`/`pyproject.toml`, `go.mod`,
+`Cargo.toml`, `pom.xml` or `build.gradle`, and can be overridden via the
+`test_command` option or `TEST_GUARD_TEST_COMMAND`.
+
+```bash
+opencode-comments-plugin guard check --diff [--base <rev>] [--json] [--include-advisory]
+opencode-comments-plugin guard validate-config [config.json]
+opencode-comments-plugin guard audit [--scope comments|tests|both] [--paths a,b] [--json]
+```
+
+`guard check` exits non-zero when the diff trips a rule, so it can gate a PR.
+
+### Language matrix and limits
+
+Patterns cover Python, JS/TS, Rust and Go (ported from tamperguard MIT,
+tampercheck Apache-2.0, pr-test-guard MIT and veredicto up to v0.3.3).
+Java rules are home-grown and **unvalidated** — prior art does not cover Java.
+
+Known limits: rules are regex-based (no AST), so a test declaration written
+inside a string or a regex literal can be misread; `net-assertion-loss` uses a
+heuristic threshold; `block` is not airtight because sub-agents may bypass
+`tool.execute.before` (opencode issue #5894); cross-file duplicate detection
+runs in the audit/CI paths, not the live per-file hook.
+
 ## Debug
 
-Set `COMMENT_CHECKER_DEBUG=1` to log what the plugin and the CLI do to stderr. Any other value (including `0`) logs nothing.
+Set `COMMENT_CHECKER_DEBUG=1` to log what the plugin and the CLI do to stderr. Any other value (including `0`) logs nothing. `TEST_GUARD_DEBUG=1` enables test-guard logs.
 
 ## Development
 
