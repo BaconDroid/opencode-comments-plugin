@@ -76,6 +76,7 @@ export interface TestGuard {
   after(input: BeforeInput, output: AfterOutput): Promise<void>
   permission(input: PermissionLike, output: PermissionDecision): void
   onIdle(sessionID?: string): Promise<void>
+  queueNote(message: string): void
 }
 
 const MUTATION_COOLDOWN_MS = 60_000
@@ -95,13 +96,15 @@ export function extractPatchEntries(patchText: string): Array<{ kind: string; pa
 export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard {
   const budget = new GuardBudget()
   const pending = new Map<string, PendingGuardCall>()
-  let pendingMutation = ""
+  const pendingNotes: string[] = []
   const lastMutation = new Map<string, number>()
 
-  function consumePendingMutation(): string {
-    const message = pendingMutation
-    pendingMutation = ""
-    return message
+  function queueNote(message: string): void {
+    if (message.length > 0) pendingNotes.push(message)
+  }
+
+  function consumeNotes(): string[] {
+    return pendingNotes.splice(0, pendingNotes.length)
   }
 
   function resolve(): ResolvedTestGuard {
@@ -165,7 +168,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       const run = await runMutationCheck(resolved.mutationCommand, { timeoutMs: resolved.mutationTimeoutMs })
       if (!run.ran || run.survivors.length === 0) return
       debugLog("mutation survivors:", run.survivors.length)
-      pendingMutation = formatSurvivors(run.survivors)
+      queueNote(formatSurvivors(run.survivors))
     } catch (err) {
       debugLog("onIdle failed (fail-open):", err)
     }
@@ -224,7 +227,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       const resolved = resolve()
       if (!resolved.enabled) return
 
-      const mutationFeedback = consumePendingMutation()
+      const notes = consumeNotes()
       const toolLower = input.tool.toLowerCase()
       let changes: ExtractedChange[] = []
       const failed = output.output.toLowerCase().startsWith("error")
@@ -299,7 +302,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
         if (message.length > 0) parts.push(message)
       }
 
-      if (mutationFeedback.length > 0) parts.push(mutationFeedback)
+      for (const note of notes) parts.push(note)
       if (parts.length === 0) return
       appendFeedback(output, parts.join("\n\n"))
     } catch (err) {
@@ -307,5 +310,5 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
     }
   }
 
-  return { before, after, permission, onIdle }
+  return { before, after, permission, onIdle, queueNote }
 }

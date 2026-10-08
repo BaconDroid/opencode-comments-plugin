@@ -125,7 +125,8 @@ tests. It reuses the same tuple, under a sibling `test_guard` key:
         "test_patterns": ["**/*.test.*", "**/*_test.*", "**/test_*.py", "**/tests/**"],
         "net_assertion_loss_threshold": 2,
         "checks": { "protected-paths": "warn", "skip-focus-added": "warn" },
-        "mutation": { "enabled": false, "command": "npx stryker run --reporters json", "timeout_ms": 120000 }
+        "mutation": { "enabled": false, "command": "npx stryker run --reporters json", "timeout_ms": 120000 },
+        "judge": { "enabled": false, "model": "anthropic/claude-3-5-haiku", "timeout_ms": 30000 }
       }
     }]
   ]
@@ -166,8 +167,10 @@ Env vars mirror the comment guard: `TEST_GUARD_ENABLED`,
 `TEST_GUARD_TEST_PATTERNS`, `TEST_GUARD_MAX_WARNINGS_PER_FILE`,
 `TEST_GUARD_NET_ASSERTION_LOSS_THRESHOLD`, `TEST_GUARD_CUSTOM_PROMPT`,
 `TEST_GUARD_APPEND_PROMPT`, `TEST_GUARD_MUTATION_ENABLED`,
-`TEST_GUARD_MUTATION_COMMAND`, `TEST_GUARD_MUTATION_TIMEOUT_MS`, and
-`TEST_GUARD_CHECK_<RULE>` (env > tuple options > config hook).
+`TEST_GUARD_MUTATION_COMMAND`, `TEST_GUARD_MUTATION_TIMEOUT_MS`,
+`TEST_GUARD_JUDGE_ENABLED`, `TEST_GUARD_JUDGE_MODEL`,
+`TEST_GUARD_JUDGE_TIMEOUT_MS`, and `TEST_GUARD_CHECK_<RULE>`
+(env > tuple options > config hook).
 
 ### Mutation (opt-in, phase 2)
 
@@ -177,6 +180,15 @@ a `mutation.command` (Stryker, mutmut, PIT, …), it runs on `session.idle`
 `files[].mutants[]` or a generic `{ "survivors": [...] }`) and queues the
 survivors for the next tool call's output. Disabled by default, fail-open,
 never runs a destructive command.
+
+### LLM judge (opt-in, phase 2B)
+
+If `judge.enabled` is set, the plugin reviews the current test diff with the
+model already configured in opencode (or `judge.model`, `provider/model`),
+inside a sandboxed session with tools disabled, on `session.idle` (at most once
+per minute per session) and on demand via the `guard_judge` tool. It returns
+**advisory** findings only, is fail-open, and never handles provider
+credentials — the model and keys stay in opencode. Disabled by default.
 
 ### Audit
 
