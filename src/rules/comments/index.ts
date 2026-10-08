@@ -1,6 +1,6 @@
-// Comment guard: the original plugin behavior, unchanged. It runs the
-// comment-checker binary on added lines and appends its warning to the tool
-// output. Extracted from `index.ts` so the test guard can reuse the engine.
+// Comment guard: runs the comment-checker binary on added lines and appends
+// its warning to the tool output, with opt-in bypass markers. Extracted from
+// `index.ts` so the test guard can reuse the engine.
 
 import { existsSync } from "node:fs"
 import { APPLY_PATCH_TOOL_NAME, COMMENT_CHECKER_EVENT } from "../../constants"

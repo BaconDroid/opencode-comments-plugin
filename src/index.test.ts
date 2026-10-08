@@ -549,20 +549,11 @@ test("still warns when the allow marker is out of range", async () => {
 
 // --- test guard (coexistence with the comment guard) ---
 
-test("registers the guard_audit tool", async () => {
+test("registers the guard tools", async () => {
   const hooks = await newSession()
-  expect(hooks.tool).toBeDefined()
   expect(hooks.tool!.guard_audit).toBeDefined()
-})
-
-test("registers the guard_judge and guard_parse tools", async () => {
-  const hooks = await newSession()
   expect(hooks.tool!.guard_judge).toBeDefined()
   expect(hooks.tool!.guard_parse).toBeDefined()
-})
-
-test("registers the guard_comment_judge tool", async () => {
-  const hooks = await newSession()
   expect(hooks.tool!.guard_comment_judge).toBeDefined()
 })
 
