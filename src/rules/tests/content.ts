@@ -8,6 +8,13 @@ import {
   type Language,
 } from "../../core/diff"
 import {
+  bypassMatchers,
+  collectBypasses as collectBypassesIn,
+  isFileDisabled as isFileDisabledText,
+  withinAllowWindow,
+  type Bypass,
+} from "../../core/bypass"
+import {
   ASSERTION_COUNT_PATTERNS,
   MATCHER_LOOSENINGS,
   MOCK_IDENTIFIER_PATTERNS,
@@ -23,9 +30,9 @@ import {
 } from "./patterns"
 import type { RuleContext, RuleFinding, TestBlock, TestRule } from "./types"
 
-const ALLOW_MARKER = /test-guard:\s*allow\b/i
-const DISABLE_FILE_MARKER = /test-guard-disable-file\b/i
-const BYPASS_WINDOW = 2
+export type { Bypass } from "../../core/bypass"
+
+const MATCHERS = bypassMatchers("test-guard")
 
 function codeText(line: string, language: Language): string {
   return stripStringLiterals(stripComments(line, language))
@@ -79,37 +86,16 @@ function locateLine(newText: string, needle: string): number {
 }
 
 function withinBypass(newText: string, line: number): boolean {
-  if (line <= 0) return false
-  const lines = newText.split("\n")
-  const from = Math.max(0, line - 1 - BYPASS_WINDOW)
-  const to = Math.min(lines.length, line + BYPASS_WINDOW)
-  for (let i = from; i < to; i++) {
-    if (ALLOW_MARKER.test(lines[i] ?? "")) return true
-  }
-  return false
+  return withinAllowWindow(newText, line, MATCHERS)
 }
 
 export function isFileDisabled(change: ExtractedChange): boolean {
-  return DISABLE_FILE_MARKER.test(change.newText)
-}
-
-export interface Bypass {
-  kind: "allow" | "disable-file"
-  line: number
-  reason: string
+  return isFileDisabledText(change.newText, MATCHERS)
 }
 
 // Lists every bypass marker in the file so it can be surfaced in the summary.
 export function collectBypasses(change: ExtractedChange): Bypass[] {
-  const bypasses: Bypass[] = []
-  const lines = change.newText.split("\n")
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!
-    const allow = line.match(/test-guard:\s*allow\s*(.*)$/i)
-    if (allow) bypasses.push({ kind: "allow", line: i + 1, reason: allow[1]!.trim() })
-    if (DISABLE_FILE_MARKER.test(line)) bypasses.push({ kind: "disable-file", line: i + 1, reason: "" })
-  }
-  return bypasses
+  return collectBypassesIn(change.newText, MATCHERS)
 }
 
 function addedLineFindings(
