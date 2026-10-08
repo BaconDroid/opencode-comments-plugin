@@ -3033,6 +3033,22 @@ var resolvedCommentConfig = {
   triggerTools: new Set(DEFAULT_TRIGGER_TOOLS),
   timeoutMs: DEFAULT_CLI_TIMEOUT_MS
 };
+function asOptionalBoolean(value) {
+  return value === undefined ? undefined : asBoolean(value, false);
+}
+function subConfigInputs(options, config, key) {
+  return { options: asRecord(options?.[key]), config: asRecord(config?.[key]) };
+}
+function resolveJudge(target, envPrefix, inputs) {
+  target.enabled = resolveOption(asOptionalBoolean, `${envPrefix}_ENABLED`, "enabled", inputs) ?? false;
+  target.model = resolveJudgeModel(resolveOption(asString, `${envPrefix}_MODEL`, "model", inputs));
+  target.timeoutMs = resolveOption((value) => asCount(value, 1), `${envPrefix}_TIMEOUT_MS`, "timeout_ms", inputs);
+}
+function resolveCommandAdapter(target, envPrefix, inputs) {
+  target.enabled = resolveOption(asOptionalBoolean, `${envPrefix}_ENABLED`, "enabled", inputs) ?? false;
+  target.command = resolveOption(asString, `${envPrefix}_COMMAND`, "command", inputs);
+  target.timeoutMs = resolveOption((value) => asCount(value, 1), `${envPrefix}_TIMEOUT_MS`, "timeout_ms", inputs);
+}
 function resolveConfiguration(config) {
   const options = optionContainer(pluginOptions, "comment_checker");
   const fromConfig = optionContainer(config, "comment_checker");
@@ -3040,15 +3056,9 @@ function resolveConfiguration(config) {
   resolvedCommentConfig.customPrompt = resolveOption(asString, "COMMENT_CHECKER_CUSTOM_PROMPT", "custom_prompt", inputs);
   resolvedCommentConfig.appendPrompt = resolveOption(asString, "COMMENT_CHECKER_APPEND_PROMPT", "append_prompt", inputs);
   resolvedCommentConfig.maxWarningsPerFile = resolveOption((value) => asCount(value, 1), "COMMENT_CHECKER_MAX_WARNINGS_PER_FILE", "max_warnings_per_file", inputs) ?? 0;
-  const tools = resolveOption(asTools, "COMMENT_CHECKER_TOOLS", "tools", inputs);
-  resolvedCommentConfig.triggerTools = new Set(tools ?? DEFAULT_TRIGGER_TOOLS);
+  resolvedCommentConfig.triggerTools = new Set(resolveOption(asTools, "COMMENT_CHECKER_TOOLS", "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS);
   resolvedCommentConfig.timeoutMs = resolveOption((value) => asCount(value, 1), "COMMENT_CHECKER_TIMEOUT_MS", "timeout_ms", inputs) ?? DEFAULT_CLI_TIMEOUT_MS;
-  const optionsJudge = asRecord(options?.judge);
-  const configJudge = asRecord(fromConfig?.judge);
-  const judgeInputs = { options: optionsJudge, config: configJudge };
-  resolvedCommentJudge.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, false), "COMMENT_CHECKER_JUDGE_ENABLED", "enabled", judgeInputs) ?? false;
-  resolvedCommentJudge.model = resolveJudgeModel(resolveOption(asString, "COMMENT_CHECKER_JUDGE_MODEL", "model", judgeInputs));
-  resolvedCommentJudge.timeoutMs = resolveOption((value) => asCount(value, 1), "COMMENT_CHECKER_JUDGE_TIMEOUT_MS", "timeout_ms", judgeInputs);
+  resolveJudge(resolvedCommentJudge, "COMMENT_CHECKER_JUDGE", subConfigInputs(options, fromConfig, "judge"));
 }
 var resolvedTestGuard = {
   enabled: true,
@@ -3065,35 +3075,17 @@ var resolvedParser = { enabled: false };
 function resolveTestGuardConfiguration(config) {
   const options = optionContainer(pluginOptions, "test_guard");
   const fromConfig = optionContainer(config, "test_guard");
-  resolvedTestGuard.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, true), "TEST_GUARD_ENABLED", "enabled", { options, config: fromConfig }) ?? true;
-  resolvedTestGuard.testPatterns = resolveOption(asPatterns, "TEST_GUARD_TEST_PATTERNS", "test_patterns", { options, config: fromConfig }) ?? [...DEFAULT_TEST_PATTERNS];
-  resolvedTestGuard.maxWarningsPerFile = resolveOption((value) => asCount(value, 1), "TEST_GUARD_MAX_WARNINGS_PER_FILE", "max_warnings_per_file", {
-    options,
-    config: fromConfig
-  }) ?? 0;
-  const testTools = resolveOption(asTools, "TEST_GUARD_TOOLS", "tools", { options, config: fromConfig });
-  resolvedTestGuard.triggerTools = new Set(testTools ?? DEFAULT_TRIGGER_TOOLS);
-  resolvedTestGuard.customPrompt = resolveOption(asString, "TEST_GUARD_CUSTOM_PROMPT", "custom_prompt", { options, config: fromConfig });
-  resolvedTestGuard.appendPrompt = resolveOption(asString, "TEST_GUARD_APPEND_PROMPT", "append_prompt", { options, config: fromConfig });
-  resolvedTestGuard.testCommand = resolveOption(asString, "TEST_GUARD_TEST_COMMAND", "test_command", { options, config: fromConfig }) ?? detectTestCommand(projectDirectory);
-  const optionsMutation = asRecord(options?.mutation);
-  const configMutation = asRecord(fromConfig?.mutation);
-  const mutationInputs = { options: optionsMutation, config: configMutation };
-  resolvedMutation.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, false), "TEST_GUARD_MUTATION_ENABLED", "enabled", mutationInputs) ?? false;
-  resolvedMutation.command = resolveOption(asString, "TEST_GUARD_MUTATION_COMMAND", "command", mutationInputs);
-  resolvedMutation.timeoutMs = resolveOption((value) => asCount(value, 1), "TEST_GUARD_MUTATION_TIMEOUT_MS", "timeout_ms", mutationInputs);
-  const optionsJudge = asRecord(options?.judge);
-  const configJudge = asRecord(fromConfig?.judge);
-  const judgeInputs = { options: optionsJudge, config: configJudge };
-  resolvedJudge.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, false), "TEST_GUARD_JUDGE_ENABLED", "enabled", judgeInputs) ?? false;
-  resolvedJudge.model = resolveJudgeModel(resolveOption(asString, "TEST_GUARD_JUDGE_MODEL", "model", judgeInputs));
-  resolvedJudge.timeoutMs = resolveOption((value) => asCount(value, 1), "TEST_GUARD_JUDGE_TIMEOUT_MS", "timeout_ms", judgeInputs);
-  const optionsParser = asRecord(options?.parser);
-  const configParser = asRecord(fromConfig?.parser);
-  const parserInputs = { options: optionsParser, config: configParser };
-  resolvedParser.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, false), "TEST_GUARD_PARSER_ENABLED", "enabled", parserInputs) ?? false;
-  resolvedParser.command = resolveOption(asString, "TEST_GUARD_PARSER_COMMAND", "command", parserInputs);
-  resolvedParser.timeoutMs = resolveOption((value) => asCount(value, 1), "TEST_GUARD_PARSER_TIMEOUT_MS", "timeout_ms", parserInputs);
+  const inputs = { options, config: fromConfig };
+  resolvedTestGuard.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, true), "TEST_GUARD_ENABLED", "enabled", inputs) ?? true;
+  resolvedTestGuard.testPatterns = resolveOption(asPatterns, "TEST_GUARD_TEST_PATTERNS", "test_patterns", inputs) ?? [...DEFAULT_TEST_PATTERNS];
+  resolvedTestGuard.maxWarningsPerFile = resolveOption((value) => asCount(value, 1), "TEST_GUARD_MAX_WARNINGS_PER_FILE", "max_warnings_per_file", inputs) ?? 0;
+  resolvedTestGuard.triggerTools = new Set(resolveOption(asTools, "TEST_GUARD_TOOLS", "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS);
+  resolvedTestGuard.customPrompt = resolveOption(asString, "TEST_GUARD_CUSTOM_PROMPT", "custom_prompt", inputs);
+  resolvedTestGuard.appendPrompt = resolveOption(asString, "TEST_GUARD_APPEND_PROMPT", "append_prompt", inputs);
+  resolvedTestGuard.testCommand = resolveOption(asString, "TEST_GUARD_TEST_COMMAND", "test_command", inputs) ?? detectTestCommand(projectDirectory);
+  resolveCommandAdapter(resolvedMutation, "TEST_GUARD_MUTATION", subConfigInputs(options, fromConfig, "mutation"));
+  resolveJudge(resolvedJudge, "TEST_GUARD_JUDGE", subConfigInputs(options, fromConfig, "judge"));
+  resolveCommandAdapter(resolvedParser, "TEST_GUARD_PARSER", subConfigInputs(options, fromConfig, "parser"));
   resolvedTestGuard.checks = resolveRuleConfig(DEFAULT_TEST_CHECKS, {
     envPrefix: "TEST_GUARD_",
     options,
