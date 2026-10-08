@@ -189,8 +189,9 @@ opencode-comments-plugin guard audit [--scope comments|tests|both] [--paths a,b]
 ### Language matrix and limits
 
 Patterns cover Python, JS/TS, Rust and Go (ported from tamperguard MIT,
-tampercheck Apache-2.0, pr-test-guard MIT and veredicto up to v0.3.3).
-Java rules are home-grown and **unvalidated** — prior art does not cover Java.
+tampercheck Apache-2.0, pr-test-guard MIT and veredicto up to v0.3.3). Other
+languages are ignored by the test guard rather than matched with unvalidated
+rules.
 
 Known limits: rules are regex-based (no AST), so a test declaration written
 inside a string or a regex literal can be misread; `net-assertion-loss` uses a

@@ -1,4 +1,4 @@
-export type Language = "js" | "ts" | "python" | "go" | "rust" | "java" | "unknown";
+export type Language = "js" | "ts" | "python" | "go" | "rust" | "unknown";
 export declare function detectLanguage(filePath: string): Language;
 export declare function isSupportedLanguage(language: Language): boolean;
 export interface ExtractedChange {

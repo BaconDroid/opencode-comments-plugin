@@ -4,7 +4,7 @@
 // comments are stripped before counting, real lines ignore blank/comment-only
 // lines, and net-delta semantics are used for removed vs added.
 
-export type Language = "js" | "ts" | "python" | "go" | "rust" | "java" | "unknown"
+export type Language = "js" | "ts" | "python" | "go" | "rust" | "unknown"
 
 const EXTENSION_LANGUAGE: Record<string, Language> = {
   ".js": "js",
@@ -19,7 +19,6 @@ const EXTENSION_LANGUAGE: Record<string, Language> = {
   ".pyi": "python",
   ".go": "go",
   ".rs": "rust",
-  ".java": "java",
 }
 
 export function detectLanguage(filePath: string): Language {
@@ -95,7 +94,6 @@ const LINE_COMMENT: Record<Language, string[]> = {
   python: ["#"],
   go: ["//"],
   rust: ["//"],
-  java: ["//"],
   unknown: ["//", "#"],
 }
 
