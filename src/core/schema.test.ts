@@ -15,6 +15,16 @@ test("rejects a bad test_guard.tools value", () => {
   expect(result.errors.join()).toContain("tools")
 })
 
+test("accepts a valid comment_checker judge block", () => {
+  expect(
+    validateTupleOptions({ comment_checker: { judge: { enabled: true, model: "anthropic/claude-3", timeout_ms: 30000 } } }).valid,
+  ).toBe(true)
+})
+
+test("rejects an unknown comment_checker judge key", () => {
+  expect(validateTupleOptions({ comment_checker: { judge: { nope: 1 } } }).valid).toBe(false)
+})
+
 test("accepts a null test_command", () => {
   expect(validateTupleOptions({ test_guard: { test_command: null } }).valid).toBe(true)
 })

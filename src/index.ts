@@ -14,7 +14,7 @@ import {
   type Severity,
 } from "./core/config"
 import { createTestGuard, type ResolvedTestGuard } from "./core/dispatch"
-import { createGuardJudgeTool, createJudge, createModelJudgeRunner, resolveJudgeModel, type JudgeConfig } from "./core/judge"
+import { createGuardJudgeTool, createJudge, createModelJudgeRunner, resolveJudgeModel, type JudgeConfig, createCommentJudge, createGuardCommentJudgeTool } from "./core/judge"
 import { createGuardParseTool, createParserAdapter, type ParserAdapterConfig } from "./core/parser-adapter"
 import { createMutationAdapter, type MutationConfig } from "./core/mutation"
 import { createCommentGuard, type ResolvedCommentConfig } from "./rules/comments"
@@ -73,6 +73,26 @@ function resolveConfiguration(config?: unknown): void {
 
   resolvedCommentConfig.timeoutMs =
     resolveOption(value => asCount(value, 1), "COMMENT_CHECKER_TIMEOUT_MS", "timeout_ms", inputs) ?? DEFAULT_CLI_TIMEOUT_MS
+
+  const optionsJudge = asRecord(options?.judge)
+  const configJudge = asRecord(fromConfig?.judge)
+  const judgeInputs = { options: optionsJudge, config: configJudge }
+  resolvedCommentJudge.enabled =
+    resolveOption(
+      value => (value === undefined ? undefined : asBoolean(value, false)),
+      "COMMENT_CHECKER_JUDGE_ENABLED",
+      "enabled",
+      judgeInputs,
+    ) ?? false
+  resolvedCommentJudge.model = resolveJudgeModel(
+    resolveOption(asString, "COMMENT_CHECKER_JUDGE_MODEL", "model", judgeInputs),
+  )
+  resolvedCommentJudge.timeoutMs = resolveOption(
+    value => asCount(value, 1),
+    "COMMENT_CHECKER_JUDGE_TIMEOUT_MS",
+    "timeout_ms",
+    judgeInputs,
+  )
 }
 
 const resolvedTestGuard: ResolvedTestGuard = {
@@ -87,6 +107,7 @@ const resolvedTestGuard: ResolvedTestGuard = {
 const resolvedMutation: MutationConfig = { enabled: false }
 
 const resolvedJudge: JudgeConfig = { enabled: false }
+const resolvedCommentJudge: JudgeConfig = { enabled: false }
 const resolvedParser: ParserAdapterConfig = { enabled: false }
 
 function resolveTestGuardConfiguration(config?: unknown): void {
@@ -214,6 +235,12 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
     runner: createModelJudgeRunner(input.client, projectDirectory),
   })
   const judgeTool = createGuardJudgeTool(judge)
+  const commentJudge = createCommentJudge({
+    directory: projectDirectory,
+    getConfig: () => resolvedCommentJudge,
+    runner: createModelJudgeRunner(input.client, projectDirectory),
+  })
+  const commentJudgeTool = createGuardCommentJudgeTool(commentJudge)
   const parser = createParserAdapter({
     directory: projectDirectory,
     getConfig: () => resolvedParser,
@@ -232,11 +259,12 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
       guard_audit: auditTool,
       guard_judge: judgeTool,
       guard_parse: parseTool,
+      guard_comment_judge: commentJudgeTool,
     },
     event: async ({ event }) => {
       if (event.type !== "session.idle") return
       const sessionID = event.properties?.sessionID ?? ""
-      for (const analyzer of [mutation, judge, parser]) {
+      for (const analyzer of [mutation, judge, parser, commentJudge]) {
         const message = await analyzer.onIdle(sessionID)
         if (message) testGuard.queueNote(message)
       }

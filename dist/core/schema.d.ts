@@ -31,6 +31,22 @@ export declare const TUPLE_OPTIONS_SCHEMA: {
                     readonly type: "integer";
                     readonly minimum: 1;
                 };
+                readonly judge: {
+                    readonly type: "object";
+                    readonly additionalProperties: false;
+                    readonly properties: {
+                        readonly enabled: {
+                            readonly type: "boolean";
+                        };
+                        readonly model: {
+                            readonly type: "string";
+                        };
+                        readonly timeout_ms: {
+                            readonly type: "integer";
+                            readonly minimum: 1;
+                        };
+                    };
+                };
             };
         };
         readonly test_guard: {

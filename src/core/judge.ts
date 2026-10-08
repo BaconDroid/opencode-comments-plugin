@@ -2,8 +2,8 @@
 // in opencode (no provider/auth handling here) through a sandboxed session.
 // Advisory only, fail-open, never blocks.
 
-import { changedTestChanges } from "./ci"
-import type { ExtractedChange } from "./diff"
+import { changedTestChanges, diffChanges } from "./ci"
+import { isCommentLine, isSupportedLanguage, type ExtractedChange } from "./diff"
 import { createAdvisoryTool, createIdleAdvisory, type IdleAdvisoryController } from "./idle-advisory"
 import { PLACEHOLDER_PATTERN } from "../rules/tests/patterns"
 
@@ -113,8 +113,19 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 }
 
 export async function runJudge(changes: ExtractedChange[], config: JudgeConfig, runner: JudgeRunner): Promise<JudgeFinding[]> {
+  return runJudgeWithPrompt(changes, config, runner, buildJudgePrompt)
+}
+
+// Generic entry point: any judge is a prompt builder plus the shared runner and
+// response parser.
+export async function runJudgeWithPrompt(
+  changes: ExtractedChange[],
+  config: JudgeConfig,
+  runner: JudgeRunner,
+  buildPrompt: (changes: ExtractedChange[]) => string,
+): Promise<JudgeFinding[]> {
   if (!config.enabled) return []
-  const prompt = buildJudgePrompt(changes)
+  const prompt = buildPrompt(changes)
   if (prompt.length === 0) return []
 
   try {
@@ -182,6 +193,37 @@ export function createModelJudgeRunner(client: unknown, directory: string): Judg
 
 export type JudgeController = IdleAdvisoryController
 
+// Shared plumbing for a diff judge: select changes, build a prompt, run the
+// model, format the findings. Both the test judge and the comment judge use it.
+interface DiffJudgeOptions {
+  directory: string
+  base?: string
+  getConfig: () => JudgeConfig
+  runner: JudgeRunner
+  selectChanges: (directory: string, base: string) => ExtractedChange[]
+  buildPrompt: (changes: ExtractedChange[]) => string
+  format: (findings: JudgeFinding[]) => string
+  disabledMessage: string
+  unavailableMessage: string
+  emptyMessage: string
+  cooldownMs?: number
+}
+
+export function createDiffJudge(options: DiffJudgeOptions): IdleAdvisoryController {
+  return createIdleAdvisory({
+    isEnabled: () => options.getConfig().enabled,
+    cooldownMs: options.cooldownMs,
+    disabledMessage: options.disabledMessage,
+    unavailableMessage: options.unavailableMessage,
+    emptyMessage: options.emptyMessage,
+    analyze: async () => {
+      const changes = options.selectChanges(options.directory, options.base ?? "HEAD")
+      const findings = await runJudgeWithPrompt(changes, options.getConfig(), options.runner, options.buildPrompt)
+      return findings.length > 0 ? options.format(findings) : null
+    },
+  })
+}
+
 export function createJudge(options: {
   directory: string
   getConfig: () => JudgeConfig
@@ -189,23 +231,95 @@ export function createJudge(options: {
   runner: JudgeRunner
   cooldownMs?: number
 }): JudgeController {
-  return createIdleAdvisory({
-    isEnabled: () => options.getConfig().enabled,
+  return createDiffJudge({
+    directory: options.directory,
+    getConfig: options.getConfig,
+    runner: options.runner,
     cooldownMs: options.cooldownMs,
+    selectChanges: (directory, base) => changedTestChanges(directory, base, options.getTestPatterns()),
+    buildPrompt: buildJudgePrompt,
+    format: formatJudgeFindings,
     disabledMessage: "LLM judge: disabled (set test_guard.judge.enabled).",
     unavailableMessage: "LLM judge: unavailable.",
     emptyMessage: "LLM judge: no findings.",
-    analyze: async () => {
-      const changes = changedTestChanges(options.directory, "HEAD", options.getTestPatterns())
-      const findings = await runJudge(changes, options.getConfig(), options.runner)
-      return findings.length > 0 ? formatJudgeFindings(findings) : null
-    },
   })
 }
 
 export function createGuardJudgeTool(judge: JudgeController) {
   return createAdvisoryTool(
     "Run the opt-in LLM judge over the current test diff. Read-only and advisory; requires test_guard.judge.enabled.",
+    judge,
+  )
+}
+
+// --- Comment relevance judge (opt-in) -------------------------------------
+
+export function buildCommentJudgePrompt(changes: ExtractedChange[]): string {
+  const sections: string[] = []
+  for (const change of changes) {
+    const addedComments = change.addedLines.filter(line => isCommentLine(line, change.language))
+    if (addedComments.length === 0) continue
+    const lines = change.newText.split("\n")
+    const used = new Set<number>()
+    const body: string[] = []
+    for (const comment of addedComments) {
+      const index = lines.findIndex((line, i) => !used.has(i) && line === comment)
+      if (index >= 0) used.add(index)
+      body.push(`+ ${index >= 0 ? index + 1 : 0}: ${comment}`)
+    }
+    sections.push(`--- ${change.filePath}\n${body.join("\n")}`)
+  }
+  if (sections.length === 0) return ""
+
+  return [
+    "Review the following newly added comments and decide whether any should be removed",
+    "because it restates the code, is an agent memo (// now, // changed, // updated),",
+    "a TODO/FIXME without an owner, or commented-out code, rather than explaining WHY",
+    "(business rule, security, performance, regex/math, public API).",
+    "Reply with ONLY a JSON array. Each item:",
+    '{"file": "<path>", "line": <number>, "reason": "<short>", "confidence": "high|medium|low"}.',
+    "If every comment is worth keeping, reply with [].",
+    "",
+    sections.join("\n\n"),
+  ].join("\n")
+}
+
+export function formatCommentJudgeFindings(findings: JudgeFinding[]): string {
+  const lines = findings.map(finding => `- ${finding.file}:${finding.line} ${finding.reason} (${finding.confidence})`)
+  return `Comment relevance judge (advisory, opt-in):\n${lines.join("\n")}`
+}
+
+export async function runCommentJudge(
+  changes: ExtractedChange[],
+  config: JudgeConfig,
+  runner: JudgeRunner,
+): Promise<JudgeFinding[]> {
+  return runJudgeWithPrompt(changes, config, runner, buildCommentJudgePrompt)
+}
+
+export function createCommentJudge(options: {
+  directory: string
+  getConfig: () => JudgeConfig
+  runner: JudgeRunner
+  cooldownMs?: number
+}): JudgeController {
+  return createDiffJudge({
+    directory: options.directory,
+    getConfig: options.getConfig,
+    runner: options.runner,
+    cooldownMs: options.cooldownMs,
+    selectChanges: (directory, base) => diffChanges(directory, base).filter(change => isSupportedLanguage(change.language)),
+    buildPrompt: buildCommentJudgePrompt,
+    format: formatCommentJudgeFindings,
+    disabledMessage: "Comment relevance judge: disabled (set comment_checker.judge.enabled).",
+    unavailableMessage: "Comment relevance judge: unavailable.",
+    emptyMessage: "Comment relevance judge: no findings.",
+  })
+}
+
+export function createGuardCommentJudgeTool(judge: JudgeController) {
+  return createAdvisoryTool(
+    "Run the opt-in comment relevance judge over the current diff. Read-only and advisory; requires comment_checker.judge.enabled.",
     judge,
   )
 }

@@ -1,4 +1,4 @@
-import type { ExtractedChange } from "./diff";
+import { type ExtractedChange } from "./diff";
 import { type IdleAdvisoryController } from "./idle-advisory";
 export declare const DEFAULT_JUDGE_MODEL = "opencode/big-pickle";
 export declare function resolveJudgeModel(configured: string | undefined): string | undefined;
@@ -18,8 +18,23 @@ export declare function buildJudgePrompt(changes: ExtractedChange[]): string;
 export declare function parseJudgeResponse(raw: string): JudgeFinding[];
 export declare function formatJudgeFindings(findings: JudgeFinding[]): string;
 export declare function runJudge(changes: ExtractedChange[], config: JudgeConfig, runner: JudgeRunner): Promise<JudgeFinding[]>;
+export declare function runJudgeWithPrompt(changes: ExtractedChange[], config: JudgeConfig, runner: JudgeRunner, buildPrompt: (changes: ExtractedChange[]) => string): Promise<JudgeFinding[]>;
 export declare function createModelJudgeRunner(client: unknown, directory: string): JudgeRunner;
 export type JudgeController = IdleAdvisoryController;
+interface DiffJudgeOptions {
+    directory: string;
+    base?: string;
+    getConfig: () => JudgeConfig;
+    runner: JudgeRunner;
+    selectChanges: (directory: string, base: string) => ExtractedChange[];
+    buildPrompt: (changes: ExtractedChange[]) => string;
+    format: (findings: JudgeFinding[]) => string;
+    disabledMessage: string;
+    unavailableMessage: string;
+    emptyMessage: string;
+    cooldownMs?: number;
+}
+export declare function createDiffJudge(options: DiffJudgeOptions): IdleAdvisoryController;
 export declare function createJudge(options: {
     directory: string;
     getConfig: () => JudgeConfig;
@@ -32,3 +47,18 @@ export declare function createGuardJudgeTool(judge: JudgeController): {
     args: {};
     execute(args: Record<string, never>, context: import("@opencode-ai/plugin").ToolContext): Promise<string>;
 };
+export declare function buildCommentJudgePrompt(changes: ExtractedChange[]): string;
+export declare function formatCommentJudgeFindings(findings: JudgeFinding[]): string;
+export declare function runCommentJudge(changes: ExtractedChange[], config: JudgeConfig, runner: JudgeRunner): Promise<JudgeFinding[]>;
+export declare function createCommentJudge(options: {
+    directory: string;
+    getConfig: () => JudgeConfig;
+    runner: JudgeRunner;
+    cooldownMs?: number;
+}): JudgeController;
+export declare function createGuardCommentJudgeTool(judge: JudgeController): {
+    description: string;
+    args: {};
+    execute(args: Record<string, never>, context: import("@opencode-ai/plugin").ToolContext): Promise<string>;
+};
+export {};

@@ -2034,10 +2034,10 @@ function withTimeout(promise, timeoutMs) {
     });
   });
 }
-async function runJudge(changes, config, runner) {
+async function runJudgeWithPrompt(changes, config, runner, buildPrompt) {
   if (!config.enabled)
     return [];
-  const prompt = buildJudgePrompt(changes);
+  const prompt = buildPrompt(changes);
   if (prompt.length === 0)
     return [];
   try {
@@ -2090,22 +2090,96 @@ function createModelJudgeRunner(client, directory) {
     }
   };
 }
-function createJudge(options) {
+function createDiffJudge(options) {
   return createIdleAdvisory({
     isEnabled: () => options.getConfig().enabled,
     cooldownMs: options.cooldownMs,
+    disabledMessage: options.disabledMessage,
+    unavailableMessage: options.unavailableMessage,
+    emptyMessage: options.emptyMessage,
+    analyze: async () => {
+      const changes = options.selectChanges(options.directory, options.base ?? "HEAD");
+      const findings = await runJudgeWithPrompt(changes, options.getConfig(), options.runner, options.buildPrompt);
+      return findings.length > 0 ? options.format(findings) : null;
+    }
+  });
+}
+function createJudge(options) {
+  return createDiffJudge({
+    directory: options.directory,
+    getConfig: options.getConfig,
+    runner: options.runner,
+    cooldownMs: options.cooldownMs,
+    selectChanges: (directory, base) => changedTestChanges(directory, base, options.getTestPatterns()),
+    buildPrompt: buildJudgePrompt,
+    format: formatJudgeFindings,
     disabledMessage: "LLM judge: disabled (set test_guard.judge.enabled).",
     unavailableMessage: "LLM judge: unavailable.",
-    emptyMessage: "LLM judge: no findings.",
-    analyze: async () => {
-      const changes = changedTestChanges(options.directory, "HEAD", options.getTestPatterns());
-      const findings = await runJudge(changes, options.getConfig(), options.runner);
-      return findings.length > 0 ? formatJudgeFindings(findings) : null;
-    }
+    emptyMessage: "LLM judge: no findings."
   });
 }
 function createGuardJudgeTool(judge) {
   return createAdvisoryTool("Run the opt-in LLM judge over the current test diff. Read-only and advisory; requires test_guard.judge.enabled.", judge);
+}
+function buildCommentJudgePrompt(changes) {
+  const sections = [];
+  for (const change of changes) {
+    const addedComments = change.addedLines.filter((line) => isCommentLine(line, change.language));
+    if (addedComments.length === 0)
+      continue;
+    const lines = change.newText.split(`
+`);
+    const used = new Set;
+    const body = [];
+    for (const comment of addedComments) {
+      const index = lines.findIndex((line, i) => !used.has(i) && line === comment);
+      if (index >= 0)
+        used.add(index);
+      body.push(`+ ${index >= 0 ? index + 1 : 0}: ${comment}`);
+    }
+    sections.push(`--- ${change.filePath}
+${body.join(`
+`)}`);
+  }
+  if (sections.length === 0)
+    return "";
+  return [
+    "Review the following newly added comments and decide whether any should be removed",
+    "because it restates the code, is an agent memo (// now, // changed, // updated),",
+    "a TODO/FIXME without an owner, or commented-out code, rather than explaining WHY",
+    "(business rule, security, performance, regex/math, public API).",
+    "Reply with ONLY a JSON array. Each item:",
+    '{"file": "<path>", "line": <number>, "reason": "<short>", "confidence": "high|medium|low"}.',
+    "If every comment is worth keeping, reply with [].",
+    "",
+    sections.join(`
+
+`)
+  ].join(`
+`);
+}
+function formatCommentJudgeFindings(findings) {
+  const lines = findings.map((finding) => `- ${finding.file}:${finding.line} ${finding.reason} (${finding.confidence})`);
+  return `Comment relevance judge (advisory, opt-in):
+${lines.join(`
+`)}`;
+}
+function createCommentJudge(options) {
+  return createDiffJudge({
+    directory: options.directory,
+    getConfig: options.getConfig,
+    runner: options.runner,
+    cooldownMs: options.cooldownMs,
+    selectChanges: (directory, base) => diffChanges(directory, base).filter((change) => isSupportedLanguage(change.language)),
+    buildPrompt: buildCommentJudgePrompt,
+    format: formatCommentJudgeFindings,
+    disabledMessage: "Comment relevance judge: disabled (set comment_checker.judge.enabled).",
+    unavailableMessage: "Comment relevance judge: unavailable.",
+    emptyMessage: "Comment relevance judge: no findings."
+  });
+}
+function createGuardCommentJudgeTool(judge) {
+  return createAdvisoryTool("Run the opt-in comment relevance judge over the current diff. Read-only and advisory; requires comment_checker.judge.enabled.", judge);
 }
 
 // src/core/parser-adapter.ts
@@ -2973,6 +3047,12 @@ function resolveConfiguration(config) {
   const tools = resolveOption(asTools, "COMMENT_CHECKER_TOOLS", "tools", inputs);
   resolvedCommentConfig.triggerTools = new Set(tools ?? DEFAULT_TRIGGER_TOOLS);
   resolvedCommentConfig.timeoutMs = resolveOption((value) => asCount(value, 1), "COMMENT_CHECKER_TIMEOUT_MS", "timeout_ms", inputs) ?? DEFAULT_CLI_TIMEOUT_MS;
+  const optionsJudge = asRecord(options?.judge);
+  const configJudge = asRecord(fromConfig?.judge);
+  const judgeInputs = { options: optionsJudge, config: configJudge };
+  resolvedCommentJudge.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, false), "COMMENT_CHECKER_JUDGE_ENABLED", "enabled", judgeInputs) ?? false;
+  resolvedCommentJudge.model = resolveJudgeModel(resolveOption(asString, "COMMENT_CHECKER_JUDGE_MODEL", "model", judgeInputs));
+  resolvedCommentJudge.timeoutMs = resolveOption((value) => asCount(value, 1), "COMMENT_CHECKER_JUDGE_TIMEOUT_MS", "timeout_ms", judgeInputs);
 }
 var resolvedTestGuard = {
   enabled: true,
@@ -2984,6 +3064,7 @@ var resolvedTestGuard = {
 };
 var resolvedMutation = { enabled: false };
 var resolvedJudge = { enabled: false };
+var resolvedCommentJudge = { enabled: false };
 var resolvedParser = { enabled: false };
 function resolveTestGuardConfiguration(config) {
   const options = optionContainer(pluginOptions, "test_guard");
@@ -3056,6 +3137,12 @@ var CommentCheckerPlugin = async (input, options) => {
     runner: createModelJudgeRunner(input.client, projectDirectory)
   });
   const judgeTool = createGuardJudgeTool(judge);
+  const commentJudge = createCommentJudge({
+    directory: projectDirectory,
+    getConfig: () => resolvedCommentJudge,
+    runner: createModelJudgeRunner(input.client, projectDirectory)
+  });
+  const commentJudgeTool = createGuardCommentJudgeTool(commentJudge);
   const parser = createParserAdapter({
     directory: projectDirectory,
     getConfig: () => resolvedParser,
@@ -3072,13 +3159,14 @@ var CommentCheckerPlugin = async (input, options) => {
     tool: {
       guard_audit: auditTool,
       guard_judge: judgeTool,
-      guard_parse: parseTool
+      guard_parse: parseTool,
+      guard_comment_judge: commentJudgeTool
     },
     event: async ({ event }) => {
       if (event.type !== "session.idle")
         return;
       const sessionID = event.properties?.sessionID ?? "";
-      for (const analyzer of [mutation, judge, parser]) {
+      for (const analyzer of [mutation, judge, parser, commentJudge]) {
         const message = await analyzer.onIdle(sessionID);
         if (message)
           testGuard.queueNote(message);
