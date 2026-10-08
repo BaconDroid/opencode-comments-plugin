@@ -228,6 +228,19 @@ test("mutation adapter surfaces survivors on the next tool call", async () => {
   expect(output.output).toContain("Mutation survivors detected")
 })
 
+test("mutation adapter does not rerun within the cooldown", async () => {
+  const logFile = join(dir, "mutation-runs.txt")
+  const guard = guarded(
+    config({
+      mutationEnabled: true,
+      mutationCommand: `printf x >> '${logFile}'; printf '%s' '{"survivors":[{"file":"a.ts","line":1}]}'`,
+    }),
+  )
+  await guard.onIdle("s-cool")
+  await guard.onIdle("s-cool")
+  expect(await Bun.file(logFile).text()).toBe("x")
+})
+
 test("mutation adapter is off by default", async () => {
   const guard = guarded(config())
   await guard.onIdle()
