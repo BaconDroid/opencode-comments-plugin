@@ -82,7 +82,6 @@ async function auditCommand(parsed: ParsedArgs): Promise<number> {
       testCommand: detectTestCommand(process.cwd()),
       checks: {},
       maxWarningsPerFile: 0,
-      mutationEnabled: false,
     }),
   })
   process.stdout.write(`${output}\n`)

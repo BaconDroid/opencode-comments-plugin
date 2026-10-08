@@ -1,4 +1,4 @@
-import { test, expect, beforeEach } from "bun:test"
+import { test, expect, beforeEach, afterEach, setSystemTime } from "bun:test"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -35,6 +35,10 @@ function freshCallID() {
 
 beforeEach(() => {
   counter = 0
+})
+
+afterEach(() => {
+  setSystemTime()
 })
 
 test("warns and appends once for a focused test added by write", async () => {
@@ -281,4 +285,17 @@ test("still surfaces queued notes when the tool is filtered out", async () => {
   const output: Output = { title: "", output: "bash output", metadata: {} }
   await guard.after({ tool: "bash", sessionID: "s", callID: freshCallID() }, output)
   expect(output.output).toContain("queued advisory")
+})
+
+test("does not process a pending call older than the TTL", async () => {
+  const guard = guarded(config())
+  const stale = freshCallID()
+  guard.before({ ...INPUT, callID: stale }, { args: { filePath: "/work/a.test.ts", content: "it.only('a', () => {})\n" } })
+
+  setSystemTime(new Date(Date.now() + 120_000))
+  guard.before({ ...INPUT, callID: freshCallID() }, { args: { filePath: "/work/b.test.ts", content: "const x = 1\n" } })
+
+  const output: Output = { title: "", output: "Wrote file successfully.", metadata: {} }
+  await guard.after({ ...INPUT, callID: stale }, output)
+  expect(output.output).toBe("Wrote file successfully.")
 })
