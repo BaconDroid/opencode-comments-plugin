@@ -561,6 +561,11 @@ test("registers the guard_judge and guard_parse tools", async () => {
   expect(hooks.tool!.guard_parse).toBeDefined()
 })
 
+test("registers the guard_comment_judge tool", async () => {
+  const hooks = await newSession()
+  expect(hooks.tool!.guard_comment_judge).toBeDefined()
+})
+
 test("registers the /guard-audit command without overwriting existing commands", async () => {
   const hooks = await newSession()
   const config: Record<string, unknown> = { command: { build: { template: "build it" } } }

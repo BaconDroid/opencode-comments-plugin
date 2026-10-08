@@ -4,12 +4,16 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { extractChange } from "./diff"
 import {
+  buildCommentJudgePrompt,
   buildJudgePrompt,
+  createCommentJudge,
   createJudge,
   createModelJudgeRunner,
+  formatCommentJudgeFindings,
   formatJudgeFindings,
   parseJudgeResponse,
   resolveJudgeModel,
+  runCommentJudge,
   runJudge,
   type JudgeFinding,
 } from "./judge"
@@ -146,4 +150,46 @@ test("judge controller does nothing when disabled", async () => {
   })
   expect(await judge.onIdle("s1")).toBeNull()
   expect(await judge.analyzeNow()).toContain("disabled")
+})
+
+test("builds a comment judge prompt from added comment lines", () => {
+  const prompt = buildCommentJudgePrompt([change("/work/a.ts", "const a = 1\n", "const a = 1\n// increments a\n")])
+  expect(prompt).toContain("--- /work/a.ts")
+  expect(prompt).toContain("// increments a")
+  expect(prompt).toContain("JSON array")
+})
+
+test("comment judge prompt is empty without added comments", () => {
+  expect(buildCommentJudgePrompt([change("/work/a.ts", "const a = 1\n", "const a = 2\n")])).toBe("")
+})
+
+test("runCommentJudge is disabled by default and parses the runner output", async () => {
+  expect(await runCommentJudge([change("/a.ts", "", "// x\n")], { enabled: false }, async () => "[]")).toEqual([])
+  const runner = async () => '[{"file":"a.ts","line":1,"reason":"restates the code","confidence":"high"}]'
+  const findings = await runCommentJudge([change("/a.ts", "", "// x\n")], { enabled: true }, runner)
+  expect(findings).toHaveLength(1)
+})
+
+test("formats comment judge findings", () => {
+  const findings: JudgeFinding[] = [{ file: "a.ts", line: 1, reason: "restates the code", confidence: "high" }]
+  expect(formatCommentJudgeFindings(findings)).toContain("Comment relevance judge (advisory")
+})
+
+test("comment judge controller runs on idle and on demand", async () => {
+  git(["init"])
+  git(["config", "user.email", "test@example.com"])
+  git(["config", "user.name", "test"])
+  writeFileSync(join(dir, "a.ts"), "const a = 1\n")
+  git(["add", "."])
+  git(["commit", "-m", "init"])
+  writeFileSync(join(dir, "a.ts"), "const a = 1\n// increments a\n")
+
+  const runner = async () => '[{"file":"a.ts","line":2,"reason":"restates the code","confidence":"high"}]'
+  const judge = createCommentJudge({
+    directory: dir,
+    getConfig: () => ({ enabled: true }),
+    runner,
+  })
+  expect(await judge.onIdle("s1")).toContain("restates the code")
+  expect(await judge.analyzeNow()).toContain("restates the code")
 })

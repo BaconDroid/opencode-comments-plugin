@@ -1149,7 +1149,13 @@ function validateCommentChecker(record, path, errors) {
   if (record.tools !== undefined && asTools(record.tools) === undefined) {
     errors.push(`${path}.tools must be a string array or a comma separated string`);
   }
-  rejectUnknown(record, ["custom_prompt", "append_prompt", "max_warnings_per_file", "timeout_ms", "tools"], path, errors);
+  if (record.judge !== undefined) {
+    if (!isRecord(record.judge))
+      errors.push(`${path}.judge must be an object`);
+    else
+      validateJudge(record.judge, `${path}.judge`, errors);
+  }
+  rejectUnknown(record, ["custom_prompt", "append_prompt", "max_warnings_per_file", "timeout_ms", "tools", "judge"], path, errors);
 }
 function validateTestGuard(record, path, errors) {
   if (record.enabled !== undefined && typeof record.enabled !== "boolean")

@@ -111,6 +111,27 @@ Detection is local and deterministic (tree-sitter parsing in the `comment-checke
 
 Directive and shebang handling is heuristic: `biome-ignore`, for example, is currently flagged.
 
+### Comment relevance judge (opt-in)
+
+If `comment_checker.judge.enabled` is set, the plugin reviews the newly added
+comments with `comment_checker.judge.model` (same default as the test judge,
+`opencode/big-pickle`) inside a sandboxed session, on `session.idle` (at most
+once per minute per session) and on demand via the `guard_comment_judge` tool.
+It flags comments that restate the code, agent memos, ownerless TODO/FIXME or
+commented-out code. Advisory only, fail-open, disabled by default. When enabled,
+the added comment lines (not the whole repo) are sent to the configured model.
+
+```json
+{
+  "plugin": [
+    ["opencode-comments-plugin", { "comment_checker": { "judge": { "enabled": true, "model": "opencode/big-pickle" } } }]
+  ]
+}
+```
+
+Env: `COMMENT_CHECKER_JUDGE_ENABLED`, `COMMENT_CHECKER_JUDGE_MODEL`,
+`COMMENT_CHECKER_JUDGE_TIMEOUT_MS`.
+
 ## Test guard
 
 The plugin also ships a deterministic **test guard** that discourages weakening
