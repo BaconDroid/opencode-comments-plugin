@@ -71,7 +71,7 @@ Available options (all under `comment_checker`):
 | `enabled` | boolean | `true` | Disable the comment guard entirely. |
 | `custom_prompt` | string | CLI default | Replaces the warning message. `{{comments}}` is replaced by the detected comments. |
 | `max_warnings_per_file` | number | `0` | Stop warning after N warnings about the same file in one session. `0` = unlimited. |
-| `dedup_window_ms` | number | `0` | Suppress a repeat warning about the same file within this window. `0` = no dedup. |
+| `dedup_window_ms` | number | `30000` | Suppress a repeat warning about the same file within this window. `0` = no dedup. |
 | `tools` | string[] or CSV string | `["write","edit","apply_patch"]` | Which tools trigger the check. |
 | `paths` | string[] or CSV string | unset | Only check files matching these globs. Unset = every file. |
 | `timeout_ms` | number | `5000` | How long to wait for the CLI before ignoring it. |

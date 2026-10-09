@@ -1,7 +1,7 @@
 // Test-guard orchestration: config-driven rule dispatch shared by the
 // `tool.execute.before` (block) and `tool.execute.after` (warn) hooks.
 
-import { APPLY_PATCH_TOOL_NAME } from "../constants"
+import { APPLY_PATCH_TOOL_NAME, DEFAULT_DEDUP_WINDOW_MS } from "../constants"
 import { AnalyzerRegistry } from "./analyzer"
 import { GuardBudget } from "./budget"
 import type { Bypass } from "./bypass"
@@ -100,7 +100,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       if (changes.length > 0) {
         budget.touch(input.sessionID)
         budget.setMaxWarningsPerFile(resolved.maxWarningsPerFile)
-        budget.setDedupWindowMs(resolved.dedupWindowMs ?? 30_000)
+        budget.setDedupWindowMs(resolved.dedupWindowMs ?? DEFAULT_DEDUP_WINDOW_MS)
 
         const findings: Finding[] = []
         const bypassNotes: string[] = []

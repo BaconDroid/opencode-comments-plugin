@@ -208,7 +208,7 @@ test("runs without a prompt when the config has none", async () => {
 
 test("stops warning about a file once max_warnings_per_file is reached", async () => {
   const hooks = await newSession()
-  await hooks.config?.({ comment_checker: { max_warnings_per_file: 2 } })
+  await hooks.config?.({ comment_checker: { max_warnings_per_file: 2, dedup_window_ms: 0 } })
   const session = "session-capped"
 
   for (let i = 0; i < 3; i++) {
@@ -260,7 +260,7 @@ test("reads max_warnings_per_file from the environment when the config cannot ca
 
 test("warns without a limit when max_warnings_per_file is not configured", async () => {
   const hooks = await newSession()
-  await hooks.config?.({})
+  await hooks.config?.({ comment_checker: { dedup_window_ms: 0 } })
 
   for (let i = 0; i < 4; i++) {
     const output = writeOutput("Wrote file successfully.")
@@ -540,7 +540,7 @@ test("does not run the comment check when the comment guard is disabled", async 
   expect(await cliInvocations()).toHaveLength(0)
 })
 
-test("does not dedup comment warnings by default", async () => {
+test("dedups comment warnings by default", async () => {
   const hooks = await newSession({ comment_checker: {} })
   const session = "session-dedup-default"
 
@@ -548,10 +548,10 @@ test("does not dedup comment warnings by default", async () => {
     const output = writeOutput("Wrote file successfully.")
     await hooks["tool.execute.before"]({ tool: "write", sessionID: session, callID: `dedup-default-${i}` }, writeArgs("// explain\n"))
     await hooks["tool.execute.after"]({ tool: "write", sessionID: session, callID: `dedup-default-${i}` }, output)
-    expect(output.output).toContain("COMMENT/DOCSTRING DETECTED")
+    expect(output.output).toBe(i === 0 ? "Wrote file successfully.\n\nCOMMENT/DOCSTRING DETECTED" : "Wrote file successfully.")
   }
 
-  expect(await cliInvocations()).toHaveLength(2)
+  expect(await cliInvocations()).toHaveLength(1)
 })
 
 test("dedups comment warnings when dedup_window_ms is set", async () => {
