@@ -14,7 +14,6 @@ function analyzer(config: Partial<RuleAnalyzerConfig> = {}) {
     enabled: true,
     testPatterns: ["**/*.test.ts"],
     checks: CHECKS,
-    testCommand: null,
     ...config,
   }))
 }

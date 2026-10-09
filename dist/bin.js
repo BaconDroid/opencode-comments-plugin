@@ -1388,7 +1388,6 @@ function createRuleAnalyzer(getConfig) {
         config: {
           enabled: config.enabled,
           testPatterns: config.testPatterns,
-          testCommand: config.testCommand ?? null,
           checks: config.checks,
           maxWarningsPerFile: 0
         }
@@ -1499,10 +1498,10 @@ function runDiffCheck(options) {
   const addedByFile = new Map;
   for (const change of changes)
     addedByFile.set(change.filePath, assertionLines(change.addedLines, change.language));
-  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns, checks, testCommand: null, isTestFile: true }));
+  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns, checks, isTestFile: true }));
   const findings = [];
   for (const change of changes) {
-    const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-check", change, directory });
+    const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-check", change });
     for (const finding of result.findings ?? []) {
       if (finding.rule === "gutted-test" && isMovedTest(change, addedByFile)) {
         continue;
@@ -1936,8 +1935,8 @@ function auditTestFile(file, includeAdvisory) {
     isDelete: false
   });
   const checks = buildRuleChecks(includeAdvisory);
-  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns: [], checks, testCommand: null, isTestFile: true }));
-  const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-audit", change, directory: process.cwd() });
+  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns: [], checks, isTestFile: true }));
+  const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-audit", change });
   const findings = [];
   for (const finding of result.findings ?? []) {
     if (!validExcerpt(finding.excerpt))

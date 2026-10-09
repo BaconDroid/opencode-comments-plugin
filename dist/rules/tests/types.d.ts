@@ -3,7 +3,6 @@ import type { Severity } from "../../core/config";
 export interface TestGuardConfig {
     enabled: boolean;
     testPatterns: string[];
-    testCommand: string | null;
     checks: Record<string, Severity>;
     maxWarningsPerFile: number;
     customPrompt?: string;
@@ -30,4 +29,3 @@ export interface TestRule {
     id: string;
     run(ctx: RuleContext): RuleFinding[];
 }
-export type RuleLevels = Record<string, Severity>;

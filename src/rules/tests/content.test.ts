@@ -45,7 +45,6 @@ function makeContext(change: ExtractedChange, isTestFile = change.filePath.endsW
     config: {
       enabled: true,
       testPatterns: TEST_PATTERNS,
-      testCommand: null,
       checks: {},
       maxWarningsPerFile: 0,
     },

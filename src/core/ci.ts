@@ -119,10 +119,10 @@ export function runDiffCheck(options: DiffCheckOptions): DiffCheckResult {
   const addedByFile = new Map<string, Set<string>>()
   for (const change of changes) addedByFile.set(change.filePath, assertionLines(change.addedLines, change.language))
 
-  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns, checks, testCommand: null, isTestFile: true }))
+  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns, checks, isTestFile: true }))
   const findings: Finding[] = []
   for (const change of changes) {
-    const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-check", change, directory })
+    const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-check", change })
     for (const finding of result.findings ?? []) {
       if (finding.rule === "gutted-test" && isMovedTest(change, addedByFile)) {
         continue
