@@ -4,6 +4,13 @@
 
 export const PENDING_CALL_TTL = 60_000
 
+// What a guard stores for a pending tool call: the raw args plus the on-disk
+// content read before a write. Both guards use this same payload.
+export interface PendingToolCall {
+  args: Record<string, unknown>
+  preimage?: string
+}
+
 interface Entry<T> {
   value: T
   timestamp: number

@@ -1,4 +1,8 @@
 export declare const PENDING_CALL_TTL = 60000;
+export interface PendingToolCall {
+    args: Record<string, unknown>;
+    preimage?: string;
+}
 export declare class PendingCallStore<T> {
     private readonly entries;
     private readonly ttlMs;

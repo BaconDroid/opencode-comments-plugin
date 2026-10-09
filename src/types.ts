@@ -1,16 +1,26 @@
-export interface PendingCall {
-  filePath: string
-  args: Record<string, unknown>
+// Payload of the `tool.execute.before` / `tool.execute.after` hooks, shared by
+// both guards.
+export interface ToolExecuteInput {
   tool: string
   sessionID: string
-  preimage?: string
+  callID: string
 }
 
-export interface PatchFileChange {
-  type?: string
-  filePath?: string
-  movePath?: string
-  patch?: string
+export interface ToolExecuteOutput {
+  title: string
+  output: string
+  metadata: unknown
+}
+
+// Minimal shape of the `permission.ask` hook payload, consumed by the test
+// guard to deny a protected edit.
+export interface PermissionLike {
+  type: string
+  pattern?: string | string[]
+}
+
+export interface PermissionDecision {
+  status: "ask" | "deny" | "allow"
 }
 
 export interface HookInput {

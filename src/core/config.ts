@@ -10,6 +10,17 @@
 
 export type Severity = "off" | "warn" | "block"
 
+// Options shared by both guards, resolved with the env > options > config
+// precedence. Each guard extends it with its own fields.
+export interface GuardBaseConfig {
+  enabled: boolean
+  customPrompt?: string
+  appendPrompt?: string
+  maxWarningsPerFile: number
+  dedupWindowMs?: number
+  triggerTools?: Set<string>
+}
+
 export function optionContainer(value: unknown, key: string): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
   const object = value as Record<string, unknown>

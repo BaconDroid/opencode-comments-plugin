@@ -8,15 +8,16 @@ import { commentHookInput, getCommentCheckerPath, runCommentChecker } from "../.
 import { AnalyzerRegistry, type Analyzer } from "../../core/analyzer"
 import { GuardBudget } from "../../core/budget"
 import { bypassMatchers, collectBypasses, withinAllowWindow, type Bypass } from "../../core/bypass"
+import type { GuardBaseConfig } from "../../core/config"
 import { createDebugLog } from "../../core/debug"
-import { detectLanguage, diffLines, extractPatchChanges, extractToolChange, isCommentLine, readPreimage, readString } from "../../core/diff"
+import { detectLanguage, diffLines, extractPatchChanges, extractToolChange, firstString, isCommentLine, readPreimage, readString } from "../../core/diff"
 import { matchesAnyGlob } from "../../core/glob"
-import { PendingCallStore } from "../../core/pending"
+import { PendingCallStore, type PendingToolCall } from "../../core/pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "../../core/result-pipeline"
 import { isTriggeredTool } from "../../core/triggers"
-import type { HookInput, PendingCall } from "../../types"
+import type { HookInput, ToolExecuteInput, ToolExecuteOutput } from "../../types"
 
-const debugLog = createDebugLog("comment-checker:hook", process.env.COMMENT_CHECKER_DEBUG === "1")
+const debugLog = createDebugLog("comment-guard", process.env.COMMENT_CHECKER_DEBUG === "1")
 
 // Inline/file bypass, mirroring the test guard's `test-guard: allow` /
 // `test-guard-disable-file`. A comment whose added lines are all within
@@ -50,11 +51,7 @@ function commentBypassFooter(filePath: string, notes: Bypass[]): string {
   return renderBypassFooter("Comment guard bypass recorded", notes.map(note => formatBypassNote(filePath, note)))
 }
 
-export interface ResolvedCommentConfig {
-  enabled: boolean
-  customPrompt?: string
-  appendPrompt?: string
-  maxWarningsPerFile: number
+export interface ResolvedCommentConfig extends GuardBaseConfig {
   dedupWindowMs: number
   triggerTools: Set<string>
   paths: string[]
@@ -96,25 +93,13 @@ export function createCommentBinaryAnalyzer(getConfig: () => ResolvedCommentConf
   }
 }
 
-interface BeforeInput {
-  tool: string
-  sessionID: string
-  callID: string
-}
-
-interface AfterOutput {
-  title: string
-  output: string
-  metadata: unknown
-}
-
 export interface CommentGuard {
-  before(input: BeforeInput, output: { args: Record<string, unknown> }): Promise<void>
-  after(input: BeforeInput, output: AfterOutput): Promise<void>
+  before(input: ToolExecuteInput, output: { args: Record<string, unknown> }): Promise<void>
+  after(input: ToolExecuteInput, output: ToolExecuteOutput): Promise<void>
 }
 
 export function createCommentGuard(getConfig: () => ResolvedCommentConfig): CommentGuard {
-  const pendingCalls = new PendingCallStore<PendingCall>()
+  const pendingCalls = new PendingCallStore<PendingToolCall>()
   const budget = new GuardBudget({ dedupWindowMs: 0 })
   const registry = new AnalyzerRegistry()
   registry.register(createCommentBinaryAnalyzer(getConfig))
@@ -169,7 +154,7 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
     }
   }
 
-  async function checkApplyPatch(sessionID: string, output: AfterOutput): Promise<void> {
+  async function checkApplyPatch(sessionID: string, output: ToolExecuteOutput): Promise<void> {
     if (output.output.toLowerCase().startsWith("error")) {
       debugLog("skipping due to tool failure in output")
       return
@@ -190,81 +175,85 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
     }
   }
 
-  async function before(input: BeforeInput, output: { args: Record<string, unknown> }): Promise<void> {
-    const { triggerTools } = getConfig()
-    if (!getConfig().enabled) return
-    const toolLower = input.tool.toLowerCase()
-    if (toolLower === APPLY_PATCH_TOOL_NAME || !isTriggeredTool(triggerTools, toolLower)) {
-      return
+  async function before(input: ToolExecuteInput, output: { args: Record<string, unknown> }): Promise<void> {
+    try {
+      const { triggerTools } = getConfig()
+      if (!getConfig().enabled) return
+      const toolLower = input.tool.toLowerCase()
+      if (toolLower === APPLY_PATCH_TOOL_NAME || !isTriggeredTool(triggerTools, toolLower)) {
+        return
+      }
+
+      pendingCalls.prune()
+      const filePath = firstString(output.args, "filePath", "file_path", "path")
+
+      if (!filePath) {
+        debugLog("no filePath found for tool:", toolLower)
+        return
+      }
+
+      if (!isCheckedPath(filePath, getConfig().paths)) {
+        debugLog("path not in comment_checker.paths; skipping:", filePath)
+        return
+      }
+
+      let preimage: string | undefined
+      if (typeof output.args.content === "string") {
+        preimage = readPreimage(filePath)
+      }
+
+      pendingCalls.set(input.callID, { args: output.args, preimage })
+    } catch (err) {
+      debugLog("before failed (fail-open):", err)
     }
-
-    pendingCalls.prune()
-    const filePath = (output.args.filePath ?? output.args.file_path ?? output.args.path) as string | undefined
-
-    if (!filePath) {
-      debugLog("no filePath found for tool:", toolLower)
-      return
-    }
-
-    if (!isCheckedPath(filePath, getConfig().paths)) {
-      debugLog("path not in comment_checker.paths; skipping:", filePath)
-      return
-    }
-
-    let preimage: string | undefined
-    if (typeof output.args.content === "string") {
-      preimage = readPreimage(filePath)
-    }
-
-    pendingCalls.set(input.callID, {
-      filePath,
-      args: output.args,
-      tool: toolLower,
-      sessionID: input.sessionID,
-      preimage,
-    })
   }
 
-  async function after(input: BeforeInput, output: AfterOutput): Promise<void> {
-    const { triggerTools } = getConfig()
-    if (!getConfig().enabled) return
-    if (input.tool.toLowerCase() === APPLY_PATCH_TOOL_NAME) {
-      if (!isTriggeredTool(triggerTools, APPLY_PATCH_TOOL_NAME)) return
+  async function after(input: ToolExecuteInput, output: ToolExecuteOutput): Promise<void> {
+    try {
+      const { triggerTools } = getConfig()
+      if (!getConfig().enabled) return
+      const toolLower = input.tool.toLowerCase()
+      if (toolLower === APPLY_PATCH_TOOL_NAME) {
+        if (!isTriggeredTool(triggerTools, APPLY_PATCH_TOOL_NAME)) return
+        budget.touch(input.sessionID)
+        await checkApplyPatch(input.sessionID, output)
+        return
+      }
+
+      const pendingCall = pendingCalls.take(input.callID)
+      if (!pendingCall) return
+
       budget.touch(input.sessionID)
-      await checkApplyPatch(input.sessionID, output)
-      return
+
+      const isToolFailure = output.output.toLowerCase().startsWith("error")
+      if (isToolFailure) {
+        debugLog("skipping due to tool failure in output")
+        return
+      }
+
+      const change = extractToolChange(toolLower, pendingCall.args, pendingCall.preimage)
+      if (!change) return
+
+      const filePath = firstString(pendingCall.args, "filePath", "file_path", "path") ?? ""
+      if (
+        toolLower === "write" &&
+        pendingCall.preimage !== undefined &&
+        !hasNewCommentLines(change.oldText, change.newText, filePath)
+      ) {
+        debugLog("no new comment lines in write; skipping")
+        return
+      }
+
+      await reportComments(input.sessionID, toolLower.charAt(0).toUpperCase() + toolLower.slice(1), {
+        file_path: filePath,
+        content: readString(pendingCall.args, "content"),
+        old_string: readString(pendingCall.args, "oldString", "old_string"),
+        new_string: readString(pendingCall.args, "newString", "new_string"),
+        edits: pendingCall.args.edits as Array<{ old_string: string; new_string: string }> | undefined,
+      }, output, { oldText: change.oldText, newText: change.newText })
+    } catch (err) {
+      debugLog("after failed (fail-open):", err)
     }
-
-    const pendingCall = pendingCalls.take(input.callID)
-    if (!pendingCall) return
-
-    budget.touch(input.sessionID)
-
-    const isToolFailure = output.output.toLowerCase().startsWith("error")
-    if (isToolFailure) {
-      debugLog("skipping due to tool failure in output")
-      return
-    }
-
-    const change = extractToolChange(pendingCall.tool, pendingCall.args, pendingCall.preimage)
-    if (!change) return
-
-    if (
-      pendingCall.tool === "write" &&
-      pendingCall.preimage !== undefined &&
-      !hasNewCommentLines(change.oldText, change.newText, pendingCall.filePath)
-    ) {
-      debugLog("no new comment lines in write; skipping")
-      return
-    }
-
-    await reportComments(pendingCall.sessionID, pendingCall.tool.charAt(0).toUpperCase() + pendingCall.tool.slice(1), {
-      file_path: pendingCall.filePath,
-      content: readString(pendingCall.args, "content"),
-      old_string: readString(pendingCall.args, "oldString", "old_string"),
-      new_string: readString(pendingCall.args, "newString", "new_string"),
-      edits: pendingCall.args.edits as Array<{ old_string: string; new_string: string }> | undefined,
-    }, output, { oldText: change.oldText, newText: change.newText })
   }
 
   return { before, after }

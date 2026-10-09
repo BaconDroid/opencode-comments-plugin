@@ -1,4 +1,12 @@
 export type Severity = "off" | "warn" | "block";
+export interface GuardBaseConfig {
+    enabled: boolean;
+    customPrompt?: string;
+    appendPrompt?: string;
+    maxWarningsPerFile: number;
+    dedupWindowMs?: number;
+    triggerTools?: Set<string>;
+}
 export declare function optionContainer(value: unknown, key: string): Record<string, unknown> | undefined;
 export declare function asString(value: unknown): string | undefined;
 export declare function asCount(value: unknown, minimum: number): number | undefined;
