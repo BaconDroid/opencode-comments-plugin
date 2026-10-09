@@ -174,10 +174,10 @@ tests. It reuses the same tuple, under a sibling `test_guard` key:
 }
 ```
 
-Every content rule defaults to `warn`; `off` disables it. The test guard is
-advisory only: it never blocks and never rewrites the file. All internal guard
-errors are swallowed (fail-open), so the guard can never prevent the agent's
-action.
+Deterministic rules default to `warn`, advisory rules to `off`; `off` disables a
+rule. The test guard is advisory only: it never blocks and never rewrites the
+file. All internal guard errors are swallowed (fail-open), so the guard can never
+prevent the agent's action.
 
 | Rule | Signal | Default |
 |---|---|---|

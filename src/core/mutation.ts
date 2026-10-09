@@ -3,7 +3,7 @@
 // Opt-in, fail-open, never destructive.
 
 import { asRecord } from "./config"
-import { createIdleAdvisory, type IdleAdvisoryController } from "./idle-advisory"
+import { createIdleAdvisory, idleMessages, type IdleAdvisoryController } from "./idle-advisory"
 import { runShellCommand } from "./runner"
 
 export interface MutationConfig {
@@ -109,14 +109,12 @@ export function createMutationAdapter(options: {
   cooldownMs?: number
 }): IdleAdvisoryController {
   return createIdleAdvisory({
+    ...idleMessages("Mutation", "set test_guard.mutation.enabled and command", "no survivors"),
     isEnabled: () => {
       const config = options.getConfig()
       return config.enabled && Boolean(config.command)
     },
     cooldownMs: options.cooldownMs,
-    disabledMessage: "Mutation: disabled (set test_guard.mutation.enabled and command).",
-    unavailableMessage: "Mutation: unavailable.",
-    emptyMessage: "Mutation: no survivors.",
     analyze: async () => {
       const config = options.getConfig()
       const run = await runMutationCheck(config.command ?? "", { timeoutMs: config.timeoutMs })

@@ -1959,6 +1959,13 @@ ${body}`;
 
 // src/core/idle-advisory.ts
 import { tool } from "@opencode-ai/plugin";
+function idleMessages(label, hint, empty) {
+  return {
+    disabledMessage: `${label}: disabled (${hint}).`,
+    unavailableMessage: `${label}: unavailable.`,
+    emptyMessage: `${label}: ${empty}.`
+  };
+}
 function createIdleAdvisory(options) {
   const cooldownMs = options.cooldownMs ?? 60000;
   const lastRun = new Map;
@@ -2238,9 +2245,7 @@ function createJudge(options) {
     selectChanges: (directory, base) => changedTestChanges(directory, base, options.getTestPatterns()),
     buildPrompt: buildJudgePrompt,
     format: formatJudgeFindings,
-    disabledMessage: "LLM judge: disabled (set test_guard.judge.enabled).",
-    unavailableMessage: "LLM judge: unavailable.",
-    emptyMessage: "LLM judge: no findings."
+    ...idleMessages("LLM judge", "set test_guard.judge.enabled", "no findings")
   });
 }
 function createGuardJudgeTool(judge) {
@@ -2298,9 +2303,7 @@ function createCommentJudge(options) {
     selectChanges: (directory, base) => diffChanges(directory, base).filter((change) => isSupportedLanguage(change.language)),
     buildPrompt: buildCommentJudgePrompt,
     format: formatCommentJudgeFindings,
-    disabledMessage: "Comment relevance judge: disabled (set comment_checker.judge.enabled).",
-    unavailableMessage: "Comment relevance judge: unavailable.",
-    emptyMessage: "Comment relevance judge: no findings."
+    ...idleMessages("Comment relevance judge", "set comment_checker.judge.enabled", "no findings")
   });
 }
 function createGuardCommentJudgeTool(judge) {
@@ -2393,11 +2396,9 @@ async function runParserAdapter(changes, config, run = defaultRun) {
 }
 function createParserAdapter(options) {
   return createIdleAdvisory({
+    ...idleMessages("External parser", "set test_guard.parser.enabled", "no findings"),
     isEnabled: () => options.getConfig().enabled,
     cooldownMs: options.cooldownMs,
-    disabledMessage: "External parser: disabled (set test_guard.parser.enabled).",
-    unavailableMessage: "External parser: unavailable.",
-    emptyMessage: "External parser: no findings.",
     analyze: async () => {
       const changes = changedTestChanges(options.directory, "HEAD", options.getTestPatterns());
       const findings = await runParserAdapter(changes, options.getConfig(), options.run);
@@ -2489,14 +2490,12 @@ Add or strengthen tests to kill them.`;
 }
 function createMutationAdapter(options) {
   return createIdleAdvisory({
+    ...idleMessages("Mutation", "set test_guard.mutation.enabled and command", "no survivors"),
     isEnabled: () => {
       const config = options.getConfig();
       return config.enabled && Boolean(config.command);
     },
     cooldownMs: options.cooldownMs,
-    disabledMessage: "Mutation: disabled (set test_guard.mutation.enabled and command).",
-    unavailableMessage: "Mutation: unavailable.",
-    emptyMessage: "Mutation: no survivors.",
     analyze: async () => {
       const config = options.getConfig();
       const run = await runMutationCheck(config.command ?? "", { timeoutMs: config.timeoutMs });

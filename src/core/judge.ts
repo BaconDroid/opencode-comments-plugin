@@ -4,7 +4,7 @@
 
 import { changedTestChanges, diffChanges } from "./ci"
 import { isCommentLine, isSupportedLanguage, type ExtractedChange } from "./diff"
-import { createAdvisoryTool, createIdleAdvisory, type IdleAdvisoryController } from "./idle-advisory"
+import { createAdvisoryTool, createIdleAdvisory, idleMessages, type IdleAdvisoryController } from "./idle-advisory"
 import { PLACEHOLDER_PATTERN } from "../rules/tests/patterns"
 
 // Free OpenCode Zen model (id `opencode/big-pickle`), used when no judge model
@@ -239,9 +239,7 @@ export function createJudge(options: {
     selectChanges: (directory, base) => changedTestChanges(directory, base, options.getTestPatterns()),
     buildPrompt: buildJudgePrompt,
     format: formatJudgeFindings,
-    disabledMessage: "LLM judge: disabled (set test_guard.judge.enabled).",
-    unavailableMessage: "LLM judge: unavailable.",
-    emptyMessage: "LLM judge: no findings.",
+    ...idleMessages("LLM judge", "set test_guard.judge.enabled", "no findings"),
   })
 }
 
@@ -311,9 +309,7 @@ export function createCommentJudge(options: {
     selectChanges: (directory, base) => diffChanges(directory, base).filter(change => isSupportedLanguage(change.language)),
     buildPrompt: buildCommentJudgePrompt,
     format: formatCommentJudgeFindings,
-    disabledMessage: "Comment relevance judge: disabled (set comment_checker.judge.enabled).",
-    unavailableMessage: "Comment relevance judge: unavailable.",
-    emptyMessage: "Comment relevance judge: no findings.",
+    ...idleMessages("Comment relevance judge", "set comment_checker.judge.enabled", "no findings"),
   })
 }
 
