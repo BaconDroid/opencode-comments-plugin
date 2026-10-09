@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { homedir } from "node:os"
 import { createRequire } from "node:module"
 import { createDebugLog } from "./core/debug"
+import { COMMENT_CHECKER_BINARY_NAME } from "./constants"
 
 const debugLog = createDebugLog("comment-checker:downloader", process.env.COMMENT_CHECKER_DEBUG === "1")
 
@@ -32,13 +33,9 @@ export function getCacheDir(): string {
   return join(base, "opencode-comments-plugin", "bin")
 }
 
-export function getBinaryName(): string {
-  return process.platform === "win32" ? "comment-checker.exe" : "comment-checker"
-}
-
 export function getCachedBinaryPath(version?: string | null): string | null {
   if (!version) return null
-  const binaryPath = join(getCacheDir(), version, getBinaryName())
+  const binaryPath = join(getCacheDir(), version, COMMENT_CHECKER_BINARY_NAME)
   return existsSync(binaryPath) ? binaryPath : null
 }
 
@@ -185,7 +182,7 @@ export async function downloadCommentChecker(versionOverride?: string): Promise<
   }
 
   const cacheDir = join(getCacheDir(), version)
-  const binaryName = getBinaryName()
+  const binaryName = COMMENT_CHECKER_BINARY_NAME
   const binaryPath = join(cacheDir, binaryName)
 
   if (existsSync(binaryPath)) {

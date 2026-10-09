@@ -10,7 +10,7 @@ import { GuardBudget } from "../../core/budget"
 import { bypassMatchers, collectBypasses, withinAllowWindow, type Bypass } from "../../core/bypass"
 import type { GuardBaseConfig } from "../../core/config"
 import { createDebugLog } from "../../core/debug"
-import { detectLanguage, diffLines, extractPatchChanges, extractToolChange, firstString, isCommentLine, readPreimage, readString } from "../../core/diff"
+import { detectLanguage, diffLines, extractPatchChanges, extractToolChange, firstString, isCommentLine, readFileIfExists, readString } from "../../core/diff"
 import { appendGuardMessage } from "../../core/feedback"
 import { matchesAnyGlob } from "../../core/glob"
 import { PendingCallStore, type PendingToolCall } from "../../core/pending"
@@ -196,7 +196,7 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
 
       let preimage: string | undefined
       if (typeof output.args.content === "string") {
-        preimage = readPreimage(filePath)
+        preimage = readFileIfExists(filePath)
       }
 
       pendingCalls.set(input.callID, { args: output.args, preimage })

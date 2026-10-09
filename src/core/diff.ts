@@ -239,9 +239,10 @@ export function firstString(record: Record<string, unknown>, ...keys: string[]):
   return stringValue(record, keys, true)
 }
 
-// Reads the on-disk content before a write, used by both guards so only net-new
-// lines are candidates. An unreadable or missing file is not fatal.
-export function readPreimage(filePath: string): string | undefined {
+// Reads a file's content, or undefined when it is missing or unreadable. Used
+// for the pre-write content (so only net-new lines are candidates) and for
+// config detection. Never fatal.
+export function readFileIfExists(filePath: string): string | undefined {
   try {
     return existsSync(filePath) ? readFileSync(filePath, "utf8") : undefined
   } catch {

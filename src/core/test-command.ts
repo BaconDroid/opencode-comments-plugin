@@ -1,8 +1,8 @@
 // Test-command detection (plan section 7). The guard never runs the detected
 // command; it only reports it in audit output. `test_command` overrides it.
 
-import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import { readFileIfExists } from "./diff"
 
 const CANDIDATES: Array<{ file: string; contains?: string; command: string }> = [
   { file: "pytest.ini", command: "pytest" },
@@ -14,16 +14,8 @@ const CANDIDATES: Array<{ file: string; contains?: string; command: string }> = 
   { file: "build.gradle.kts", command: "gradle test" },
 ]
 
-function readIfExists(filePath: string): string | undefined {
-  try {
-    return existsSync(filePath) ? readFileSync(filePath, "utf8") : undefined
-  } catch {
-    return undefined
-  }
-}
-
 export function detectTestCommand(directory: string): string | null {
-  const packageJson = readIfExists(join(directory, "package.json"))
+  const packageJson = readFileIfExists(join(directory, "package.json"))
   if (packageJson) {
     try {
       const parsed = JSON.parse(packageJson) as { scripts?: Record<string, unknown> }
@@ -37,7 +29,7 @@ export function detectTestCommand(directory: string): string | null {
   }
 
   for (const candidate of CANDIDATES) {
-    const content = readIfExists(join(directory, candidate.file))
+    const content = readFileIfExists(join(directory, candidate.file))
     if (content === undefined) continue
     if (candidate.contains && !content.includes(candidate.contains)) continue
     return candidate.command

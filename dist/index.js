@@ -5,6 +5,7 @@ var APPLY_PATCH_TOOL_NAME = "apply_patch";
 var DEFAULT_TRIGGER_TOOLS = ["write", "edit", "apply_patch"];
 var DEFAULT_CLI_TIMEOUT_MS = 5000;
 var DEFAULT_DEDUP_WINDOW_MS = 30000;
+var COMMENT_CHECKER_BINARY_NAME = process.platform === "win32" ? "comment-checker.exe" : "comment-checker";
 
 // src/cli.ts
 import { createRequire as createRequire2 } from "module";
@@ -47,13 +48,10 @@ function getCacheDir() {
   const base = xdgCache || join(homedir(), ".cache");
   return join(base, "opencode-comments-plugin", "bin");
 }
-function getBinaryName() {
-  return process.platform === "win32" ? "comment-checker.exe" : "comment-checker";
-}
 function getCachedBinaryPath(version) {
   if (!version)
     return null;
-  const binaryPath = join(getCacheDir(), version, getBinaryName());
+  const binaryPath = join(getCacheDir(), version, COMMENT_CHECKER_BINARY_NAME);
   return existsSync(binaryPath) ? binaryPath : null;
 }
 function getCommentCheckerVersion() {
@@ -177,7 +175,7 @@ async function downloadCommentChecker(versionOverride) {
     return null;
   }
   const cacheDir = join(getCacheDir(), version);
-  const binaryName = getBinaryName();
+  const binaryName = COMMENT_CHECKER_BINARY_NAME;
   const binaryPath = join(cacheDir, binaryName);
   if (existsSync(binaryPath)) {
     debugLog("Binary already cached at:", binaryPath);
@@ -288,11 +286,8 @@ function commentHookInput(options) {
     tool_input: options.toolInput
   };
 }
-function getBinaryName2() {
-  return process.platform === "win32" ? "comment-checker.exe" : "comment-checker";
-}
 function findCommentCheckerPathSync() {
-  const binaryName = getBinaryName2();
+  const binaryName = COMMENT_CHECKER_BINARY_NAME;
   const version = getPreferredCommentCheckerVersionSync();
   if (!version) {
     debugLog2("cannot resolve comment-checker version; comment checking disabled");
@@ -774,7 +769,7 @@ function readString(record, ...keys) {
 function firstString(record, ...keys) {
   return stringValue(record, keys, true);
 }
-function readPreimage(filePath) {
+function readFileIfExists(filePath) {
   try {
     return existsSync3(filePath) ? readFileSync2(filePath, "utf8") : undefined;
   } catch {
@@ -1831,7 +1826,7 @@ function createTestGuard(getResolved) {
       let preimage;
       const filePath = firstString(args, "filePath", "file_path", "path");
       if (toolLower !== APPLY_PATCH_TOOL_NAME && filePath && typeof args.content === "string") {
-        preimage = readPreimage(filePath);
+        preimage = readFileIfExists(filePath);
       }
       pending.set(input.callID, { args, preimage });
     } catch (err) {
@@ -2640,7 +2635,7 @@ function createCommentGuard(getConfig) {
       }
       let preimage;
       if (typeof output.args.content === "string") {
-        preimage = readPreimage(filePath);
+        preimage = readFileIfExists(filePath);
       }
       pendingCalls.set(input.callID, { args: output.args, preimage });
     } catch (err) {
@@ -2692,7 +2687,6 @@ function createCommentGuard(getConfig) {
 }
 
 // src/core/test-command.ts
-import { existsSync as existsSync6, readFileSync as readFileSync4 } from "fs";
 import { join as join4 } from "path";
 var CANDIDATES = [
   { file: "pytest.ini", command: "pytest" },
@@ -2703,15 +2697,8 @@ var CANDIDATES = [
   { file: "build.gradle", command: "gradle test" },
   { file: "build.gradle.kts", command: "gradle test" }
 ];
-function readIfExists(filePath) {
-  try {
-    return existsSync6(filePath) ? readFileSync4(filePath, "utf8") : undefined;
-  } catch {
-    return;
-  }
-}
 function detectTestCommand(directory) {
-  const packageJson = readIfExists(join4(directory, "package.json"));
+  const packageJson = readFileIfExists(join4(directory, "package.json"));
   if (packageJson) {
     try {
       const parsed = JSON.parse(packageJson);
@@ -2722,7 +2709,7 @@ function detectTestCommand(directory) {
     } catch {}
   }
   for (const candidate of CANDIDATES) {
-    const content = readIfExists(join4(directory, candidate.file));
+    const content = readFileIfExists(join4(directory, candidate.file));
     if (content === undefined)
       continue;
     if (candidate.contains && !content.includes(candidate.contains))
@@ -2734,7 +2721,7 @@ function detectTestCommand(directory) {
 
 // src/audit.ts
 import { tool as tool2 } from "@opencode-ai/plugin";
-import { readFileSync as readFileSync5, readdirSync as readdirSync2, statSync } from "fs";
+import { readFileSync as readFileSync4, readdirSync as readdirSync2, statSync } from "fs";
 import { isAbsolute as isAbsolute2, join as join5, relative as relative2 } from "path";
 var EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "build", "vendor", ".cache", "coverage"]);
 var SECRET_PATTERNS = [/(?:^|\/)\.env(?:\.|$)/, /\.pem$/, /\.key$/, /(?:^|\/)id_(?:rsa|ed25519)$/, /\.p12$/];
@@ -2889,7 +2876,7 @@ function auditTestFile(file, includeAdvisory) {
 }
 function readText(filePath) {
   try {
-    return readFileSync5(filePath, "utf8");
+    return readFileSync4(filePath, "utf8");
   } catch {
     return;
   }

@@ -1,5 +1,4 @@
 export declare function getCacheDir(): string;
-export declare function getBinaryName(): string;
 export declare function getCachedBinaryPath(version?: string | null): string | null;
 export declare function getCommentCheckerVersion(): string | null;
 export declare function parseLatestTag(location: string | null): string | null;

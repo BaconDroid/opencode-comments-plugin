@@ -7,7 +7,7 @@ import { GuardBudget } from "./budget"
 import type { Bypass } from "./bypass"
 import type { GuardBaseConfig, Severity } from "./config"
 import { createDebugLog } from "./debug"
-import { extractPatchChanges, extractToolChange, firstString, readPreimage, type ExtractedChange } from "./diff"
+import { extractPatchChanges, extractToolChange, firstString, readFileIfExists, type ExtractedChange } from "./diff"
 import { appendFeedback, type Finding } from "./feedback"
 import { PendingCallStore, type PendingToolCall } from "./pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "./result-pipeline"
@@ -64,7 +64,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       let preimage: string | undefined
       const filePath = firstString(args, "filePath", "file_path", "path")
       if (toolLower !== APPLY_PATCH_TOOL_NAME && filePath && typeof args.content === "string") {
-        preimage = readPreimage(filePath)
+        preimage = readFileIfExists(filePath)
       }
       pending.set(input.callID, { args, preimage })
     } catch (err) {
