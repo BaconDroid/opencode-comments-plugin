@@ -2068,6 +2068,24 @@ function diffChanges(directory, base) {
   return changes;
 }
 
+// src/core/json.ts
+function sliceBetween(raw, open, close) {
+  const start = raw.indexOf(open);
+  const end = raw.lastIndexOf(close);
+  return start >= 0 && end > start ? raw.slice(start, end + 1) : undefined;
+}
+function tryParseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return;
+  }
+}
+function parseJsonSlice(raw, open, close) {
+  const slice = sliceBetween(raw, open, close);
+  return slice === undefined ? undefined : tryParseJson(slice);
+}
+
 // src/core/judge.ts
 var DEFAULT_JUDGE_MODEL = "opencode/big-pickle";
 function resolveJudgeModel(configured) {
@@ -2107,16 +2125,7 @@ ${added}`);
 `);
 }
 function parseJudgeResponse(raw) {
-  const start = raw.indexOf("[");
-  const end = raw.lastIndexOf("]");
-  if (start < 0 || end <= start)
-    return [];
-  let parsed;
-  try {
-    parsed = JSON.parse(raw.slice(start, end + 1));
-  } catch {
-    return [];
-  }
+  const parsed = parseJsonSlice(raw, "[", "]");
   if (!Array.isArray(parsed))
     return [];
   const findings = [];
@@ -2141,11 +2150,13 @@ function parseJudgeResponse(raw) {
   }
   return findings;
 }
+function judgeFindingLines(findings) {
+  return findings.map((finding) => `- ${finding.file}:${finding.line} ${finding.reason} (${finding.confidence})`).join(`
+`);
+}
 function formatJudgeFindings(findings) {
-  const lines = findings.map((finding) => `- ${finding.file}:${finding.line} ${finding.reason} (${finding.confidence})`);
   return `LLM judge (advisory, opt-in):
-${lines.join(`
-`)}`;
+${judgeFindingLines(findings)}`;
 }
 function withTimeout(promise, timeoutMs) {
   return new Promise((resolve, reject) => {
@@ -2282,10 +2293,8 @@ ${body.join(`
 `);
 }
 function formatCommentJudgeFindings(findings) {
-  const lines = findings.map((finding) => `- ${finding.file}:${finding.line} ${finding.reason} (${finding.confidence})`);
   return `Comment relevance judge (advisory, opt-in):
-${lines.join(`
-`)}`;
+${judgeFindingLines(findings)}`;
 }
 function createCommentJudge(options) {
   return createDiffJudge({
@@ -2320,25 +2329,16 @@ function buildParserPayload(changes) {
   return JSON.stringify({ files });
 }
 function parseParserFindings(raw) {
-  const start = raw.indexOf("{");
-  const end = raw.lastIndexOf("}");
+  const objectSlice = sliceBetween(raw, "{", "}");
   let parsed;
-  if (start >= 0 && end > start) {
-    try {
-      parsed = JSON.parse(raw.slice(start, end + 1));
-    } catch {
+  if (objectSlice !== undefined) {
+    parsed = tryParseJson(objectSlice);
+    if (parsed === undefined)
       return [];
-    }
   } else {
-    const arrayStart = raw.indexOf("[");
-    const arrayEnd = raw.lastIndexOf("]");
-    if (arrayStart < 0 || arrayEnd <= arrayStart)
+    parsed = parseJsonSlice(raw, "[", "]");
+    if (parsed === undefined)
       return [];
-    try {
-      parsed = JSON.parse(raw.slice(arrayStart, arrayEnd + 1));
-    } catch {
-      return [];
-    }
   }
   const items = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray(parsed.findings) ? parsed.findings : [];
   const findings = [];

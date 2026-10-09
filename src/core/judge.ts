@@ -5,6 +5,7 @@
 import { changedTestChanges, diffChanges } from "./ci"
 import { isCommentLine, isSupportedLanguage, type ExtractedChange } from "./diff"
 import { createAdvisoryTool, createIdleAdvisory, idleMessages, type IdleAdvisoryController } from "./idle-advisory"
+import { parseJsonSlice } from "./json"
 import { PLACEHOLDER_PATTERN } from "../rules/tests/patterns"
 
 // Free OpenCode Zen model (id `opencode/big-pickle`), used when no judge model
@@ -60,16 +61,7 @@ export function buildJudgePrompt(changes: ExtractedChange[]): string {
 }
 
 export function parseJudgeResponse(raw: string): JudgeFinding[] {
-  const start = raw.indexOf("[")
-  const end = raw.lastIndexOf("]")
-  if (start < 0 || end <= start) return []
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw.slice(start, end + 1))
-  } catch {
-    return []
-  }
+  const parsed = parseJsonSlice(raw, "[", "]")
   if (!Array.isArray(parsed)) return []
 
   const findings: JudgeFinding[] = []
@@ -91,9 +83,12 @@ export function parseJudgeResponse(raw: string): JudgeFinding[] {
   return findings
 }
 
+function judgeFindingLines(findings: JudgeFinding[]): string {
+  return findings.map(finding => `- ${finding.file}:${finding.line} ${finding.reason} (${finding.confidence})`).join("\n")
+}
+
 export function formatJudgeFindings(findings: JudgeFinding[]): string {
-  const lines = findings.map(finding => `- ${finding.file}:${finding.line} ${finding.reason} (${finding.confidence})`)
-  return `LLM judge (advisory, opt-in):\n${lines.join("\n")}`
+  return `LLM judge (advisory, opt-in):\n${judgeFindingLines(findings)}`
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -283,8 +278,7 @@ export function buildCommentJudgePrompt(changes: ExtractedChange[]): string {
 }
 
 export function formatCommentJudgeFindings(findings: JudgeFinding[]): string {
-  const lines = findings.map(finding => `- ${finding.file}:${finding.line} ${finding.reason} (${finding.confidence})`)
-  return `Comment relevance judge (advisory, opt-in):\n${lines.join("\n")}`
+  return `Comment relevance judge (advisory, opt-in):\n${judgeFindingLines(findings)}`
 }
 
 export async function runCommentJudge(
