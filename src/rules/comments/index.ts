@@ -101,7 +101,7 @@ export interface CommentGuard {
 
 export function createCommentGuard(getConfig: () => ResolvedCommentConfig): CommentGuard {
   const pendingCalls = new PendingCallStore<PendingToolCall>()
-  const budget = new GuardBudget({ dedupWindowMs: 0 })
+  const budget = new GuardBudget()
   const registry = new AnalyzerRegistry()
   registry.register(createCommentBinaryAnalyzer(getConfig))
 

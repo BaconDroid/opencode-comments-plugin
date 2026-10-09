@@ -4,6 +4,8 @@
 // `DEDUP_WINDOW_MS = 30_000`) and pending-calls TTL (`PENDING_CALL_TTL =
 // 60_000`). Reimplemented, zero dependency.
 
+import { DEFAULT_DEDUP_WINDOW_MS } from "../constants"
+
 export interface BudgetOptions {
   dedupWindowMs?: number
   ttlMs?: number
@@ -23,7 +25,7 @@ export class GuardBudget {
   private readonly perFile = new Map<string, Counter>()
 
   constructor(options: BudgetOptions = {}) {
-    this.dedupWindowMs = options.dedupWindowMs ?? 30_000
+    this.dedupWindowMs = options.dedupWindowMs ?? DEFAULT_DEDUP_WINDOW_MS
     this.ttlMs = options.ttlMs ?? 60_000
     this.maxWarningsPerFile = options.maxWarningsPerFile ?? 0
   }

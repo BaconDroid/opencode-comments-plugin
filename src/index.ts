@@ -1,5 +1,5 @@
 import type { Plugin } from "@opencode-ai/plugin"
-import { DEFAULT_CLI_TIMEOUT_MS, DEFAULT_TRIGGER_TOOLS } from "./constants"
+import { DEFAULT_CLI_TIMEOUT_MS, DEFAULT_DEDUP_WINDOW_MS, DEFAULT_TRIGGER_TOOLS } from "./constants"
 import { startBackgroundInit } from "./cli"
 import {
   asBoolean,
@@ -85,13 +85,8 @@ function resolveCommandAdapter(
 }
 
 // Fields shared by both guards, resolved with the env > options > config
-// precedence. `dedupWindowDefault` is the only per-guard difference.
-function resolveGuardBase(
-  target: GuardBaseConfig,
-  envPrefix: string,
-  inputs: ResolveInputs,
-  dedupWindowDefault: number,
-): void {
+// precedence.
+function resolveGuardBase(target: GuardBaseConfig, envPrefix: string, inputs: ResolveInputs): void {
   target.enabled =
     resolveOption(
       value => (value === undefined ? undefined : asBoolean(value, true)),
@@ -104,7 +99,8 @@ function resolveGuardBase(
   target.maxWarningsPerFile =
     resolveOption(value => asCount(value, 1), `${envPrefix}_MAX_WARNINGS_PER_FILE`, "max_warnings_per_file", inputs) ?? 0
   target.dedupWindowMs =
-    resolveOption(value => asCount(value, 0), `${envPrefix}_DEDUP_WINDOW_MS`, "dedup_window_ms", inputs) ?? dedupWindowDefault
+    resolveOption(value => asCount(value, 0), `${envPrefix}_DEDUP_WINDOW_MS`, "dedup_window_ms", inputs) ??
+    DEFAULT_DEDUP_WINDOW_MS
   target.triggerTools = new Set(resolveOption(asTools, `${envPrefix}_TOOLS`, "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS)
 }
 
@@ -113,7 +109,7 @@ function resolveConfiguration(config?: unknown): void {
   const fromConfig = optionContainer(config, "comment_checker")
   const inputs = { options, config: fromConfig }
 
-  resolveGuardBase(resolvedCommentConfig, "COMMENT_CHECKER", inputs, 0)
+  resolveGuardBase(resolvedCommentConfig, "COMMENT_CHECKER", inputs)
 
   resolvedCommentConfig.paths = resolveOption(asPatterns, "COMMENT_CHECKER_PATHS", "paths", inputs) ?? []
   resolvedCommentConfig.timeoutMs =
@@ -142,7 +138,7 @@ function resolveTestGuardConfiguration(config?: unknown): void {
   const fromConfig = optionContainer(config, "test_guard")
   const inputs = { options, config: fromConfig }
 
-  resolveGuardBase(resolvedTestGuard, "TEST_GUARD", inputs, 30_000)
+  resolveGuardBase(resolvedTestGuard, "TEST_GUARD", inputs)
 
   resolvedTestGuard.testPatterns =
     resolveOption(asPatterns, "TEST_GUARD_TEST_PATTERNS", "test_patterns", inputs) ?? [...DEFAULT_TEST_PATTERNS]

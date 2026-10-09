@@ -4,6 +4,7 @@ var COMMENT_CHECKER_EVENT = "PostToolUse";
 var APPLY_PATCH_TOOL_NAME = "apply_patch";
 var DEFAULT_TRIGGER_TOOLS = ["write", "edit", "apply_patch"];
 var DEFAULT_CLI_TIMEOUT_MS = 5000;
+var DEFAULT_DEDUP_WINDOW_MS = 30000;
 
 // src/cli.ts
 import { createRequire as createRequire2 } from "module";
@@ -513,7 +514,7 @@ class GuardBudget {
   seen = new Map;
   perFile = new Map;
   constructor(options = {}) {
-    this.dedupWindowMs = options.dedupWindowMs ?? 30000;
+    this.dedupWindowMs = options.dedupWindowMs ?? DEFAULT_DEDUP_WINDOW_MS;
     this.ttlMs = options.ttlMs ?? 60000;
     this.maxWarningsPerFile = options.maxWarningsPerFile ?? 0;
   }
@@ -1865,7 +1866,7 @@ function createTestGuard(getResolved) {
       if (changes.length > 0) {
         budget.touch(input.sessionID);
         budget.setMaxWarningsPerFile(resolved.maxWarningsPerFile);
-        budget.setDedupWindowMs(resolved.dedupWindowMs ?? 30000);
+        budget.setDedupWindowMs(resolved.dedupWindowMs ?? DEFAULT_DEDUP_WINDOW_MS);
         const findings = [];
         const bypassNotes = [];
         for (const change of changes) {
@@ -2564,7 +2565,7 @@ function createCommentBinaryAnalyzer(getConfig) {
 }
 function createCommentGuard(getConfig) {
   const pendingCalls = new PendingCallStore;
-  const budget = new GuardBudget({ dedupWindowMs: 0 });
+  const budget = new GuardBudget;
   const registry = new AnalyzerRegistry;
   registry.register(createCommentBinaryAnalyzer(getConfig));
   function hasNewCommentLines(preimage, content, filePath) {
@@ -3110,19 +3111,19 @@ function resolveCommandAdapter(target, envPrefix, inputs) {
   target.command = resolveOption(asString, `${envPrefix}_COMMAND`, "command", inputs);
   target.timeoutMs = resolveOption((value) => asCount(value, 1), `${envPrefix}_TIMEOUT_MS`, "timeout_ms", inputs);
 }
-function resolveGuardBase(target, envPrefix, inputs, dedupWindowDefault) {
+function resolveGuardBase(target, envPrefix, inputs) {
   target.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, true), `${envPrefix}_ENABLED`, "enabled", inputs) ?? true;
   target.customPrompt = resolveOption(asString, `${envPrefix}_CUSTOM_PROMPT`, "custom_prompt", inputs);
   target.appendPrompt = resolveOption(asString, `${envPrefix}_APPEND_PROMPT`, "append_prompt", inputs);
   target.maxWarningsPerFile = resolveOption((value) => asCount(value, 1), `${envPrefix}_MAX_WARNINGS_PER_FILE`, "max_warnings_per_file", inputs) ?? 0;
-  target.dedupWindowMs = resolveOption((value) => asCount(value, 0), `${envPrefix}_DEDUP_WINDOW_MS`, "dedup_window_ms", inputs) ?? dedupWindowDefault;
+  target.dedupWindowMs = resolveOption((value) => asCount(value, 0), `${envPrefix}_DEDUP_WINDOW_MS`, "dedup_window_ms", inputs) ?? DEFAULT_DEDUP_WINDOW_MS;
   target.triggerTools = new Set(resolveOption(asTools, `${envPrefix}_TOOLS`, "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS);
 }
 function resolveConfiguration(config) {
   const options = optionContainer(pluginOptions, "comment_checker");
   const fromConfig = optionContainer(config, "comment_checker");
   const inputs = { options, config: fromConfig };
-  resolveGuardBase(resolvedCommentConfig, "COMMENT_CHECKER", inputs, 0);
+  resolveGuardBase(resolvedCommentConfig, "COMMENT_CHECKER", inputs);
   resolvedCommentConfig.paths = resolveOption(asPatterns, "COMMENT_CHECKER_PATHS", "paths", inputs) ?? [];
   resolvedCommentConfig.timeoutMs = resolveOption((value) => asCount(value, 1), "COMMENT_CHECKER_TIMEOUT_MS", "timeout_ms", inputs) ?? DEFAULT_CLI_TIMEOUT_MS;
   resolveJudge(resolvedCommentJudge, "COMMENT_CHECKER_JUDGE", subConfigInputs(options, fromConfig, "judge"));
@@ -3143,7 +3144,7 @@ function resolveTestGuardConfiguration(config) {
   const options = optionContainer(pluginOptions, "test_guard");
   const fromConfig = optionContainer(config, "test_guard");
   const inputs = { options, config: fromConfig };
-  resolveGuardBase(resolvedTestGuard, "TEST_GUARD", inputs, 30000);
+  resolveGuardBase(resolvedTestGuard, "TEST_GUARD", inputs);
   resolvedTestGuard.testPatterns = resolveOption(asPatterns, "TEST_GUARD_TEST_PATTERNS", "test_patterns", inputs) ?? [...DEFAULT_TEST_PATTERNS];
   resolvedTestGuard.testCommand = resolveOption(asString, "TEST_GUARD_TEST_COMMAND", "test_command", inputs) ?? detectTestCommand(projectDirectory);
   resolveCommandAdapter(resolvedMutation, "TEST_GUARD_MUTATION", subConfigInputs(options, fromConfig, "mutation"));
