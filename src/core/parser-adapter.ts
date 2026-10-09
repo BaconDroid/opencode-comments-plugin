@@ -6,6 +6,7 @@ import { changedTestChanges } from "./ci"
 import type { CommandAdapterConfig } from "./config"
 import type { ExtractedChange } from "./diff"
 import { createAdvisoryTool, createIdleAdvisory, idleMessages, type IdleAdvisoryController } from "./idle-advisory"
+import { parseJsonSlice, sliceBetween, tryParseJson } from "./json"
 import { PLACEHOLDER_PATTERN } from "../rules/tests/patterns"
 import { runShellCommand } from "./runner"
 
@@ -45,24 +46,14 @@ export function buildParserPayload(changes: ExtractedChange[]): string {
 }
 
 export function parseParserFindings(raw: string): ParserFinding[] {
-  const start = raw.indexOf("{")
-  const end = raw.lastIndexOf("}")
+  const objectSlice = sliceBetween(raw, "{", "}")
   let parsed: unknown
-  if (start >= 0 && end > start) {
-    try {
-      parsed = JSON.parse(raw.slice(start, end + 1))
-    } catch {
-      return []
-    }
+  if (objectSlice !== undefined) {
+    parsed = tryParseJson(objectSlice)
+    if (parsed === undefined) return []
   } else {
-    const arrayStart = raw.indexOf("[")
-    const arrayEnd = raw.lastIndexOf("]")
-    if (arrayStart < 0 || arrayEnd <= arrayStart) return []
-    try {
-      parsed = JSON.parse(raw.slice(arrayStart, arrayEnd + 1))
-    } catch {
-      return []
-    }
+    parsed = parseJsonSlice(raw, "[", "]")
+    if (parsed === undefined) return []
   }
 
   const items = Array.isArray(parsed)
