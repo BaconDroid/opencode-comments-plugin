@@ -808,11 +808,14 @@ function collectBypasses(text, matchers) {
   }
   return bypasses;
 }
+function isFileDisabled(text, matchers) {
+  return matchers.disableFile.test(text);
+}
 function applyBypass(newText, matchers) {
   const notes = collectBypasses(newText, matchers);
   return {
     notes,
-    fileDisabled: notes.some((note) => note.kind === "disable-file"),
+    fileDisabled: isFileDisabled(newText, matchers),
     covers: (line) => withinAllowWindow(newText, line, matchers)
   };
 }
