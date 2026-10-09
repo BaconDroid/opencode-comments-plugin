@@ -16,6 +16,9 @@ export interface FeedbackOptions {
 export declare const DEFAULT_CUSTOM_PROMPT = "TEST QUALITY DETECTED:\n{{findings}}\n\nFix the cause, do not weaken the test.";
 export declare function formatFindings(findings: Finding[], maxExcerpt?: number): string;
 export declare function renderFeedback(findings: Finding[], options?: FeedbackOptions): string;
+export declare function appendGuardMessage(output: {
+    output: string;
+}, message: string, marker?: string): void;
 export declare function appendFeedback(output: {
     output: string;
 }, message: string): void;

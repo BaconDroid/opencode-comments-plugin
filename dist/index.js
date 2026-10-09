@@ -971,15 +971,20 @@ function renderFeedback(findings, options = {}) {
 
 ${options.appendPrompt}` : rendered;
 }
-function appendFeedback(output, message) {
+function appendGuardMessage(output, message, marker) {
   if (message.length === 0)
     return;
-  if (output.output.includes(TEST_GUARD_MARKER))
+  if (marker && output.output.includes(marker))
     return;
-  output.output += `
+  output.output += marker ? `
 
-${TEST_GUARD_MARKER}
+${marker}
+${message}` : `
+
 ${message}`;
+}
+function appendFeedback(output, message) {
+  appendGuardMessage(output, message, TEST_GUARD_MARKER);
 }
 
 // src/core/pending.ts
@@ -2667,9 +2672,7 @@ function createCommentGuard(getConfig) {
       if (bypass.suppress) {
         debugLog4("comment guard bypassed for", filePath);
         if (bypass.notes.length > 0)
-          output.output += `
-
-${commentBypassFooter(filePath, bypass.notes)}`;
+          appendGuardMessage(output, commentBypassFooter(filePath, bypass.notes));
         return;
       }
       budget.setMaxWarningsPerFile(maxWarningsPerFile);
@@ -2687,13 +2690,9 @@ ${commentBypassFooter(filePath, bypass.notes)}`;
       const message = renderAnalyzerResults(results, { appendPrompt });
       if (message.length > 0) {
         budget.record(sessionID, COMMENT_RULE, filePath);
-        output.output += `
-
-${message}`;
+        appendGuardMessage(output, message);
         if (bypass.notes.length > 0)
-          output.output += `
-
-${commentBypassFooter(filePath, bypass.notes)}`;
+          appendGuardMessage(output, commentBypassFooter(filePath, bypass.notes));
       }
     } catch (err) {
       debugLog4("comment check failed:", err);
