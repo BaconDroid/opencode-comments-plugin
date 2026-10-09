@@ -73,12 +73,18 @@ export function createIdleAnalyzer(id: string, controller: IdleAdvisoryControlle
   }
 }
 
+type ToolArgs = Parameters<typeof tool>[0]["args"]
+
+// A read-only tool: a description, an args schema and an executor. Shared by
+// the advisory tools (no args) and the audit tool (scope/paths/format).
+export function createReadonlyTool<A extends ToolArgs>(
+  description: string,
+  args: A,
+  execute: (args: Parameters<ReturnType<typeof tool<A>>["execute"]>[0]) => Promise<string>,
+) {
+  return tool({ description, args, execute })
+}
+
 export function createAdvisoryTool(description: string, controller: IdleAdvisoryController) {
-  return tool({
-    description,
-    args: {},
-    async execute() {
-      return controller.analyzeNow()
-    },
-  })
+  return createReadonlyTool(description, {}, async () => controller.analyzeNow())
 }

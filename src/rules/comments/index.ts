@@ -12,7 +12,7 @@ import type { GuardBaseConfig } from "../../core/config"
 import { createDebugLog } from "../../core/debug"
 import { detectLanguage, diffLines, extractPatchChanges, extractToolChange, firstString, isCommentLine, readFileIfExists, readString } from "../../core/diff"
 import { appendGuardMessage } from "../../core/feedback"
-import { matchesAnyGlob } from "../../core/glob"
+import { matchPathFilter } from "../../core/glob"
 import { PendingCallStore, type PendingToolCall } from "../../core/pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "../../core/result-pipeline"
 import { isTriggeredTool } from "../../core/triggers"
@@ -63,7 +63,7 @@ const COMMENT_RULE = "comment"
 
 // An empty list means every file; otherwise the file must match one glob.
 function isCheckedPath(filePath: string, paths: string[]): boolean {
-  return paths.length === 0 || matchesAnyGlob(paths, filePath)
+  return matchPathFilter(paths, filePath)
 }
 
 // Wraps the comment-checker binary as an analyzer. It only produces the raw CLI

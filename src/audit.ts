@@ -11,6 +11,7 @@ import { commentHookInput, getCommentCheckerPath, runCommentChecker } from "./cl
 import { runAnalyzer } from "./core/analyzer"
 import { detectLanguage, extractChange, isSupportedLanguage, type Language } from "./core/diff"
 import type { ResolvedTestGuard } from "./core/dispatch"
+import { createReadonlyTool } from "./core/idle-advisory"
 import { createRuleAnalyzer } from "./rules/tests/analyzer"
 import { buildRuleChecks } from "./rules/tests"
 import { findCrossFileDuplicates } from "./rules/tests/content"
@@ -400,17 +401,16 @@ export function createGuardAuditTool(options: {
   getConfig: () => ResolvedTestGuard
   deps?: CommentAuditDeps
 }) {
-  return tool({
-    description:
-      "Read-only audit of existing comments and tests. Produces a cleanup plan (markdown or json) that the agent applies afterwards. Never modifies files.",
-    args: {
+  return createReadonlyTool(
+    "Read-only audit of existing comments and tests. Produces a cleanup plan (markdown or json) that the agent applies afterwards. Never modifies files.",
+    {
       scope: tool.schema.enum(["comments", "tests", "both"]).optional(),
       paths: tool.schema.array(tool.schema.string()).optional(),
       format: tool.schema.enum(["markdown", "json"]).optional(),
       include_advisory: tool.schema.boolean().optional(),
     },
-    async execute(args) {
-      return runAudit(
+    async args =>
+      runAudit(
         {
           scope: args.scope ?? "both",
           paths: args.paths,
@@ -420,9 +420,8 @@ export function createGuardAuditTool(options: {
           getConfig: options.getConfig,
         },
         options.deps,
-      )
-    },
-  })
+      ),
+  )
 }
 
 export const GUARD_AUDIT_COMMAND = {

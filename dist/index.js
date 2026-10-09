@@ -1040,6 +1040,11 @@ function matchesGlob(pattern, filePath) {
 function matchesAnyGlob(patterns, filePath) {
   return patterns.some((pattern) => matchesGlob(pattern, filePath));
 }
+function matchPathFilter(patterns, filePath, fallback) {
+  if (patterns.length === 0)
+    return fallback ? matchesAnyGlob(fallback, filePath) : true;
+  return matchesAnyGlob(patterns, filePath);
+}
 
 // src/rules/tests/patterns.ts
 var DEFAULT_TEST_PATTERNS = [
@@ -1051,7 +1056,7 @@ var DEFAULT_TEST_PATTERNS = [
   "**/*.spec.*"
 ];
 function isTestPath(filePath, patterns) {
-  return matchesAnyGlob(patterns.length > 0 ? patterns : DEFAULT_TEST_PATTERNS, filePath);
+  return matchPathFilter(patterns, filePath, DEFAULT_TEST_PATTERNS);
 }
 var SKIP_FOCUS_PATTERNS = {
   js: [/\.(?:skip|only|todo)\s*\(/, /\b(?:xit|xdescribe|xtest)\s*\(/],
@@ -1998,14 +2003,11 @@ function createIdleAnalyzer(id, controller) {
     }
   };
 }
+function createReadonlyTool(description, args, execute) {
+  return tool({ description, args, execute });
+}
 function createAdvisoryTool(description, controller) {
-  return tool({
-    description,
-    args: {},
-    async execute() {
-      return controller.analyzeNow();
-    }
-  });
+  return createReadonlyTool(description, {}, async () => controller.analyzeNow());
 }
 
 // src/core/ci.ts
@@ -2522,7 +2524,7 @@ function commentBypassFooter(filePath, notes) {
 }
 var COMMENT_RULE = "comment";
 function isCheckedPath(filePath, paths) {
-  return paths.length === 0 || matchesAnyGlob(paths, filePath);
+  return matchPathFilter(paths, filePath);
 }
 function createCommentBinaryAnalyzer(getConfig) {
   return {
@@ -3018,25 +3020,19 @@ async function runAudit(options, deps = {}) {
   return renderAudit({ scope, comments, tests, skipped, generatedAt: new Date().toISOString(), testCommand: config?.testCommand ?? null }, format);
 }
 function createGuardAuditTool(options) {
-  return tool2({
-    description: "Read-only audit of existing comments and tests. Produces a cleanup plan (markdown or json) that the agent applies afterwards. Never modifies files.",
-    args: {
-      scope: tool2.schema.enum(["comments", "tests", "both"]).optional(),
-      paths: tool2.schema.array(tool2.schema.string()).optional(),
-      format: tool2.schema.enum(["markdown", "json"]).optional(),
-      include_advisory: tool2.schema.boolean().optional()
-    },
-    async execute(args) {
-      return runAudit({
-        scope: args.scope ?? "both",
-        paths: args.paths,
-        format: args.format,
-        includeAdvisory: args.include_advisory,
-        directory: options.directory,
-        getConfig: options.getConfig
-      }, options.deps);
-    }
-  });
+  return createReadonlyTool("Read-only audit of existing comments and tests. Produces a cleanup plan (markdown or json) that the agent applies afterwards. Never modifies files.", {
+    scope: tool2.schema.enum(["comments", "tests", "both"]).optional(),
+    paths: tool2.schema.array(tool2.schema.string()).optional(),
+    format: tool2.schema.enum(["markdown", "json"]).optional(),
+    include_advisory: tool2.schema.boolean().optional()
+  }, async (args) => runAudit({
+    scope: args.scope ?? "both",
+    paths: args.paths,
+    format: args.format,
+    includeAdvisory: args.include_advisory,
+    directory: options.directory,
+    getConfig: options.getConfig
+  }, options.deps));
 }
 var GUARD_AUDIT_COMMAND = {
   template: "Use the guard_audit tool to audit the current repository's existing comments and tests, then apply the cleanup plan it returns. Report what you changed.",
