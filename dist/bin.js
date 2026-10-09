@@ -5,7 +5,7 @@
 import { readFileSync as readFileSync5 } from "fs";
 
 // src/core/ci.ts
-import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
+import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
 import { isAbsolute, join as join3, relative } from "path";
 
 // src/cli.ts
@@ -31,6 +31,11 @@ function createDebugLog(prefix, enabled) {
   };
 }
 
+// src/constants.ts
+var COMMENT_CHECKER_EVENT = "PostToolUse";
+var DEFAULT_CLI_TIMEOUT_MS = 5000;
+var COMMENT_CHECKER_BINARY_NAME = process.platform === "win32" ? "comment-checker.exe" : "comment-checker";
+
 // src/downloader.ts
 var debugLog = createDebugLog("comment-checker:downloader", process.env.COMMENT_CHECKER_DEBUG === "1");
 var REPO = "code-yeongyu/go-claude-code-comment-checker";
@@ -49,13 +54,10 @@ function getCacheDir() {
   const base = xdgCache || join(homedir(), ".cache");
   return join(base, "opencode-comments-plugin", "bin");
 }
-function getBinaryName() {
-  return process.platform === "win32" ? "comment-checker.exe" : "comment-checker";
-}
 function getCachedBinaryPath(version) {
   if (!version)
     return null;
-  const binaryPath = join(getCacheDir(), version, getBinaryName());
+  const binaryPath = join(getCacheDir(), version, COMMENT_CHECKER_BINARY_NAME);
   return existsSync(binaryPath) ? binaryPath : null;
 }
 function getCommentCheckerVersion() {
@@ -179,7 +181,7 @@ async function downloadCommentChecker(versionOverride) {
     return null;
   }
   const cacheDir = join(getCacheDir(), version);
-  const binaryName = getBinaryName();
+  const binaryName = COMMENT_CHECKER_BINARY_NAME;
   const binaryPath = join(cacheDir, binaryName);
   if (existsSync(binaryPath)) {
     debugLog("Binary already cached at:", binaryPath);
@@ -239,12 +241,6 @@ async function ensureCommentCheckerBinary(versionOverride) {
 
 // src/core/runner.ts
 var {spawn: spawn2 } = globalThis.Bun;
-
-// src/constants.ts
-var COMMENT_CHECKER_EVENT = "PostToolUse";
-var DEFAULT_CLI_TIMEOUT_MS = 5000;
-
-// src/core/runner.ts
 async function runProcess(args, options = {}) {
   const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_CLI_TIMEOUT_MS;
   try {
@@ -293,11 +289,8 @@ function commentHookInput(options) {
     tool_input: options.toolInput
   };
 }
-function getBinaryName2() {
-  return process.platform === "win32" ? "comment-checker.exe" : "comment-checker";
-}
 function findCommentCheckerPathSync() {
-  const binaryName = getBinaryName2();
+  const binaryName = COMMENT_CHECKER_BINARY_NAME;
   const version = getPreferredCommentCheckerVersionSync();
   if (!version) {
     debugLog2("cannot resolve comment-checker version; comment checking disabled");
@@ -407,6 +400,7 @@ function runAnalyzer(analyzer, ctx) {
 }
 
 // src/core/diff.ts
+import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
 var EXTENSION_LANGUAGE = {
   ".js": "js",
   ".jsx": "js",
@@ -589,6 +583,13 @@ function isCommentLine(line, language) {
 function countRealLines(text, language) {
   return text.split(`
 `).map((line) => stripComments(line, language)).filter((line) => line.trim().length > 0).length;
+}
+function readFileIfExists(filePath) {
+  try {
+    return existsSync3(filePath) ? readFileSync2(filePath, "utf8") : undefined;
+  } catch {
+    return;
+  }
 }
 
 // src/core/feedback.ts
@@ -1436,7 +1437,7 @@ function readOldRevision(directory, base, relativePath) {
 }
 function readWorktree(filePath) {
   try {
-    return existsSync3(filePath) ? readFileSync2(filePath, "utf8") : "";
+    return existsSync4(filePath) ? readFileSync3(filePath, "utf8") : "";
   } catch {
     return;
   }
@@ -1527,7 +1528,7 @@ ${body}` };
 }
 async function defaultCommentCheck(change, directory) {
   const cliPath = await getCommentCheckerPath();
-  if (!cliPath || !existsSync3(cliPath))
+  if (!cliPath || !existsSync4(cliPath))
     return { hasComments: false, message: "" };
   return runCommentChecker(commentHookInput({
     sessionID: "guard-check",
@@ -1757,7 +1758,6 @@ function isRecord(value) {
 }
 
 // src/core/test-command.ts
-import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
 import { join as join4 } from "path";
 var CANDIDATES = [
   { file: "pytest.ini", command: "pytest" },
@@ -1768,15 +1768,8 @@ var CANDIDATES = [
   { file: "build.gradle", command: "gradle test" },
   { file: "build.gradle.kts", command: "gradle test" }
 ];
-function readIfExists(filePath) {
-  try {
-    return existsSync4(filePath) ? readFileSync3(filePath, "utf8") : undefined;
-  } catch {
-    return;
-  }
-}
 function detectTestCommand(directory) {
-  const packageJson = readIfExists(join4(directory, "package.json"));
+  const packageJson = readFileIfExists(join4(directory, "package.json"));
   if (packageJson) {
     try {
       const parsed = JSON.parse(packageJson);
@@ -1787,7 +1780,7 @@ function detectTestCommand(directory) {
     } catch {}
   }
   for (const candidate of CANDIDATES) {
-    const content = readIfExists(join4(directory, candidate.file));
+    const content = readFileIfExists(join4(directory, candidate.file));
     if (content === undefined)
       continue;
     if (candidate.contains && !content.includes(candidate.contains))

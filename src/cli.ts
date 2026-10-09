@@ -11,7 +11,7 @@ import {
 } from "./downloader"
 import { runProcess } from "./core/runner"
 import { createDebugLog } from "./core/debug"
-import { COMMENT_CHECKER_EVENT } from "./constants"
+import { COMMENT_CHECKER_BINARY_NAME, COMMENT_CHECKER_EVENT } from "./constants"
 import type { CheckResult, HookInput } from "./types"
 
 const debugLog = createDebugLog("comment-checker:cli", process.env.COMMENT_CHECKER_DEBUG === "1")
@@ -34,12 +34,8 @@ export function commentHookInput(options: {
   }
 }
 
-function getBinaryName(): string {
-  return process.platform === "win32" ? "comment-checker.exe" : "comment-checker"
-}
-
 function findCommentCheckerPathSync(): string | null {
-  const binaryName = getBinaryName()
+  const binaryName = COMMENT_CHECKER_BINARY_NAME
 
   const version = getPreferredCommentCheckerVersionSync()
   if (!version) {
