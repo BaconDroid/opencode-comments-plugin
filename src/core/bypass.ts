@@ -54,7 +54,7 @@ export function applyBypass(newText: string, matchers: BypassMatchers): BypassCh
   const notes = collectBypasses(newText, matchers)
   return {
     notes,
-    fileDisabled: notes.some(note => note.kind === "disable-file"),
+    fileDisabled: isFileDisabled(newText, matchers),
     covers: line => withinAllowWindow(newText, line, matchers),
   }
 }
