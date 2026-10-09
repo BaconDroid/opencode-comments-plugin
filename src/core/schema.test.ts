@@ -4,7 +4,7 @@ import { validateTupleOptions } from "./schema"
 test("accepts a valid tuple", () => {
   const result = validateTupleOptions({
     comment_checker: { custom_prompt: "x", max_warnings_per_file: 2 },
-    test_guard: { enabled: true, checks: { "skip-focus-added": "block" }, tools: ["write", "edit"] },
+    test_guard: { enabled: true, checks: { "skip-focus-added": "warn" }, tools: ["write", "edit"] },
   })
   expect(result).toEqual({ valid: true, errors: [] })
 })

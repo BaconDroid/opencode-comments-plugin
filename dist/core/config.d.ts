@@ -1,4 +1,4 @@
-export type Severity = "off" | "warn" | "block";
+export type Severity = "off" | "warn";
 export interface GuardBaseConfig {
     enabled: boolean;
     customPrompt?: string;

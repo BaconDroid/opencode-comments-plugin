@@ -8,13 +8,6 @@ export interface ToolExecuteOutput {
     output: string;
     metadata: unknown;
 }
-export interface PermissionLike {
-    type: string;
-    pattern?: string | string[];
-}
-export interface PermissionDecision {
-    status: "ask" | "deny" | "allow";
-}
 export interface HookInput {
     session_id: string;
     tool_name: string;

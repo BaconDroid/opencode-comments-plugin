@@ -8,7 +8,7 @@
 //
 // Precedence for every option: environment > tuple options > config hook.
 
-export type Severity = "off" | "warn" | "block"
+export type Severity = "off" | "warn"
 
 // Options shared by both guards, resolved with the env > options > config
 // precedence. Each guard extends it with its own fields.
@@ -74,7 +74,7 @@ export function asBoolean(value: unknown, fallback: boolean): boolean {
 export function asLevel(value: unknown): Severity | undefined {
   if (typeof value !== "string") return undefined
   const normalized = value.trim().toLowerCase()
-  if (normalized === "off" || normalized === "warn" || normalized === "block") return normalized
+  if (normalized === "off" || normalized === "warn") return normalized
   return undefined
 }
 

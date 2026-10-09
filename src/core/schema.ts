@@ -3,7 +3,7 @@
 
 import { asCount, asLevel, asPatterns, asString, asTools } from "./config"
 
-const SEVERITY = ["off", "warn", "block"]
+const SEVERITY = ["off", "warn"]
 
 export interface ValidationResult {
   valid: boolean

@@ -19,7 +19,7 @@ test("validate-config accepts a valid file", () => {
   const dir = mkdtempSync(join(tmpdir(), "guard-bin-"))
   try {
     const file = join(dir, "config.json")
-    writeFileSync(file, JSON.stringify({ test_guard: { checks: { "skip-focus-added": "block" } } }))
+    writeFileSync(file, JSON.stringify({ test_guard: { checks: { "skip-focus-added": "warn" } } }))
     const result = runCli(["guard", "validate-config", file], dir)
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain("config is valid")

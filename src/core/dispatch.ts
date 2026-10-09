@@ -3,7 +3,6 @@
 
 import { APPLY_PATCH_TOOL_NAME } from "../constants"
 import { AnalyzerRegistry } from "./analyzer"
-import { checkBlockingBefore, checkPermission, type BlockingPolicy } from "./blocking"
 import { GuardBudget } from "./budget"
 import type { Bypass } from "./bypass"
 import type { GuardBaseConfig, Severity } from "./config"
@@ -14,10 +13,7 @@ import { PendingCallStore, type PendingToolCall } from "./pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "./result-pipeline"
 import { isTriggeredTool } from "./triggers"
 import { createRuleAnalyzer } from "../rules/tests/analyzer"
-import { isTestPath } from "../rules/tests/patterns"
-import type { PermissionDecision, PermissionLike, ToolExecuteInput, ToolExecuteOutput } from "../types"
-
-export { extractPatchEntries } from "./blocking"
+import type { ToolExecuteInput, ToolExecuteOutput } from "../types"
 
 const debugLog = createDebugLog(
   "test-guard",
@@ -40,7 +36,6 @@ const DEFAULT_TEST_GUARD: ResolvedTestGuard = {
 export interface TestGuard {
   before(input: ToolExecuteInput, output: { args: Record<string, unknown> }): void
   after(input: ToolExecuteInput, output: ToolExecuteOutput): Promise<void>
-  permission(input: PermissionLike, output: PermissionDecision): void
 }
 
 export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard {
@@ -57,35 +52,6 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
     }
   }
 
-  function isBlocking(): boolean {
-    return (resolve().checks["protected-paths"] ?? "warn") === "block"
-  }
-
-  function isProtectedPath(filePath: string, patterns: string[]): boolean {
-    return isTestPath(filePath, patterns)
-  }
-
-  const blockingPolicy: BlockingPolicy = {
-    isBlocking,
-    isProtectedPath: filePath => isProtectedPath(filePath, resolve().testPatterns),
-    message: (filePath, viaPatch) =>
-      viaPatch
-        ? `[test-guard] protected-paths is set to block: refusing to modify test file ${filePath}. Set "checks": { "protected-paths": "warn" } or add a bypass.`
-        : `[test-guard] protected-paths is set to block: refusing to edit existing test file ${filePath}. Set "checks": { "protected-paths": "warn" } or add a bypass.`,
-  }
-
-  // Defense in depth for #5894: `tool.execute.before` can be bypassed by
-  // sub-agents, but `permission.ask` still runs.
-  function permission(input: PermissionLike, output: PermissionDecision): void {
-    try {
-      if (!resolve().enabled) return
-      const denied = checkPermission(input, output, blockingPolicy)
-      if (denied) debugLog("permission denied for protected test path", denied)
-    } catch (err) {
-      debugLog("permission failed (fail-open):", err)
-    }
-  }
-
   function before(input: ToolExecuteInput, output: { args: Record<string, unknown> }): void {
     try {
       const resolved = resolve()
@@ -97,7 +63,6 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       if (!isTriggeredTool(resolved.triggerTools, toolLower)) return
 
       pending.prune()
-      checkBlockingBefore(toolLower, args, blockingPolicy)
 
       let preimage: string | undefined
       const filePath = firstString(args, "filePath", "file_path", "path")
@@ -106,7 +71,6 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       }
       pending.set(input.callID, { args, preimage })
     } catch (err) {
-      if (err instanceof Error && err.message.startsWith("[test-guard]")) throw err
       debugLog("before failed (fail-open):", err)
     }
   }
@@ -181,11 +145,6 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
           customPrompt: resolved.customPrompt,
           appendPrompt: resolved.appendPrompt,
         })
-        // A block-configured rule reached the after hook: `before` did not stop
-        // this change (e.g. a sub-agent bypassed it, #5894).
-        if (findings.some(finding => finding.severity === "block")) {
-          message = `BLOCK BYPASSED — a rule configured as "block" reached the after hook; the change was not stopped.\n\n${message}`
-        }
         if (bypassNotes.length > 0) {
           const footer = renderBypassFooter("Test guard bypass recorded", bypassNotes)
           message = message.length > 0 ? `${message}\n\n${footer}` : footer
@@ -200,5 +159,5 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
     }
   }
 
-  return { before, after, permission }
+  return { before, after }
 }

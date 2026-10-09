@@ -235,9 +235,6 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
         if (result.note) advisories.queue(result.note)
       }
     },
-    "permission.ask": async (input, output) => {
-      testGuard.permission(input, output)
-    },
     "tool.execute.before": async (input, output) => {
       testGuard.before(input, output)
       await commentGuard.before(input, output)

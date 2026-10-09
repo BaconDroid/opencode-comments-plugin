@@ -449,7 +449,7 @@ function asLevel(value) {
   if (typeof value !== "string")
     return;
   const normalized = value.trim().toLowerCase();
-  if (normalized === "off" || normalized === "warn" || normalized === "block")
+  if (normalized === "off" || normalized === "warn")
     return normalized;
   return;
 }
@@ -505,9 +505,74 @@ class AnalyzerRegistry {
   }
 }
 
-// src/core/blocking.ts
-import { existsSync as existsSync4 } from "fs";
-import { join as join3 } from "path";
+// src/core/budget.ts
+class GuardBudget {
+  dedupWindowMs;
+  ttlMs;
+  maxWarningsPerFile;
+  seen = new Map;
+  perFile = new Map;
+  constructor(options = {}) {
+    this.dedupWindowMs = options.dedupWindowMs ?? 30000;
+    this.ttlMs = options.ttlMs ?? 60000;
+    this.maxWarningsPerFile = options.maxWarningsPerFile ?? 0;
+  }
+  setMaxWarningsPerFile(value) {
+    this.maxWarningsPerFile = value;
+  }
+  setDedupWindowMs(value) {
+    this.dedupWindowMs = value;
+  }
+  key(sessionID, ruleID, filePath) {
+    return `${sessionID}\x00${ruleID}\x00${filePath}`;
+  }
+  fileKey(sessionID, filePath) {
+    return `${sessionID}\x00${filePath}`;
+  }
+  cleanup(now = Date.now()) {
+    for (const [key, timestamp] of this.seen) {
+      if (now - timestamp > this.ttlMs)
+        this.seen.delete(key);
+    }
+    for (const [key, counter] of this.perFile) {
+      if (now - counter.lastSeen > this.ttlMs)
+        this.perFile.delete(key);
+    }
+  }
+  shouldEmit(sessionID, ruleID, filePath, now = Date.now()) {
+    this.cleanup(now);
+    const key = this.key(sessionID, ruleID, filePath);
+    const last = this.seen.get(key);
+    if (last !== undefined && now - last < this.dedupWindowMs)
+      return false;
+    if (this.maxWarningsPerFile > 0) {
+      const counter = this.perFile.get(this.fileKey(sessionID, filePath));
+      if (counter && counter.count >= this.maxWarningsPerFile)
+        return false;
+    }
+    return true;
+  }
+  record(sessionID, ruleID, filePath, now = Date.now()) {
+    this.seen.set(this.key(sessionID, ruleID, filePath), now);
+    if (this.maxWarningsPerFile <= 0)
+      return;
+    const key = this.fileKey(sessionID, filePath);
+    const existing = this.perFile.get(key);
+    if (existing) {
+      existing.count += 1;
+      existing.lastSeen = now;
+    } else {
+      this.perFile.set(key, { count: 1, lastSeen: now });
+    }
+  }
+  touch(sessionID, now = Date.now()) {
+    const prefix = `${sessionID}\x00`;
+    for (const [key, counter] of this.perFile) {
+      if (key.startsWith(prefix))
+        counter.lastSeen = now;
+    }
+  }
+}
 
 // src/core/diff.ts
 import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
@@ -814,133 +879,6 @@ function extractPatchChanges(metadata) {
     }));
   }
   return changes;
-}
-
-// src/core/blocking.ts
-var PATCH_ENTRY = /^\*\*\* (Add|Update|Delete) File:\s*(.+?)\s*$/gm;
-function extractPatchEntries(patchText) {
-  const entries = [];
-  let match;
-  const regex = new RegExp(PATCH_ENTRY.source, "gm");
-  while ((match = regex.exec(patchText)) !== null) {
-    entries.push({ kind: match[1], path: match[2] });
-  }
-  return entries;
-}
-function pathExists(filePath) {
-  try {
-    return existsSync4(filePath) || existsSync4(join3(process.cwd(), filePath));
-  } catch {
-    return false;
-  }
-}
-function checkBlockingBefore(toolLower, args, policy) {
-  if (!policy.isBlocking())
-    return;
-  if (toolLower === APPLY_PATCH_TOOL_NAME) {
-    const patchText = firstString(args, "patchText", "patch", "patch_text") ?? "";
-    for (const entry of extractPatchEntries(patchText)) {
-      if (entry.kind !== "Delete" && entry.kind !== "Update")
-        continue;
-      if (!policy.isProtectedPath(entry.path))
-        continue;
-      if (entry.kind === "Delete" || pathExists(entry.path)) {
-        throw new Error(policy.message(entry.path, true));
-      }
-    }
-    return;
-  }
-  const filePath = firstString(args, "filePath", "file_path", "path");
-  if (filePath && policy.isProtectedPath(filePath) && pathExists(filePath)) {
-    throw new Error(policy.message(filePath, false));
-  }
-}
-function checkPermission(input, output, policy) {
-  try {
-    if (!policy.isBlocking())
-      return;
-    if (input.type !== "edit" && input.type !== "write")
-      return;
-    const candidates = Array.isArray(input.pattern) ? input.pattern : input.pattern ? [input.pattern] : [];
-    for (const candidate of candidates) {
-      if (!policy.isProtectedPath(candidate))
-        continue;
-      if (!pathExists(candidate))
-        continue;
-      output.status = "deny";
-      return candidate;
-    }
-  } catch {}
-  return;
-}
-
-// src/core/budget.ts
-class GuardBudget {
-  dedupWindowMs;
-  ttlMs;
-  maxWarningsPerFile;
-  seen = new Map;
-  perFile = new Map;
-  constructor(options = {}) {
-    this.dedupWindowMs = options.dedupWindowMs ?? 30000;
-    this.ttlMs = options.ttlMs ?? 60000;
-    this.maxWarningsPerFile = options.maxWarningsPerFile ?? 0;
-  }
-  setMaxWarningsPerFile(value) {
-    this.maxWarningsPerFile = value;
-  }
-  setDedupWindowMs(value) {
-    this.dedupWindowMs = value;
-  }
-  key(sessionID, ruleID, filePath) {
-    return `${sessionID}\x00${ruleID}\x00${filePath}`;
-  }
-  fileKey(sessionID, filePath) {
-    return `${sessionID}\x00${filePath}`;
-  }
-  cleanup(now = Date.now()) {
-    for (const [key, timestamp] of this.seen) {
-      if (now - timestamp > this.ttlMs)
-        this.seen.delete(key);
-    }
-    for (const [key, counter] of this.perFile) {
-      if (now - counter.lastSeen > this.ttlMs)
-        this.perFile.delete(key);
-    }
-  }
-  shouldEmit(sessionID, ruleID, filePath, now = Date.now()) {
-    this.cleanup(now);
-    const key = this.key(sessionID, ruleID, filePath);
-    const last = this.seen.get(key);
-    if (last !== undefined && now - last < this.dedupWindowMs)
-      return false;
-    if (this.maxWarningsPerFile > 0) {
-      const counter = this.perFile.get(this.fileKey(sessionID, filePath));
-      if (counter && counter.count >= this.maxWarningsPerFile)
-        return false;
-    }
-    return true;
-  }
-  record(sessionID, ruleID, filePath, now = Date.now()) {
-    this.seen.set(this.key(sessionID, ruleID, filePath), now);
-    if (this.maxWarningsPerFile <= 0)
-      return;
-    const key = this.fileKey(sessionID, filePath);
-    const existing = this.perFile.get(key);
-    if (existing) {
-      existing.count += 1;
-      existing.lastSeen = now;
-    } else {
-      this.perFile.set(key, { count: 1, lastSeen: now });
-    }
-  }
-  touch(sessionID, now = Date.now()) {
-    const prefix = `${sessionID}\x00`;
-    for (const [key, counter] of this.perFile) {
-      if (key.startsWith(prefix))
-        counter.lastSeen = now;
-    }
-  }
 }
 
 // src/core/feedback.ts
@@ -1882,28 +1820,6 @@ function createTestGuard(getResolved) {
       return DEFAULT_TEST_GUARD;
     }
   }
-  function isBlocking() {
-    return (resolve().checks["protected-paths"] ?? "warn") === "block";
-  }
-  function isProtectedPath(filePath, patterns) {
-    return isTestPath(filePath, patterns);
-  }
-  const blockingPolicy = {
-    isBlocking,
-    isProtectedPath: (filePath) => isProtectedPath(filePath, resolve().testPatterns),
-    message: (filePath, viaPatch) => viaPatch ? `[test-guard] protected-paths is set to block: refusing to modify test file ${filePath}. Set "checks": { "protected-paths": "warn" } or add a bypass.` : `[test-guard] protected-paths is set to block: refusing to edit existing test file ${filePath}. Set "checks": { "protected-paths": "warn" } or add a bypass.`
-  };
-  function permission(input, output) {
-    try {
-      if (!resolve().enabled)
-        return;
-      const denied = checkPermission(input, output, blockingPolicy);
-      if (denied)
-        debugLog3("permission denied for protected test path", denied);
-    } catch (err) {
-      debugLog3("permission failed (fail-open):", err);
-    }
-  }
   function before(input, output) {
     try {
       const resolved = resolve();
@@ -1914,7 +1830,6 @@ function createTestGuard(getResolved) {
       if (!isTriggeredTool(resolved.triggerTools, toolLower))
         return;
       pending.prune();
-      checkBlockingBefore(toolLower, args, blockingPolicy);
       let preimage;
       const filePath = firstString(args, "filePath", "file_path", "path");
       if (toolLower !== APPLY_PATCH_TOOL_NAME && filePath && typeof args.content === "string") {
@@ -1922,8 +1837,6 @@ function createTestGuard(getResolved) {
       }
       pending.set(input.callID, { args, preimage });
     } catch (err) {
-      if (err instanceof Error && err.message.startsWith("[test-guard]"))
-        throw err;
       debugLog3("before failed (fail-open):", err);
     }
   }
@@ -1996,11 +1909,6 @@ function createTestGuard(getResolved) {
           customPrompt: resolved.customPrompt,
           appendPrompt: resolved.appendPrompt
         });
-        if (findings.some((finding) => finding.severity === "block")) {
-          message = `BLOCK BYPASSED \u2014 a rule configured as "block" reached the after hook; the change was not stopped.
-
-${message}`;
-        }
         if (bypassNotes.length > 0) {
           const footer = renderBypassFooter("Test guard bypass recorded", bypassNotes);
           message = message.length > 0 ? `${message}
@@ -2019,7 +1927,7 @@ ${footer}` : footer;
       debugLog3("after failed (fail-open):", err);
     }
   }
-  return { before, after, permission };
+  return { before, after };
 }
 
 // src/core/advisory-queue.ts
@@ -2103,8 +2011,8 @@ function createAdvisoryTool(description, controller) {
 }
 
 // src/core/ci.ts
-import { existsSync as existsSync5, readFileSync as readFileSync3 } from "fs";
-import { isAbsolute, join as join4, relative } from "path";
+import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
+import { isAbsolute, join as join3, relative } from "path";
 function run(args, cwd) {
   const result = Bun.spawnSync(args, { cwd, stdout: "pipe", stderr: "ignore" });
   return { stdout: result.stdout.toString(), exitCode: result.exitCode };
@@ -2133,7 +2041,7 @@ function readOldRevision(directory, base, relativePath) {
 }
 function readWorktree(filePath) {
   try {
-    return existsSync5(filePath) ? readFileSync3(filePath, "utf8") : "";
+    return existsSync4(filePath) ? readFileSync3(filePath, "utf8") : "";
   } catch {
     return;
   }
@@ -2144,7 +2052,7 @@ function changedTestChanges(directory, base, testPatterns) {
 function diffChanges(directory, base) {
   const changes = [];
   for (const relativePath of changedFiles(directory, base)) {
-    const absolute = isAbsolute(relativePath) ? relativePath : join4(directory, relativePath);
+    const absolute = isAbsolute(relativePath) ? relativePath : join3(directory, relativePath);
     const newText = readWorktree(absolute);
     if (newText === undefined)
       continue;
@@ -2602,7 +2510,7 @@ function createMutationAdapter(options) {
 }
 
 // src/rules/comments/index.ts
-import { existsSync as existsSync6 } from "fs";
+import { existsSync as existsSync5 } from "fs";
 var debugLog4 = createDebugLog("comment-guard", process.env.COMMENT_CHECKER_DEBUG === "1");
 var MATCHERS2 = bypassMatchers("comment-guard");
 function bypassState(newText, oldText, language) {
@@ -2639,7 +2547,7 @@ function createCommentBinaryAnalyzer(getConfig) {
     analyze: async (ctx) => {
       const config = getConfig();
       const cliPath = await getCommentCheckerPath();
-      if (!cliPath || !existsSync6(cliPath)) {
+      if (!cliPath || !existsSync5(cliPath)) {
         debugLog4("CLI not available, skipping comment check");
         return {};
       }
@@ -2790,8 +2698,8 @@ function createCommentGuard(getConfig) {
 }
 
 // src/core/test-command.ts
-import { existsSync as existsSync7, readFileSync as readFileSync4 } from "fs";
-import { join as join5 } from "path";
+import { existsSync as existsSync6, readFileSync as readFileSync4 } from "fs";
+import { join as join4 } from "path";
 var CANDIDATES = [
   { file: "pytest.ini", command: "pytest" },
   { file: "pyproject.toml", contains: "[tool.pytest", command: "pytest" },
@@ -2803,13 +2711,13 @@ var CANDIDATES = [
 ];
 function readIfExists(filePath) {
   try {
-    return existsSync7(filePath) ? readFileSync4(filePath, "utf8") : undefined;
+    return existsSync6(filePath) ? readFileSync4(filePath, "utf8") : undefined;
   } catch {
     return;
   }
 }
 function detectTestCommand(directory) {
-  const packageJson = readIfExists(join5(directory, "package.json"));
+  const packageJson = readIfExists(join4(directory, "package.json"));
   if (packageJson) {
     try {
       const parsed = JSON.parse(packageJson);
@@ -2820,7 +2728,7 @@ function detectTestCommand(directory) {
     } catch {}
   }
   for (const candidate of CANDIDATES) {
-    const content = readIfExists(join5(directory, candidate.file));
+    const content = readIfExists(join4(directory, candidate.file));
     if (content === undefined)
       continue;
     if (candidate.contains && !content.includes(candidate.contains))
@@ -2833,7 +2741,7 @@ function detectTestCommand(directory) {
 // src/audit.ts
 import { tool as tool2 } from "@opencode-ai/plugin";
 import { readFileSync as readFileSync5, readdirSync as readdirSync2, statSync } from "fs";
-import { isAbsolute as isAbsolute2, join as join6, relative as relative2 } from "path";
+import { isAbsolute as isAbsolute2, join as join5, relative as relative2 } from "path";
 var EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "build", "vendor", ".cache", "coverage"]);
 var SECRET_PATTERNS = [/(?:^|\/)\.env(?:\.|$)/, /\.pem$/, /\.key$/, /(?:^|\/)id_(?:rsa|ed25519)$/, /\.p12$/];
 var MAX_FILES = 500;
@@ -2854,7 +2762,7 @@ function walk(dir, out, limit) {
       return;
     if (entry.startsWith(".") && entry !== ".env.example")
       continue;
-    const full = join6(dir, entry);
+    const full = join5(dir, entry);
     let stat;
     try {
       stat = statSync(full);
@@ -2874,7 +2782,7 @@ function listRepositoryFiles(directory, paths) {
   const collected = [];
   if (paths && paths.length > 0) {
     for (const entry of paths) {
-      const abs = isAbsolute2(entry) ? entry : join6(directory, entry);
+      const abs = isAbsolute2(entry) ? entry : join5(directory, entry);
       try {
         const stat = statSync(abs);
         if (stat.isDirectory())
@@ -2889,7 +2797,7 @@ function listRepositoryFiles(directory, paths) {
     const result = Bun.spawnSync(["git", "ls-files"], { cwd: directory, stdout: "pipe", stderr: "ignore" });
     if (result.exitCode === 0) {
       return result.stdout.toString().split(`
-`).filter((line) => line.trim().length > 0).map((line) => join6(directory, line)).slice(0, MAX_FILES);
+`).filter((line) => line.trim().length > 0).map((line) => join5(directory, line)).slice(0, MAX_FILES);
     }
   } catch {}
   walk(directory, collected, MAX_FILES);
@@ -3320,9 +3228,6 @@ var CommentCheckerPlugin = async (input, options) => {
         if (result.note)
           advisories.queue(result.note);
       }
-    },
-    "permission.ask": async (input, output) => {
-      testGuard.permission(input, output);
     },
     "tool.execute.before": async (input, output) => {
       testGuard.before(input, output);
