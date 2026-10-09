@@ -386,6 +386,17 @@ async function runCommentChecker(input, options = {}) {
   return { hasComments: false, message: "" };
 }
 
+// src/core/analyzer.ts
+function runAnalyzer(analyzer, ctx) {
+  try {
+    if (!analyzer.isEnabled())
+      return {};
+    return analyzer.analyze(ctx);
+  } catch {
+    return {};
+  }
+}
+
 // src/core/diff.ts
 var EXTENSION_LANGUAGE = {
   ".js": "js",
@@ -1351,6 +1362,43 @@ function runTestRules(ctx) {
   return { findings, bypassed: false, bypasses: collectBypasses2(ctx.change) };
 }
 
+// src/rules/tests/analyzer.ts
+function createRuleAnalyzer(getConfig) {
+  return {
+    id: "test-rules",
+    trigger: "after",
+    isEnabled: () => getConfig().enabled,
+    analyze: (ctx) => {
+      const change = ctx.change;
+      if (!change)
+        return {};
+      const config = getConfig();
+      const result = runTestRules({
+        change,
+        isTestFile: config.isTestFile ?? isTestPath(change.filePath, config.testPatterns),
+        config: {
+          enabled: config.enabled,
+          testPatterns: config.testPatterns,
+          testCommand: config.testCommand ?? null,
+          checks: config.checks,
+          maxWarningsPerFile: 0
+        }
+      });
+      return { findings: toFindings(result.findings, change.filePath, config.checks), bypasses: result.bypasses };
+    }
+  };
+}
+function toFindings(findings, filePath, checks) {
+  return findings.map((finding) => ({
+    rule: finding.rule,
+    filePath,
+    line: finding.line,
+    message: finding.message,
+    severity: checks[finding.rule] ?? "off",
+    excerpt: finding.excerpt
+  }));
+}
+
 // src/core/ci.ts
 function run(args, cwd) {
   const result = Bun.spawnSync(args, { cwd, stdout: "pipe", stderr: "ignore" });
@@ -1442,15 +1490,11 @@ function runDiffCheck(options) {
   const addedByFile = new Map;
   for (const change of changes)
     addedByFile.set(change.filePath, assertionLines(change.addedLines, change.language));
+  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns, checks, testCommand: null, isTestFile: true }));
   const findings = [];
   for (const change of changes) {
-    const ctx = {
-      change,
-      isTestFile: true,
-      config: { enabled: true, testPatterns, testCommand: null, checks, maxWarningsPerFile: 0 }
-    };
-    const result = runTestRules(ctx);
-    for (const finding of result.findings) {
+    const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-check", change, directory });
+    for (const finding of result.findings ?? []) {
       if (finding.rule === "gutted-test" && isMovedTest(change, addedByFile)) {
         continue;
       }
@@ -1885,14 +1929,10 @@ function auditTestFile(file, includeAdvisory) {
     isDelete: false
   });
   const checks = buildRuleChecks(includeAdvisory);
-  const ctx = {
-    change,
-    isTestFile: true,
-    config: { enabled: true, testPatterns: [], testCommand: null, checks, maxWarningsPerFile: 0 }
-  };
-  const result = runTestRules(ctx);
+  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns: [], checks, testCommand: null, isTestFile: true }));
+  const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-audit", change, directory: process.cwd() });
   const findings = [];
-  for (const finding of result.findings) {
+  for (const finding of result.findings ?? []) {
     if (!validExcerpt(finding.excerpt))
       continue;
     findings.push({

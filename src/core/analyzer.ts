@@ -38,6 +38,27 @@ export interface Analyzer {
   analyze(ctx: AnalyzerContext): Promise<AnalyzerResult> | AnalyzerResult
 }
 
+// An analyzer whose `analyze` never returns a promise. SyncAnalyzer is
+// assignable to Analyzer, so it can also be registered in an AnalyzerRegistry.
+export interface SyncAnalyzer {
+  id: string
+  trigger: AnalyzerTrigger
+  isEnabled(): boolean
+  analyze(ctx: AnalyzerContext): AnalyzerResult
+}
+
+// Synchronous counterpart of AnalyzerRegistry.run, for contexts that cannot
+// await (audit, CI). Fail-open: a disabled analyzer or a thrown error yields an
+// empty result.
+export function runAnalyzer(analyzer: SyncAnalyzer, ctx: AnalyzerContext): AnalyzerResult {
+  try {
+    if (!analyzer.isEnabled()) return {}
+    return analyzer.analyze(ctx)
+  } catch {
+    return {}
+  }
+}
+
 export class AnalyzerRegistry {
   private readonly analyzers: Analyzer[] = []
 

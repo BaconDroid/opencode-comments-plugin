@@ -22,6 +22,13 @@ export interface Analyzer {
     isEnabled(): boolean;
     analyze(ctx: AnalyzerContext): Promise<AnalyzerResult> | AnalyzerResult;
 }
+export interface SyncAnalyzer {
+    id: string;
+    trigger: AnalyzerTrigger;
+    isEnabled(): boolean;
+    analyze(ctx: AnalyzerContext): AnalyzerResult;
+}
+export declare function runAnalyzer(analyzer: SyncAnalyzer, ctx: AnalyzerContext): AnalyzerResult;
 export declare class AnalyzerRegistry {
     private readonly analyzers;
     register(analyzer: Analyzer): void;

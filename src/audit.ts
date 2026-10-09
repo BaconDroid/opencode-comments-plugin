@@ -9,12 +9,13 @@ import { readFileSync, readdirSync, statSync } from "node:fs"
 import { isAbsolute, join, relative } from "node:path"
 import { getCommentCheckerPath, runCommentChecker } from "./cli"
 import { COMMENT_CHECKER_EVENT } from "./constants"
+import { runAnalyzer } from "./core/analyzer"
 import { detectLanguage, extractChange, isSupportedLanguage, type Language } from "./core/diff"
 import type { ResolvedTestGuard } from "./core/dispatch"
-import { buildRuleChecks, runTestRules } from "./rules/tests"
+import { createRuleAnalyzer } from "./rules/tests/analyzer"
+import { buildRuleChecks } from "./rules/tests"
 import { findCrossFileDuplicates } from "./rules/tests/content"
 import { PLACEHOLDER_PATTERN, isTestPath } from "./rules/tests/patterns"
-import type { RuleContext } from "./rules/tests/types"
 
 const EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "build", "vendor", ".cache", "coverage"])
 const SECRET_PATTERNS = [/(?:^|\/)\.env(?:\.|$)/, /\.pem$/, /\.key$/, /(?:^|\/)id_(?:rsa|ed25519)$/, /\.p12$/]
@@ -195,16 +196,11 @@ export function auditTestFile(file: AuditFile, includeAdvisory: boolean): TestAu
   })
 
   const checks = buildRuleChecks(includeAdvisory)
+  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns: [], checks, testCommand: null, isTestFile: true }))
+  const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-audit", change, directory: process.cwd() })
 
-  const ctx: RuleContext = {
-    change,
-    isTestFile: true,
-    config: { enabled: true, testPatterns: [], testCommand: null, checks, maxWarningsPerFile: 0 },
-  }
-
-  const result = runTestRules(ctx)
   const findings: TestAuditFinding[] = []
-  for (const finding of result.findings) {
+  for (const finding of result.findings ?? []) {
     if (!validExcerpt(finding.excerpt)) continue
     findings.push({
       filePath: file.filePath,
