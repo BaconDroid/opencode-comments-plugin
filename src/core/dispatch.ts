@@ -72,7 +72,6 @@ export interface TestGuard {
   before(input: BeforeInput, output: { args: Record<string, unknown> }): void
   after(input: BeforeInput, output: AfterOutput): Promise<void>
   permission(input: PermissionLike, output: PermissionDecision): void
-  queueNote(message: string): void
 }
 
 const PATCH_ENTRY = /^\*\*\* (Add|Update|Delete) File:\s*(.+?)\s*$/gm
@@ -90,16 +89,8 @@ export function extractPatchEntries(patchText: string): Array<{ kind: string; pa
 export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard {
   const budget = new GuardBudget()
   const pending = new PendingCallStore<PendingGuardCall>()
-  const pendingNotes: string[] = []
   const registry = new AnalyzerRegistry()
   registry.register(createRuleAnalyzer(getResolved))
-  function queueNote(message: string): void {
-    if (message.length > 0) pendingNotes.push(message)
-  }
-
-  function consumeNotes(): string[] {
-    return pendingNotes.splice(0, pendingNotes.length)
-  }
 
   function resolve(): ResolvedTestGuard {
     try {
@@ -201,7 +192,6 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       const resolved = resolve()
       if (!resolved.enabled) return
 
-      const notes = consumeNotes()
       const toolLower = input.tool.toLowerCase()
       let changes: ExtractedChange[] = []
       const failed = output.output.toLowerCase().startsWith("error")
@@ -220,6 +210,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
 
       const parts: string[] = []
       if (changes.length > 0) {
+        budget.touch(input.sessionID)
         budget.setMaxWarningsPerFile(resolved.maxWarningsPerFile)
         budget.setDedupWindowMs(resolved.dedupWindowMs ?? 30_000)
 
@@ -278,7 +269,6 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
         if (message.length > 0) parts.push(message)
       }
 
-      for (const note of notes) parts.push(note)
       if (parts.length === 0) return
       appendFeedback(output, parts.join("\n\n"))
     } catch (err) {
@@ -286,5 +276,5 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
     }
   }
 
-  return { before, after, permission, queueNote }
+  return { before, after, permission }
 }

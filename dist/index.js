@@ -1811,16 +1811,8 @@ function extractPatchEntries(patchText) {
 function createTestGuard(getResolved) {
   const budget = new GuardBudget;
   const pending = new PendingCallStore;
-  const pendingNotes = [];
   const registry = new AnalyzerRegistry;
   registry.register(createRuleAnalyzer(getResolved));
-  function queueNote(message) {
-    if (message.length > 0)
-      pendingNotes.push(message);
-  }
-  function consumeNotes() {
-    return pendingNotes.splice(0, pendingNotes.length);
-  }
   function resolve() {
     try {
       return getResolved();
@@ -1912,7 +1904,6 @@ function createTestGuard(getResolved) {
       const resolved = resolve();
       if (!resolved.enabled)
         return;
-      const notes = consumeNotes();
       const toolLower = input.tool.toLowerCase();
       let changes = [];
       const failed = output.output.toLowerCase().startsWith("error");
@@ -1931,6 +1922,7 @@ function createTestGuard(getResolved) {
       }
       const parts = [];
       if (changes.length > 0) {
+        budget.touch(input.sessionID);
         budget.setMaxWarningsPerFile(resolved.maxWarningsPerFile);
         budget.setDedupWindowMs(resolved.dedupWindowMs ?? 30000);
         const findings = [];
@@ -1990,8 +1982,6 @@ ${footer}` : footer;
         if (message.length > 0)
           parts.push(message);
       }
-      for (const note of notes)
-        parts.push(note);
       if (parts.length === 0)
         return;
       appendFeedback(output, parts.join(`
@@ -2001,7 +1991,36 @@ ${footer}` : footer;
       debugLog3("after failed (fail-open):", err);
     }
   }
-  return { before, after, permission, queueNote };
+  return { before, after, permission };
+}
+
+// src/core/advisory-queue.ts
+class AdvisoryQueue {
+  notes = [];
+  queue(message) {
+    if (message.length > 0)
+      this.notes.push(message);
+  }
+  consume() {
+    return this.notes.splice(0, this.notes.length);
+  }
+}
+function appendAdvisories(output, notes) {
+  if (notes.length === 0)
+    return;
+  const body = notes.join(`
+
+`);
+  if (output.output.includes(TEST_GUARD_MARKER)) {
+    output.output += `
+
+${body}`;
+  } else {
+    output.output += `
+
+${TEST_GUARD_MARKER}
+${body}`;
+  }
 }
 
 // src/core/idle-advisory.ts
@@ -3270,6 +3289,7 @@ var CommentCheckerPlugin = async (input, options) => {
   analyzers.register(createIdleAnalyzer("test-judge", judge));
   analyzers.register(createIdleAnalyzer("parser", parser));
   analyzers.register(createIdleAnalyzer("comment-judge", commentJudge));
+  const advisories = new AdvisoryQueue;
   return {
     config: async (config) => {
       resolveConfiguration(config);
@@ -3289,7 +3309,7 @@ var CommentCheckerPlugin = async (input, options) => {
       const results = await analyzers.run("idle", { tool: "", sessionID, directory: projectDirectory });
       for (const result of results) {
         if (result.note)
-          testGuard.queueNote(result.note);
+          advisories.queue(result.note);
       }
     },
     "permission.ask": async (input, output) => {
@@ -3302,6 +3322,7 @@ var CommentCheckerPlugin = async (input, options) => {
     "tool.execute.after": async (input, output) => {
       await commentGuard.after(input, output);
       await testGuard.after(input, output);
+      appendAdvisories(output, advisories.consume());
     }
   };
 };

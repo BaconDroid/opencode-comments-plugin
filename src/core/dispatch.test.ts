@@ -227,14 +227,6 @@ test("after alerts when a block rule was bypassed", async () => {
   expect(output.output).toContain("BLOCK BYPASSED")
 })
 
-test("surfaces a queued note on the next tool call", async () => {
-  const guard = guarded(config())
-  guard.queueNote("queued advisory")
-  const output: Output = { title: "", output: "bash output", metadata: {} }
-  await guard.after({ tool: "bash", sessionID: "s", callID: freshCallID() }, output)
-  expect(output.output).toContain("queued advisory")
-})
-
 test("coexists with another plugin without clobbering or duplicating output", async () => {
   const guard = guarded(config())
   const callID = freshCallID()
@@ -277,14 +269,6 @@ test("restricts apply_patch when apply_patch is not in the tools option", async 
   }
   await guard.after({ tool: "apply_patch", sessionID: "s", callID: freshCallID() }, output)
   expect(output.output).toBe("Success. Updated the following files:")
-})
-
-test("still surfaces queued notes when the tool is filtered out", async () => {
-  const guard = guarded(config({ triggerTools: new Set(["write"]) }))
-  guard.queueNote("queued advisory")
-  const output: Output = { title: "", output: "bash output", metadata: {} }
-  await guard.after({ tool: "bash", sessionID: "s", callID: freshCallID() }, output)
-  expect(output.output).toContain("queued advisory")
 })
 
 test("dedups repeated findings within the window unless the window is zero", async () => {
