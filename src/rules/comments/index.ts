@@ -7,7 +7,7 @@ import { APPLY_PATCH_TOOL_NAME } from "../../constants"
 import { commentHookInput, getCommentCheckerPath, runCommentChecker } from "../../cli"
 import { AnalyzerRegistry, type Analyzer } from "../../core/analyzer"
 import { GuardBudget } from "../../core/budget"
-import { bypassMatchers, collectBypasses, withinAllowWindow, type Bypass } from "../../core/bypass"
+import { applyBypass, bypassMatchers, type Bypass } from "../../core/bypass"
 import type { GuardBaseConfig } from "../../core/config"
 import { createDebugLog } from "../../core/debug"
 import { detectLanguage, diffLines, extractPatchChanges, extractToolChange, firstString, isCommentLine, readFileIfExists, readString } from "../../core/diff"
@@ -31,21 +31,22 @@ function bypassState(
   oldText: string,
   language: ReturnType<typeof detectLanguage>,
 ): { suppress: boolean; notes: Bypass[] } {
-  const notes = collectBypasses(newText, MATCHERS)
-  if (notes.some(note => note.kind === "disable-file")) return { suppress: true, notes }
+  const bypass = applyBypass(newText, MATCHERS)
 
   const { added } = diffLines(oldText, newText)
   const addedComments = added.filter(line => isCommentLine(line, language))
-  if (addedComments.length === 0) return { suppress: false, notes }
-
   const lines = newText.split("\n")
   const used = new Set<number>()
+  const lineNumbers: number[] = []
   for (const comment of addedComments) {
     const index = lines.findIndex((line, i) => !used.has(i) && line === comment)
-    if (index < 0 || !withinAllowWindow(newText, index + 1, MATCHERS)) return { suppress: false, notes }
-    used.add(index)
+    if (index >= 0) used.add(index)
+    lineNumbers.push(index >= 0 ? index + 1 : 0)
   }
-  return { suppress: true, notes }
+
+  // Comment policy: a disable-file marker, or every added comment covered.
+  const suppress = bypass.fileDisabled || (lineNumbers.length > 0 && lineNumbers.every(line => bypass.covers(line)))
+  return { suppress, notes: bypass.notes }
 }
 
 function commentBypassFooter(filePath: string, notes: Bypass[]): string {
