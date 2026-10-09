@@ -5,11 +5,12 @@ import { existsSync, readFileSync } from "node:fs"
 import { isAbsolute, join, relative } from "node:path"
 import { getCommentCheckerPath, runCommentChecker } from "../cli"
 import { COMMENT_CHECKER_EVENT } from "../constants"
+import { runAnalyzer } from "./analyzer"
 import { extractChange, isSupportedLanguage, stripComments, type ExtractedChange, type Language } from "./diff"
 import { formatFindings, type Finding } from "./feedback"
 import { ASSERTION_COUNT_PATTERNS, DEFAULT_TEST_PATTERNS, isTestPath } from "../rules/tests/patterns"
-import { buildRuleChecks, runTestRules } from "../rules/tests"
-import type { RuleContext } from "../rules/tests/types"
+import { createRuleAnalyzer } from "../rules/tests/analyzer"
+import { buildRuleChecks } from "../rules/tests"
 import type { CheckResult } from "../types"
 
 function run(args: string[], cwd: string): { stdout: string; exitCode: number } {
@@ -119,15 +120,11 @@ export function runDiffCheck(options: DiffCheckOptions): DiffCheckResult {
   const addedByFile = new Map<string, Set<string>>()
   for (const change of changes) addedByFile.set(change.filePath, assertionLines(change.addedLines, change.language))
 
+  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns, checks, testCommand: null, isTestFile: true }))
   const findings: Finding[] = []
   for (const change of changes) {
-    const ctx: RuleContext = {
-      change,
-      isTestFile: true,
-      config: { enabled: true, testPatterns, testCommand: null, checks, maxWarningsPerFile: 0 },
-    }
-    const result = runTestRules(ctx)
-    for (const finding of result.findings) {
+    const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-check", change, directory })
+    for (const finding of result.findings ?? []) {
       if (finding.rule === "gutted-test" && isMovedTest(change, addedByFile)) {
         continue
       }

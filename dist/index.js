@@ -469,6 +469,16 @@ import { existsSync as existsSync4 } from "fs";
 import { join as join3 } from "path";
 
 // src/core/analyzer.ts
+function runAnalyzer(analyzer, ctx) {
+  try {
+    if (!analyzer.isEnabled())
+      return {};
+    return analyzer.analyze(ctx);
+  } catch {
+    return {};
+  }
+}
+
 class AnalyzerRegistry {
   analyzers = [];
   register(analyzer) {
@@ -1696,6 +1706,43 @@ function runTestRules(ctx) {
   return { findings, bypassed: false, bypasses: collectBypasses2(ctx.change) };
 }
 
+// src/rules/tests/analyzer.ts
+function createRuleAnalyzer(getConfig) {
+  return {
+    id: "test-rules",
+    trigger: "after",
+    isEnabled: () => getConfig().enabled,
+    analyze: (ctx) => {
+      const change = ctx.change;
+      if (!change)
+        return {};
+      const config = getConfig();
+      const result = runTestRules({
+        change,
+        isTestFile: config.isTestFile ?? isTestPath(change.filePath, config.testPatterns),
+        config: {
+          enabled: config.enabled,
+          testPatterns: config.testPatterns,
+          testCommand: config.testCommand ?? null,
+          checks: config.checks,
+          maxWarningsPerFile: 0
+        }
+      });
+      return { findings: toFindings(result.findings, change.filePath, config.checks), bypasses: result.bypasses };
+    }
+  };
+}
+function toFindings(findings, filePath, checks) {
+  return findings.map((finding) => ({
+    rule: finding.rule,
+    filePath,
+    line: finding.line,
+    message: finding.message,
+    severity: checks[finding.rule] ?? "off",
+    excerpt: finding.excerpt
+  }));
+}
+
 // src/core/dispatch.ts
 var DEBUG3 = process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1";
 function debugLog3(...args) {
@@ -1722,33 +1769,6 @@ function extractPatchEntries(patchText) {
     entries.push({ kind: match[1], path: match[2] });
   }
   return entries;
-}
-function createRuleAnalyzer(getResolved) {
-  return {
-    id: "test-rules",
-    trigger: "after",
-    isEnabled: () => getResolved().enabled,
-    analyze: (ctx) => {
-      const change = ctx.change;
-      if (!change)
-        return {};
-      const resolved = getResolved();
-      const result = runTestRules({
-        change,
-        isTestFile: isTestPath(change.filePath, resolved.testPatterns),
-        config: { ...resolved, testCommand: resolved.testCommand ?? null }
-      });
-      const findings = result.findings.map((finding) => ({
-        rule: finding.rule,
-        filePath: change.filePath,
-        line: finding.line,
-        message: finding.message,
-        severity: resolved.checks[finding.rule] ?? "off",
-        excerpt: finding.excerpt
-      }));
-      return { findings, bypasses: result.bypasses };
-    }
-  };
 }
 function createTestGuard(getResolved) {
   const budget = new GuardBudget;
@@ -2910,14 +2930,10 @@ function auditTestFile(file, includeAdvisory) {
     isDelete: false
   });
   const checks = buildRuleChecks(includeAdvisory);
-  const ctx = {
-    change,
-    isTestFile: true,
-    config: { enabled: true, testPatterns: [], testCommand: null, checks, maxWarningsPerFile: 0 }
-  };
-  const result = runTestRules(ctx);
+  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns: [], checks, testCommand: null, isTestFile: true }));
+  const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-audit", change, directory: process.cwd() });
   const findings = [];
-  for (const finding of result.findings) {
+  for (const finding of result.findings ?? []) {
     if (!validExcerpt(finding.excerpt))
       continue;
     findings.push({

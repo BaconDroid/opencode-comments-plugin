@@ -4,15 +4,15 @@
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { APPLY_PATCH_TOOL_NAME, DEFAULT_TRIGGER_TOOLS } from "../constants"
-import { AnalyzerRegistry, type Analyzer } from "./analyzer"
+import { AnalyzerRegistry } from "./analyzer"
 import { GuardBudget } from "./budget"
 import type { Bypass } from "./bypass"
 import type { Severity } from "./config"
 import { extractPatchChanges, extractToolChange, firstString, readPreimage, type ExtractedChange } from "./diff"
 import { appendFeedback, type Finding } from "./feedback"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "./result-pipeline"
+import { createRuleAnalyzer } from "../rules/tests/analyzer"
 import { isTestPath } from "../rules/tests/patterns"
-import { runTestRules } from "../rules/tests"
 
 const DEBUG = process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1"
 
@@ -94,36 +94,6 @@ export function extractPatchEntries(patchText: string): Array<{ kind: string; pa
     entries.push({ kind: match[1]!, path: match[2]! })
   }
   return entries
-}
-
-// Wraps the deterministic test rules as an analyzer. Dispatch keeps ownership
-// of the budget, the severity resolution, the grouping and the `BLOCK BYPASSED`
-// marker; the analyzer only produces findings and bypasses for one change.
-function createRuleAnalyzer(getResolved: () => ResolvedTestGuard): Analyzer {
-  return {
-    id: "test-rules",
-    trigger: "after",
-    isEnabled: () => getResolved().enabled,
-    analyze: ctx => {
-      const change = ctx.change
-      if (!change) return {}
-      const resolved = getResolved()
-      const result = runTestRules({
-        change,
-        isTestFile: isTestPath(change.filePath, resolved.testPatterns),
-        config: { ...resolved, testCommand: resolved.testCommand ?? null },
-      })
-      const findings: Finding[] = result.findings.map(finding => ({
-        rule: finding.rule,
-        filePath: change.filePath,
-        line: finding.line,
-        message: finding.message,
-        severity: resolved.checks[finding.rule] ?? "off",
-        excerpt: finding.excerpt,
-      }))
-      return { findings, bypasses: result.bypasses }
-    },
-  }
 }
 
 export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard {
