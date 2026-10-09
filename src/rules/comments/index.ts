@@ -16,7 +16,7 @@ import { matchesAnyGlob } from "../../core/glob"
 import { PendingCallStore, type PendingToolCall } from "../../core/pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "../../core/result-pipeline"
 import { isTriggeredTool } from "../../core/triggers"
-import type { HookInput, ToolExecuteInput, ToolExecuteOutput } from "../../types"
+import type { HookInput, ToolExecuteInput, ToolExecuteOutput, ToolGuard } from "../../types"
 
 const debugLog = createDebugLog("comment-guard", process.env.COMMENT_CHECKER_DEBUG === "1")
 
@@ -94,10 +94,7 @@ export function createCommentBinaryAnalyzer(getConfig: () => ResolvedCommentConf
   }
 }
 
-export interface CommentGuard {
-  before(input: ToolExecuteInput, output: { args: Record<string, unknown> }): Promise<void>
-  after(input: ToolExecuteInput, output: ToolExecuteOutput): Promise<void>
-}
+export type CommentGuard = ToolGuard
 
 export function createCommentGuard(getConfig: () => ResolvedCommentConfig): CommentGuard {
   const pendingCalls = new PendingCallStore<PendingToolCall>()

@@ -13,7 +13,7 @@ import { PendingCallStore, type PendingToolCall } from "./pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "./result-pipeline"
 import { isTriggeredTool } from "./triggers"
 import { createRuleAnalyzer } from "../rules/tests/analyzer"
-import type { ToolExecuteInput, ToolExecuteOutput } from "../types"
+import type { ToolExecuteInput, ToolExecuteOutput, ToolGuard } from "../types"
 
 const debugLog = createDebugLog(
   "test-guard",
@@ -33,10 +33,7 @@ const DEFAULT_TEST_GUARD: ResolvedTestGuard = {
   maxWarningsPerFile: 0,
 }
 
-export interface TestGuard {
-  before(input: ToolExecuteInput, output: { args: Record<string, unknown> }): void
-  after(input: ToolExecuteInput, output: ToolExecuteOutput): Promise<void>
-}
+export type TestGuard = ToolGuard
 
 export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard {
   const budget = new GuardBudget()
