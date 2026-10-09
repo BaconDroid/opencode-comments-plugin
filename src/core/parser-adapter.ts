@@ -5,9 +5,9 @@
 import { changedTestChanges } from "./ci"
 import type { CommandAdapterConfig } from "./config"
 import type { ExtractedChange } from "./diff"
+import { parseAdvisoryFindings } from "./advisory-findings"
 import { createAdvisoryTool, createIdleAdvisory, idleMessages, type IdleAdvisoryController } from "./idle-advisory"
 import { parseJsonSlice, sliceBetween, tryParseJson } from "./json"
-import { PLACEHOLDER_PATTERN } from "../rules/tests/patterns"
 import { runShellCommand } from "./runner"
 
 export type ParserAdapterConfig = CommandAdapterConfig
@@ -28,8 +28,6 @@ export interface ParserFinding {
 }
 
 export type ParserRun = (command: string, payload: string, timeoutMs: number) => Promise<string>
-
-const MAX_FINDINGS = 20
 
 export function buildParserPayload(changes: ExtractedChange[]): string {
   const files: ParserPayloadFile[] = []
@@ -62,24 +60,13 @@ export function parseParserFindings(raw: string): ParserFinding[] {
       ? ((parsed as { findings: unknown[] }).findings)
       : []
 
-  const findings: ParserFinding[] = []
-  for (const item of items) {
-    if (!item || typeof item !== "object") continue
-    const record = item as Record<string, unknown>
-    const file = typeof record.file === "string" ? record.file : ""
-    const message = typeof record.message === "string" ? record.message.trim() : ""
-    if (!file || !message) continue
-    if (PLACEHOLDER_PATTERN.test(message)) continue
-    findings.push({
-      file,
-      line: typeof record.line === "number" && Number.isFinite(record.line) ? record.line : 0,
-      rule: typeof record.rule === "string" ? record.rule : "external-parser",
-      message,
-      confidence: typeof record.confidence === "string" ? record.confidence : "medium",
-    })
-    if (findings.length >= MAX_FINDINGS) break
-  }
-  return findings
+  return parseAdvisoryFindings(items, "message").map(finding => ({
+    file: finding.file,
+    line: finding.line,
+    rule: typeof finding.record.rule === "string" ? finding.record.rule : "external-parser",
+    message: finding.text,
+    confidence: finding.confidence,
+  }))
 }
 
 export function formatParserFindings(findings: ParserFinding[]): string {
