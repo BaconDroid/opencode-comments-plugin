@@ -33,7 +33,6 @@ export interface TestGuard {
     }): void;
     after(input: BeforeInput, output: AfterOutput): Promise<void>;
     permission(input: PermissionLike, output: PermissionDecision): void;
-    queueNote(message: string): void;
 }
 export declare function extractPatchEntries(patchText: string): Array<{
     kind: string;

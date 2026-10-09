@@ -15,6 +15,7 @@ import {
   type Severity,
 } from "./core/config"
 import { createTestGuard, type ResolvedTestGuard } from "./core/dispatch"
+import { AdvisoryQueue, appendAdvisories } from "./core/advisory-queue"
 import { AnalyzerRegistry } from "./core/analyzer"
 import { createIdleAnalyzer } from "./core/idle-advisory"
 import { createGuardJudgeTool, createJudge, createModelJudgeRunner, resolveJudgeModel, type JudgeConfig, createCommentJudge, createGuardCommentJudgeTool } from "./core/judge"
@@ -218,6 +219,7 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
   analyzers.register(createIdleAnalyzer("test-judge", judge))
   analyzers.register(createIdleAnalyzer("parser", parser))
   analyzers.register(createIdleAnalyzer("comment-judge", commentJudge))
+  const advisories = new AdvisoryQueue()
 
   return {
     config: async (config: unknown) => {
@@ -236,7 +238,7 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
       const sessionID = event.properties?.sessionID ?? ""
       const results = await analyzers.run("idle", { tool: "", sessionID, directory: projectDirectory })
       for (const result of results) {
-        if (result.note) testGuard.queueNote(result.note)
+        if (result.note) advisories.queue(result.note)
       }
     },
     "permission.ask": async (input, output) => {
@@ -249,6 +251,7 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
     "tool.execute.after": async (input, output) => {
       await commentGuard.after(input, output)
       await testGuard.after(input, output)
+      appendAdvisories(output, advisories.consume())
     },
   }
 }
