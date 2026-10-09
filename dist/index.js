@@ -786,20 +786,11 @@ function readPreimage(filePath) {
     return;
   }
 }
-function extractToolChange(tool, args, preimage) {
-  const filePath = firstString(args, "filePath", "file_path", "path");
-  if (!filePath)
-    return;
+function changeTextsFromTool(tool, args, preimage) {
   const toolLower = tool.toLowerCase();
   if (toolLower === "write" || toolLower === "create") {
     const content = readString(args, "content", "file_text", "text") ?? "";
-    return extractChange({
-      filePath,
-      oldText: preimage ?? "",
-      newText: content,
-      isNew: preimage === undefined,
-      isDelete: false
-    });
+    return { oldText: preimage ?? "", newText: content };
   }
   if (toolLower === "edit" || toolLower === "patch") {
     const edits = args.edits;
@@ -815,13 +806,31 @@ function extractToolChange(tool, args, preimage) {
         newText += (readString(record, "new_string", "newString") ?? "") + `
 `;
       }
-      return extractChange({ filePath, oldText, newText, isNew: false, isDelete: false });
+      return { oldText, newText };
     }
-    const oldText = readString(args, "oldString", "old_string") ?? "";
-    const newText = readString(args, "newString", "new_string") ?? "";
-    return extractChange({ filePath, oldText, newText, isNew: false, isDelete: false });
+    return {
+      oldText: readString(args, "oldString", "old_string") ?? "",
+      newText: readString(args, "newString", "new_string") ?? ""
+    };
   }
   return;
+}
+function extractToolChange(tool, args, preimage) {
+  const filePath = firstString(args, "filePath", "file_path", "path");
+  if (!filePath)
+    return;
+  const texts = changeTextsFromTool(tool, args, preimage);
+  if (!texts)
+    return;
+  const toolLower = tool.toLowerCase();
+  const isWrite = toolLower === "write" || toolLower === "create";
+  return extractChange({
+    filePath,
+    oldText: texts.oldText,
+    newText: texts.newText,
+    isNew: isWrite && preimage === undefined,
+    isDelete: false
+  });
 }
 function splitPatch(patch) {
   const removed = [];
@@ -2599,19 +2608,6 @@ function bypassState(newText, oldText, language) {
 function commentBypassFooter(filePath, notes) {
   return renderBypassFooter("Comment guard bypass recorded", notes.map((note) => formatBypassNote(filePath, note)));
 }
-function changeOf(call) {
-  if (typeof call.content === "string")
-    return { oldText: call.preimage ?? "", newText: call.content };
-  if (Array.isArray(call.edits) && call.edits.length > 0) {
-    return {
-      oldText: call.edits.map((edit) => edit.old_string ?? "").join(`
-`),
-      newText: call.edits.map((edit) => edit.new_string ?? "").join(`
-`)
-    };
-  }
-  return { oldText: call.oldString ?? "", newText: call.newString ?? "" };
-}
 var COMMENT_RULE = "comment";
 function isCheckedPath(filePath, paths) {
   return paths.length === 0 || matchesAnyGlob(paths, filePath);
@@ -2718,10 +2714,6 @@ ${commentBypassFooter(filePath, bypass.notes)}`;
     }
     pendingCalls.prune();
     const filePath = output.args.filePath ?? output.args.file_path ?? output.args.path;
-    const content = output.args.content;
-    const oldString = output.args.oldString ?? output.args.old_string;
-    const newString = output.args.newString ?? output.args.new_string;
-    const edits = output.args.edits;
     if (!filePath) {
       debugLog4("no filePath found for tool:", toolLower);
       return;
@@ -2731,15 +2723,12 @@ ${commentBypassFooter(filePath, bypass.notes)}`;
       return;
     }
     let preimage;
-    if (typeof content === "string") {
+    if (typeof output.args.content === "string") {
       preimage = readPreimage(filePath);
     }
     pendingCalls.set(input.callID, {
       filePath,
-      content,
-      oldString,
-      newString,
-      edits,
+      args: output.args,
       tool: toolLower,
       sessionID: input.sessionID,
       preimage
@@ -2765,17 +2754,20 @@ ${commentBypassFooter(filePath, bypass.notes)}`;
       debugLog4("skipping due to tool failure in output");
       return;
     }
-    if (pendingCall.tool === "write" && pendingCall.preimage !== undefined && typeof pendingCall.content === "string" && !hasNewCommentLines(pendingCall.preimage, pendingCall.content, pendingCall.filePath)) {
+    const change = extractToolChange(pendingCall.tool, pendingCall.args, pendingCall.preimage);
+    if (!change)
+      return;
+    if (pendingCall.tool === "write" && pendingCall.preimage !== undefined && !hasNewCommentLines(change.oldText, change.newText, pendingCall.filePath)) {
       debugLog4("no new comment lines in write; skipping");
       return;
     }
     await reportComments(pendingCall.sessionID, pendingCall.tool.charAt(0).toUpperCase() + pendingCall.tool.slice(1), {
       file_path: pendingCall.filePath,
-      content: pendingCall.content,
-      old_string: pendingCall.oldString,
-      new_string: pendingCall.newString,
-      edits: pendingCall.edits
-    }, output, changeOf(pendingCall));
+      content: readString(pendingCall.args, "content"),
+      old_string: readString(pendingCall.args, "oldString", "old_string"),
+      new_string: readString(pendingCall.args, "newString", "new_string"),
+      edits: pendingCall.args.edits
+    }, output, { oldText: change.oldText, newText: change.newText });
   }
   return { before, after };
 }

@@ -1,12 +1,6 @@
 export interface PendingCall {
     filePath: string;
-    content?: string;
-    oldString?: string;
-    newString?: string;
-    edits?: Array<{
-        old_string: string;
-        new_string: string;
-    }>;
+    args: Record<string, unknown>;
     tool: string;
     sessionID: string;
     preimage?: string;
