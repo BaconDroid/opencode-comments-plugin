@@ -11,6 +11,7 @@ import {
   optionContainer,
   resolveOption,
   resolveRuleConfig,
+  type GuardBaseConfig,
   type ResolveInputs,
   type Severity,
 } from "./core/config"
@@ -86,14 +87,7 @@ function resolveCommandAdapter(
 // Fields shared by both guards, resolved with the env > options > config
 // precedence. `dedupWindowDefault` is the only per-guard difference.
 function resolveGuardBase(
-  target: {
-    enabled: boolean
-    customPrompt?: string
-    appendPrompt?: string
-    maxWarningsPerFile: number
-    dedupWindowMs?: number
-    triggerTools?: Set<string>
-  },
+  target: GuardBaseConfig,
   envPrefix: string,
   inputs: ResolveInputs,
   dedupWindowDefault: number,

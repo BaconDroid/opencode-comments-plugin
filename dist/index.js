@@ -2584,7 +2584,7 @@ function createMutationAdapter(options) {
 
 // src/rules/comments/index.ts
 import { existsSync as existsSync6 } from "fs";
-var debugLog4 = createDebugLog("comment-checker:hook", process.env.COMMENT_CHECKER_DEBUG === "1");
+var debugLog4 = createDebugLog("comment-guard", process.env.COMMENT_CHECKER_DEBUG === "1");
 var MATCHERS2 = bypassMatchers("comment-guard");
 function bypassState(newText, oldText, language) {
   const notes = collectBypasses(newText, MATCHERS2);
@@ -2705,69 +2705,73 @@ ${commentBypassFooter(filePath, bypass.notes)}`;
     }
   }
   async function before(input, output) {
-    const { triggerTools } = getConfig();
-    if (!getConfig().enabled)
-      return;
-    const toolLower = input.tool.toLowerCase();
-    if (toolLower === APPLY_PATCH_TOOL_NAME || !isTriggeredTool(triggerTools, toolLower)) {
-      return;
+    try {
+      const { triggerTools } = getConfig();
+      if (!getConfig().enabled)
+        return;
+      const toolLower = input.tool.toLowerCase();
+      if (toolLower === APPLY_PATCH_TOOL_NAME || !isTriggeredTool(triggerTools, toolLower)) {
+        return;
+      }
+      pendingCalls.prune();
+      const filePath = firstString(output.args, "filePath", "file_path", "path");
+      if (!filePath) {
+        debugLog4("no filePath found for tool:", toolLower);
+        return;
+      }
+      if (!isCheckedPath(filePath, getConfig().paths)) {
+        debugLog4("path not in comment_checker.paths; skipping:", filePath);
+        return;
+      }
+      let preimage;
+      if (typeof output.args.content === "string") {
+        preimage = readPreimage(filePath);
+      }
+      pendingCalls.set(input.callID, { args: output.args, preimage });
+    } catch (err) {
+      debugLog4("before failed (fail-open):", err);
     }
-    pendingCalls.prune();
-    const filePath = output.args.filePath ?? output.args.file_path ?? output.args.path;
-    if (!filePath) {
-      debugLog4("no filePath found for tool:", toolLower);
-      return;
-    }
-    if (!isCheckedPath(filePath, getConfig().paths)) {
-      debugLog4("path not in comment_checker.paths; skipping:", filePath);
-      return;
-    }
-    let preimage;
-    if (typeof output.args.content === "string") {
-      preimage = readPreimage(filePath);
-    }
-    pendingCalls.set(input.callID, {
-      filePath,
-      args: output.args,
-      tool: toolLower,
-      sessionID: input.sessionID,
-      preimage
-    });
   }
   async function after(input, output) {
-    const { triggerTools } = getConfig();
-    if (!getConfig().enabled)
-      return;
-    if (input.tool.toLowerCase() === APPLY_PATCH_TOOL_NAME) {
-      if (!isTriggeredTool(triggerTools, APPLY_PATCH_TOOL_NAME))
+    try {
+      const { triggerTools } = getConfig();
+      if (!getConfig().enabled)
+        return;
+      const toolLower = input.tool.toLowerCase();
+      if (toolLower === APPLY_PATCH_TOOL_NAME) {
+        if (!isTriggeredTool(triggerTools, APPLY_PATCH_TOOL_NAME))
+          return;
+        budget.touch(input.sessionID);
+        await checkApplyPatch(input.sessionID, output);
+        return;
+      }
+      const pendingCall = pendingCalls.take(input.callID);
+      if (!pendingCall)
         return;
       budget.touch(input.sessionID);
-      await checkApplyPatch(input.sessionID, output);
-      return;
+      const isToolFailure = output.output.toLowerCase().startsWith("error");
+      if (isToolFailure) {
+        debugLog4("skipping due to tool failure in output");
+        return;
+      }
+      const change = extractToolChange(toolLower, pendingCall.args, pendingCall.preimage);
+      if (!change)
+        return;
+      const filePath = firstString(pendingCall.args, "filePath", "file_path", "path") ?? "";
+      if (toolLower === "write" && pendingCall.preimage !== undefined && !hasNewCommentLines(change.oldText, change.newText, filePath)) {
+        debugLog4("no new comment lines in write; skipping");
+        return;
+      }
+      await reportComments(input.sessionID, toolLower.charAt(0).toUpperCase() + toolLower.slice(1), {
+        file_path: filePath,
+        content: readString(pendingCall.args, "content"),
+        old_string: readString(pendingCall.args, "oldString", "old_string"),
+        new_string: readString(pendingCall.args, "newString", "new_string"),
+        edits: pendingCall.args.edits
+      }, output, { oldText: change.oldText, newText: change.newText });
+    } catch (err) {
+      debugLog4("after failed (fail-open):", err);
     }
-    const pendingCall = pendingCalls.take(input.callID);
-    if (!pendingCall)
-      return;
-    budget.touch(input.sessionID);
-    const isToolFailure = output.output.toLowerCase().startsWith("error");
-    if (isToolFailure) {
-      debugLog4("skipping due to tool failure in output");
-      return;
-    }
-    const change = extractToolChange(pendingCall.tool, pendingCall.args, pendingCall.preimage);
-    if (!change)
-      return;
-    if (pendingCall.tool === "write" && pendingCall.preimage !== undefined && !hasNewCommentLines(change.oldText, change.newText, pendingCall.filePath)) {
-      debugLog4("no new comment lines in write; skipping");
-      return;
-    }
-    await reportComments(pendingCall.sessionID, pendingCall.tool.charAt(0).toUpperCase() + pendingCall.tool.slice(1), {
-      file_path: pendingCall.filePath,
-      content: readString(pendingCall.args, "content"),
-      old_string: readString(pendingCall.args, "oldString", "old_string"),
-      new_string: readString(pendingCall.args, "newString", "new_string"),
-      edits: pendingCall.args.edits
-    }, output, { oldText: change.oldText, newText: change.newText });
   }
   return { before, after };
 }

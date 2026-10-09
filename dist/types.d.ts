@@ -1,15 +1,19 @@
-export interface PendingCall {
-    filePath: string;
-    args: Record<string, unknown>;
+export interface ToolExecuteInput {
     tool: string;
     sessionID: string;
-    preimage?: string;
+    callID: string;
 }
-export interface PatchFileChange {
-    type?: string;
-    filePath?: string;
-    movePath?: string;
-    patch?: string;
+export interface ToolExecuteOutput {
+    title: string;
+    output: string;
+    metadata: unknown;
+}
+export interface PermissionLike {
+    type: string;
+    pattern?: string | string[];
+}
+export interface PermissionDecision {
+    status: "ask" | "deny" | "allow";
 }
 export interface HookInput {
     session_id: string;

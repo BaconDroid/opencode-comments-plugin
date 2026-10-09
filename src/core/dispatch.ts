@@ -7,48 +7,26 @@ import { APPLY_PATCH_TOOL_NAME } from "../constants"
 import { AnalyzerRegistry } from "./analyzer"
 import { GuardBudget } from "./budget"
 import type { Bypass } from "./bypass"
-import type { Severity } from "./config"
+import type { GuardBaseConfig, Severity } from "./config"
 import { createDebugLog } from "./debug"
 import { extractPatchChanges, extractToolChange, firstString, readPreimage, type ExtractedChange } from "./diff"
 import { appendFeedback, type Finding } from "./feedback"
-import { PendingCallStore } from "./pending"
+import { PendingCallStore, type PendingToolCall } from "./pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "./result-pipeline"
 import { isTriggeredTool } from "./triggers"
 import { createRuleAnalyzer } from "../rules/tests/analyzer"
 import { isTestPath } from "../rules/tests/patterns"
+import type { PermissionDecision, PermissionLike, ToolExecuteInput, ToolExecuteOutput } from "../types"
 
 const debugLog = createDebugLog(
   "test-guard",
   process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1",
 )
 
-export interface ResolvedTestGuard {
-  enabled: boolean
+export interface ResolvedTestGuard extends GuardBaseConfig {
   testPatterns: string[]
   testCommand?: string | null
   checks: Record<string, Severity>
-  maxWarningsPerFile: number
-  dedupWindowMs?: number
-  customPrompt?: string
-  appendPrompt?: string
-  triggerTools?: Set<string>
-}
-
-interface BeforeInput {
-  tool: string
-  sessionID: string
-  callID: string
-}
-
-interface AfterOutput {
-  title: string
-  output: string
-  metadata: unknown
-}
-
-interface PendingGuardCall {
-  args: Record<string, unknown>
-  preimage?: string
 }
 
 const DEFAULT_TEST_GUARD: ResolvedTestGuard = {
@@ -58,19 +36,9 @@ const DEFAULT_TEST_GUARD: ResolvedTestGuard = {
   maxWarningsPerFile: 0,
 }
 
-// Minimal shape of the `permission.ask` hook payload we consume.
-export interface PermissionLike {
-  type: string
-  pattern?: string | string[]
-}
-
-export interface PermissionDecision {
-  status: "ask" | "deny" | "allow"
-}
-
 export interface TestGuard {
-  before(input: BeforeInput, output: { args: Record<string, unknown> }): void
-  after(input: BeforeInput, output: AfterOutput): Promise<void>
+  before(input: ToolExecuteInput, output: { args: Record<string, unknown> }): void
+  after(input: ToolExecuteInput, output: ToolExecuteOutput): Promise<void>
   permission(input: PermissionLike, output: PermissionDecision): void
 }
 
@@ -88,7 +56,7 @@ export function extractPatchEntries(patchText: string): Array<{ kind: string; pa
 
 export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard {
   const budget = new GuardBudget()
-  const pending = new PendingCallStore<PendingGuardCall>()
+  const pending = new PendingCallStore<PendingToolCall>()
   const registry = new AnalyzerRegistry()
   registry.register(createRuleAnalyzer(getResolved))
 
@@ -140,7 +108,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
     }
   }
 
-  function before(input: BeforeInput, output: { args: Record<string, unknown> }): void {
+  function before(input: ToolExecuteInput, output: { args: Record<string, unknown> }): void {
     try {
       const resolved = resolve()
       if (!resolved.enabled) return
@@ -187,7 +155,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
     }
   }
 
-  async function after(input: BeforeInput, output: AfterOutput): Promise<void> {
+  async function after(input: ToolExecuteInput, output: ToolExecuteOutput): Promise<void> {
     try {
       const resolved = resolve()
       if (!resolved.enabled) return

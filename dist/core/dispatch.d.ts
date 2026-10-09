@@ -1,37 +1,15 @@
-import type { Severity } from "./config";
-export interface ResolvedTestGuard {
-    enabled: boolean;
+import type { GuardBaseConfig, Severity } from "./config";
+import type { PermissionDecision, PermissionLike, ToolExecuteInput, ToolExecuteOutput } from "../types";
+export interface ResolvedTestGuard extends GuardBaseConfig {
     testPatterns: string[];
     testCommand?: string | null;
     checks: Record<string, Severity>;
-    maxWarningsPerFile: number;
-    dedupWindowMs?: number;
-    customPrompt?: string;
-    appendPrompt?: string;
-    triggerTools?: Set<string>;
-}
-interface BeforeInput {
-    tool: string;
-    sessionID: string;
-    callID: string;
-}
-interface AfterOutput {
-    title: string;
-    output: string;
-    metadata: unknown;
-}
-export interface PermissionLike {
-    type: string;
-    pattern?: string | string[];
-}
-export interface PermissionDecision {
-    status: "ask" | "deny" | "allow";
 }
 export interface TestGuard {
-    before(input: BeforeInput, output: {
+    before(input: ToolExecuteInput, output: {
         args: Record<string, unknown>;
     }): void;
-    after(input: BeforeInput, output: AfterOutput): Promise<void>;
+    after(input: ToolExecuteInput, output: ToolExecuteOutput): Promise<void>;
     permission(input: PermissionLike, output: PermissionDecision): void;
 }
 export declare function extractPatchEntries(patchText: string): Array<{
@@ -39,4 +17,3 @@ export declare function extractPatchEntries(patchText: string): Array<{
     path: string;
 }>;
 export declare function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard;
-export {};
