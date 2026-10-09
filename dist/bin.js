@@ -1591,13 +1591,13 @@ function asLevel(value) {
   if (typeof value !== "string")
     return;
   const normalized = value.trim().toLowerCase();
-  if (normalized === "off" || normalized === "warn" || normalized === "block")
+  if (normalized === "off" || normalized === "warn")
     return normalized;
   return;
 }
 
 // src/core/schema.ts
-var SEVERITY = ["off", "warn", "block"];
+var SEVERITY = ["off", "warn"];
 function validateTupleOptions(value) {
   const errors = [];
   if (!value || typeof value !== "object" || Array.isArray(value)) {

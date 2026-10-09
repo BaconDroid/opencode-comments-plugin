@@ -174,13 +174,10 @@ tests. It reuses the same tuple, under a sibling `test_guard` key:
 }
 ```
 
-Every content rule defaults to `warn`. `block` is opt-in per rule and only then
-can `tool.execute.before` throw. When `protected-paths` is `block`, the plugin
-also denies the `edit`/`write` permission through `permission.ask`, which
-covers sub-agents that bypass `tool.execute.before` (opencode issue #5894); if
-such a change still reaches the after hook, the warning is prefixed with
-`BLOCK BYPASSED`. All internal guard errors are swallowed (fail-open), so the
-guard can never prevent the agent's action.
+Every content rule defaults to `warn`; `off` disables it. The test guard is
+advisory only: it never blocks and never rewrites the file. All internal guard
+errors are swallowed (fail-open), so the guard can never prevent the agent's
+action.
 
 | Rule | Signal | Default |
 |---|---|---|
@@ -284,10 +281,8 @@ rules.
 
 Known limits: the built-in rules are regex-based (no AST), so a test
 declaration written inside a string or a regex literal can be misread — use the
-opt-in external parser adapter for AST-grade precision. `block` is not airtight
-because sub-agents may bypass `tool.execute.before` (opencode issue #5894);
-cross-file duplicate detection runs in the audit/CI paths, not the live
-per-file hook.
+opt-in external parser adapter for AST-grade precision. Cross-file duplicate
+detection runs in the audit/CI paths, not the live per-file hook.
 
 ## Debug
 

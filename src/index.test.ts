@@ -48,10 +48,6 @@ interface CommentCheckerHooks {
   config?: (config: unknown) => Promise<void>
   event?: (input: { event: { type: string } }) => Promise<void>
   tool?: Record<string, unknown>
-  "permission.ask"?: (
-    input: { type: string; pattern?: string | string[] },
-    output: { status: "ask" | "deny" | "allow" },
-  ) => Promise<void>
   "tool.execute.before": (input: BeforeInput, output: { args: Record<string, unknown> }) => Promise<void>
   "tool.execute.after": (input: BeforeInput, output: AfterOutput) => Promise<void>
 }
@@ -662,18 +658,6 @@ test("restricts the test guard to the configured tools", async () => {
   })
   await hooks["tool.execute.after"]({ tool: "write", sessionID: "s", callID: "tg-tools-w" }, writeResult)
   expect(writeResult.output).toContain("skip-focus-added")
-})
-
-test("denies permission for an existing test file when protected-paths is block", async () => {
-  const filePath = join(cacheRoot, "permission.test.ts")
-  writeFileSync(filePath, "it('a', () => {})\n")
-  const hooks = await newSession({
-    comment_checker: { tools: ["none"] },
-    test_guard: { checks: { "protected-paths": "block" } },
-  })
-  const output: { status: "ask" | "deny" | "allow" } = { status: "ask" }
-  await hooks["permission.ask"]!({ type: "edit", pattern: filePath }, output)
-  expect(output.status).toBe("deny")
 })
 
 test("event hook ignores session.idle when mutation is disabled", async () => {
