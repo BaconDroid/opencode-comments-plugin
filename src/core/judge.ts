@@ -4,9 +4,9 @@
 
 import { changedTestChanges, diffChanges } from "./ci"
 import { isCommentLine, isSupportedLanguage, type ExtractedChange } from "./diff"
+import { parseAdvisoryFindings } from "./advisory-findings"
 import { createAdvisoryTool, createIdleAdvisory, idleMessages, type IdleAdvisoryController } from "./idle-advisory"
 import { parseJsonSlice } from "./json"
-import { PLACEHOLDER_PATTERN } from "../rules/tests/patterns"
 
 // Free OpenCode Zen model (id `opencode/big-pickle`), used when no judge model
 // is configured. Free for a limited period; data may be used to improve it.
@@ -36,8 +36,6 @@ export type JudgeRunner = (prompt: string, model?: string) => Promise<string>
 const JUDGE_SYSTEM =
   "You are a read-only test-quality reviewer. Do not call any tool. Reply with JSON only."
 
-const MAX_FINDINGS = 20
-
 export function buildJudgePrompt(changes: ExtractedChange[]): string {
   const sections: string[] = []
   for (const change of changes) {
@@ -63,24 +61,12 @@ export function buildJudgePrompt(changes: ExtractedChange[]): string {
 export function parseJudgeResponse(raw: string): JudgeFinding[] {
   const parsed = parseJsonSlice(raw, "[", "]")
   if (!Array.isArray(parsed)) return []
-
-  const findings: JudgeFinding[] = []
-  for (const item of parsed) {
-    if (!item || typeof item !== "object") continue
-    const record = item as Record<string, unknown>
-    const file = typeof record.file === "string" ? record.file : ""
-    const reason = typeof record.reason === "string" ? record.reason.trim() : ""
-    if (!file || !reason) continue
-    if (PLACEHOLDER_PATTERN.test(reason)) continue
-    findings.push({
-      file,
-      line: typeof record.line === "number" && Number.isFinite(record.line) ? record.line : 0,
-      reason,
-      confidence: typeof record.confidence === "string" ? record.confidence : "medium",
-    })
-    if (findings.length >= MAX_FINDINGS) break
-  }
-  return findings
+  return parseAdvisoryFindings(parsed, "reason").map(finding => ({
+    file: finding.file,
+    line: finding.line,
+    reason: finding.text,
+    confidence: finding.confidence,
+  }))
 }
 
 function judgeFindingLines(findings: JudgeFinding[]): string {

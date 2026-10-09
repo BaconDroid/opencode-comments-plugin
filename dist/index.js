@@ -2068,6 +2068,33 @@ function diffChanges(directory, base) {
   return changes;
 }
 
+// src/core/advisory-findings.ts
+var MAX_ADVISORY_FINDINGS = 20;
+function parseAdvisoryFindings(items, textKey) {
+  const findings = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object")
+      continue;
+    const record = item;
+    const file = typeof record.file === "string" ? record.file : "";
+    const text = typeof record[textKey] === "string" ? record[textKey].trim() : "";
+    if (!file || !text)
+      continue;
+    if (PLACEHOLDER_PATTERN.test(text))
+      continue;
+    findings.push({
+      file,
+      line: typeof record.line === "number" && Number.isFinite(record.line) ? record.line : 0,
+      text,
+      confidence: typeof record.confidence === "string" ? record.confidence : "medium",
+      record
+    });
+    if (findings.length >= MAX_ADVISORY_FINDINGS)
+      break;
+  }
+  return findings;
+}
+
 // src/core/json.ts
 function sliceBetween(raw, open, close) {
   const start = raw.indexOf(open);
@@ -2094,7 +2121,6 @@ function resolveJudgeModel(configured) {
   return configured ?? DEFAULT_JUDGE_MODEL;
 }
 var JUDGE_SYSTEM = "You are a read-only test-quality reviewer. Do not call any tool. Reply with JSON only.";
-var MAX_FINDINGS = 20;
 function buildJudgePrompt(changes) {
   const sections = [];
   for (const change of changes) {
@@ -2128,27 +2154,12 @@ function parseJudgeResponse(raw) {
   const parsed = parseJsonSlice(raw, "[", "]");
   if (!Array.isArray(parsed))
     return [];
-  const findings = [];
-  for (const item of parsed) {
-    if (!item || typeof item !== "object")
-      continue;
-    const record = item;
-    const file = typeof record.file === "string" ? record.file : "";
-    const reason = typeof record.reason === "string" ? record.reason.trim() : "";
-    if (!file || !reason)
-      continue;
-    if (PLACEHOLDER_PATTERN.test(reason))
-      continue;
-    findings.push({
-      file,
-      line: typeof record.line === "number" && Number.isFinite(record.line) ? record.line : 0,
-      reason,
-      confidence: typeof record.confidence === "string" ? record.confidence : "medium"
-    });
-    if (findings.length >= MAX_FINDINGS)
-      break;
-  }
-  return findings;
+  return parseAdvisoryFindings(parsed, "reason").map((finding) => ({
+    file: finding.file,
+    line: finding.line,
+    reason: finding.text,
+    confidence: finding.confidence
+  }));
 }
 function judgeFindingLines(findings) {
   return findings.map((finding) => `- ${finding.file}:${finding.line} ${finding.reason} (${finding.confidence})`).join(`
@@ -2313,7 +2324,6 @@ function createGuardCommentJudgeTool(judge) {
 }
 
 // src/core/parser-adapter.ts
-var MAX_FINDINGS2 = 20;
 function buildParserPayload(changes) {
   const files = [];
   for (const change of changes) {
@@ -2341,28 +2351,13 @@ function parseParserFindings(raw) {
       return [];
   }
   const items = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray(parsed.findings) ? parsed.findings : [];
-  const findings = [];
-  for (const item of items) {
-    if (!item || typeof item !== "object")
-      continue;
-    const record = item;
-    const file = typeof record.file === "string" ? record.file : "";
-    const message = typeof record.message === "string" ? record.message.trim() : "";
-    if (!file || !message)
-      continue;
-    if (PLACEHOLDER_PATTERN.test(message))
-      continue;
-    findings.push({
-      file,
-      line: typeof record.line === "number" && Number.isFinite(record.line) ? record.line : 0,
-      rule: typeof record.rule === "string" ? record.rule : "external-parser",
-      message,
-      confidence: typeof record.confidence === "string" ? record.confidence : "medium"
-    });
-    if (findings.length >= MAX_FINDINGS2)
-      break;
-  }
-  return findings;
+  return parseAdvisoryFindings(items, "message").map((finding) => ({
+    file: finding.file,
+    line: finding.line,
+    rule: typeof finding.record.rule === "string" ? finding.record.rule : "external-parser",
+    message: finding.text,
+    confidence: finding.confidence
+  }));
 }
 function formatParserFindings(findings) {
   const lines = findings.map((finding) => `- ${finding.file}:${finding.line} [${finding.rule}] ${finding.message} (${finding.confidence})`);
