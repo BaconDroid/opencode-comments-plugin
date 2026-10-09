@@ -10,14 +10,28 @@ import {
   getPreferredCommentCheckerVersionSync,
 } from "./downloader"
 import { runProcess } from "./core/runner"
+import { createDebugLog } from "./core/debug"
+import { COMMENT_CHECKER_EVENT } from "./constants"
 import type { CheckResult, HookInput } from "./types"
 
-const DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1"
+const debugLog = createDebugLog("comment-checker:cli", process.env.COMMENT_CHECKER_DEBUG === "1")
 
-function debugLog(...args: unknown[]) {
-  if (!DEBUG) return
-  const msg = `[${new Date().toISOString()}] [comment-checker:cli] ${args.map(a => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}\n`
-  process.stderr.write(msg)
+// Builds the comment-checker hook payload. Shared by the live hook, the audit
+// and the CI check so the event name and shape stay in one place.
+export function commentHookInput(options: {
+  sessionID: string
+  toolName: string
+  cwd: string
+  toolInput: HookInput["tool_input"]
+}): HookInput {
+  return {
+    session_id: options.sessionID,
+    tool_name: options.toolName,
+    transcript_path: "",
+    cwd: options.cwd,
+    hook_event_name: COMMENT_CHECKER_EVENT,
+    tool_input: options.toolInput,
+  }
 }
 
 function getBinaryName(): string {

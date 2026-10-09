@@ -16,14 +16,20 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, un
 import { join } from "path";
 import { homedir } from "os";
 import { createRequire } from "module";
-var DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1";
-function debugLog(...args) {
-  if (!DEBUG)
-    return;
-  const msg = `[${new Date().toISOString()}] [comment-checker:downloader] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
-`;
-  process.stderr.write(msg);
+
+// src/core/debug.ts
+function createDebugLog(prefix, enabled) {
+  if (!enabled)
+    return () => {};
+  return (...args) => {
+    const message = args.map((arg) => typeof arg === "object" ? JSON.stringify(arg, null, 2) : String(arg)).join(" ");
+    process.stderr.write(`[${new Date().toISOString()}] [${prefix}] ${message}
+`);
+  };
 }
+
+// src/downloader.ts
+var debugLog = createDebugLog("comment-checker:downloader", process.env.COMMENT_CHECKER_DEBUG === "1");
 var REPO = "code-yeongyu/go-claude-code-comment-checker";
 var LATEST_URL = `https://github.com/${REPO}/releases/latest`;
 var LATEST_TTL_MS = 24 * 60 * 60 * 1000;
@@ -270,13 +276,16 @@ async function runProcess(args, options = {}) {
 }
 
 // src/cli.ts
-var DEBUG2 = process.env.COMMENT_CHECKER_DEBUG === "1";
-function debugLog2(...args) {
-  if (!DEBUG2)
-    return;
-  const msg = `[${new Date().toISOString()}] [comment-checker:cli] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
-`;
-  process.stderr.write(msg);
+var debugLog2 = createDebugLog("comment-checker:cli", process.env.COMMENT_CHECKER_DEBUG === "1");
+function commentHookInput(options) {
+  return {
+    session_id: options.sessionID,
+    tool_name: options.toolName,
+    transcript_path: "",
+    cwd: options.cwd,
+    hook_event_name: COMMENT_CHECKER_EVENT,
+    tool_input: options.toolInput
+  };
 }
 function getBinaryName2() {
   return process.platform === "win32" ? "comment-checker.exe" : "comment-checker";
@@ -906,6 +915,39 @@ ${TEST_GUARD_MARKER}
 ${message}`;
 }
 
+// src/core/pending.ts
+var PENDING_CALL_TTL = 60000;
+
+class PendingCallStore {
+  entries = new Map;
+  ttlMs;
+  constructor(options = {}) {
+    this.ttlMs = options.ttlMs ?? PENDING_CALL_TTL;
+  }
+  set(callID, value, now = Date.now()) {
+    this.entries.set(callID, { value, timestamp: now });
+  }
+  get(callID) {
+    return this.entries.get(callID)?.value;
+  }
+  take(callID) {
+    const entry = this.entries.get(callID);
+    if (!entry)
+      return;
+    this.entries.delete(callID);
+    return entry.value;
+  }
+  delete(callID) {
+    this.entries.delete(callID);
+  }
+  prune(now = Date.now()) {
+    for (const [callID, entry] of this.entries) {
+      if (now - entry.timestamp > this.ttlMs)
+        this.entries.delete(callID);
+    }
+  }
+}
+
 // src/core/result-pipeline.ts
 function formatBypassNote(filePath, bypass) {
   return `${filePath}:${bypass.line} ${bypass.kind}${bypass.reason ? ` (${bypass.reason})` : ""}`;
@@ -938,6 +980,11 @@ ${options.appendPrompt}` : raw;
   } catch {
     return "";
   }
+}
+
+// src/core/triggers.ts
+function isTriggeredTool(triggerTools, toolLower, fallback = DEFAULT_TRIGGER_TOOLS) {
+  return triggerTools ? triggerTools.has(toolLower) : fallback.includes(toolLower);
 }
 
 // src/core/glob.ts
@@ -1744,16 +1791,7 @@ function toFindings(findings, filePath, checks) {
 }
 
 // src/core/dispatch.ts
-var DEBUG3 = process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1";
-function debugLog3(...args) {
-  if (!DEBUG3)
-    return;
-  const msg = `[${new Date().toISOString()}] [test-guard] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
-`;
-  process.stderr.write(msg);
-}
-var DEFAULT_TEST_TRIGGER_TOOLS = new Set(DEFAULT_TRIGGER_TOOLS);
-var PENDING_CALL_TTL = 60000;
+var debugLog3 = createDebugLog("test-guard", process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1");
 var DEFAULT_TEST_GUARD = {
   enabled: true,
   testPatterns: [],
@@ -1772,19 +1810,13 @@ function extractPatchEntries(patchText) {
 }
 function createTestGuard(getResolved) {
   const budget = new GuardBudget;
-  const pending = new Map;
+  const pending = new PendingCallStore;
   const pendingNotes = [];
   const registry = new AnalyzerRegistry;
   registry.register(createRuleAnalyzer(getResolved));
   function queueNote(message) {
     if (message.length > 0)
       pendingNotes.push(message);
-  }
-  function prunePending(now = Date.now()) {
-    for (const [callID, call] of pending) {
-      if (now - call.timestamp > PENDING_CALL_TTL)
-        pending.delete(callID);
-    }
   }
   function consumeNotes() {
     return pendingNotes.splice(0, pendingNotes.length);
@@ -1801,9 +1833,6 @@ function createTestGuard(getResolved) {
   }
   function isProtectedPath(filePath, patterns) {
     return isTestPath(filePath, patterns);
-  }
-  function triggersTool(resolved, toolLower) {
-    return (resolved.triggerTools ?? DEFAULT_TEST_TRIGGER_TOOLS).has(toolLower);
   }
   function pathExists(filePath) {
     try {
@@ -1844,9 +1873,9 @@ function createTestGuard(getResolved) {
       const toolLower = input.tool.toLowerCase();
       const args = output.args ?? {};
       const patterns = resolved.testPatterns.length > 0 ? resolved.testPatterns : [];
-      if (!triggersTool(resolved, toolLower))
+      if (!isTriggeredTool(resolved.triggerTools, toolLower))
         return;
-      prunePending();
+      pending.prune();
       if (isBlocking()) {
         if (toolLower === APPLY_PATCH_TOOL_NAME) {
           const patchText = firstString(args, "patchText", "patch", "patch_text") ?? "";
@@ -1871,7 +1900,7 @@ function createTestGuard(getResolved) {
       if (toolLower !== APPLY_PATCH_TOOL_NAME && filePath && typeof args.content === "string") {
         preimage = readPreimage(filePath);
       }
-      pending.set(input.callID, { args, preimage, timestamp: Date.now() });
+      pending.set(input.callID, { args, preimage });
     } catch (err) {
       if (err instanceof Error && err.message.startsWith("[test-guard]"))
         throw err;
@@ -1888,11 +1917,10 @@ function createTestGuard(getResolved) {
       let changes = [];
       const failed = output.output.toLowerCase().startsWith("error");
       if (toolLower === APPLY_PATCH_TOOL_NAME) {
-        if (triggersTool(resolved, APPLY_PATCH_TOOL_NAME) && !failed)
+        if (isTriggeredTool(resolved.triggerTools, APPLY_PATCH_TOOL_NAME) && !failed)
           changes = extractPatchChanges(output.metadata);
-      } else if (triggersTool(resolved, toolLower)) {
-        const call = pending.get(input.callID);
-        pending.delete(input.callID);
+      } else if (isTriggeredTool(resolved.triggerTools, toolLower)) {
+        const call = pending.take(input.callID);
         if (call && !failed) {
           const change = extractToolChange(toolLower, call.args, call.preimage);
           if (change)
@@ -2528,15 +2556,7 @@ function createMutationAdapter(options) {
 
 // src/rules/comments/index.ts
 import { existsSync as existsSync6 } from "fs";
-var DEBUG4 = process.env.COMMENT_CHECKER_DEBUG === "1";
-function debugLog4(...args) {
-  if (!DEBUG4)
-    return;
-  const msg = `[${new Date().toISOString()}] [comment-checker:hook] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
-`;
-  process.stderr.write(msg);
-}
-var PENDING_CALL_TTL2 = 60000;
+var debugLog4 = createDebugLog("comment-checker:hook", process.env.COMMENT_CHECKER_DEBUG === "1");
 var MATCHERS2 = bypassMatchers("comment-guard");
 function bypassState(newText, oldText, language) {
   const notes = collectBypasses(newText, MATCHERS2);
@@ -2589,30 +2609,22 @@ function createCommentBinaryAnalyzer(getConfig) {
         debugLog4("CLI not available, skipping comment check");
         return {};
       }
-      const hookInput = {
-        session_id: ctx.sessionID,
-        tool_name: ctx.tool,
-        transcript_path: "",
+      const hookInput = commentHookInput({
+        sessionID: ctx.sessionID,
+        toolName: ctx.tool,
         cwd: process.cwd(),
-        hook_event_name: COMMENT_CHECKER_EVENT,
-        tool_input: ctx.args ?? {}
-      };
+        toolInput: ctx.args ?? {}
+      });
       const result = await runCommentChecker(hookInput, { prompt: config.customPrompt, timeoutMs: config.timeoutMs });
       return result.hasComments && result.message ? { raw: result.message } : {};
     }
   };
 }
 function createCommentGuard(getConfig) {
-  const pendingCalls = new Map;
+  const pendingCalls = new PendingCallStore;
   const budget = new GuardBudget({ dedupWindowMs: 0 });
   const registry = new AnalyzerRegistry;
   registry.register(createCommentBinaryAnalyzer(getConfig));
-  function prunePending(now = Date.now()) {
-    for (const [callID, call] of pendingCalls) {
-      if (now - call.timestamp > PENDING_CALL_TTL2)
-        pendingCalls.delete(callID);
-    }
-  }
   function hasNewCommentLines(preimage, content, filePath) {
     const language = detectLanguage(filePath);
     const { added } = diffLines(preimage, content);
@@ -2682,10 +2694,10 @@ ${commentBypassFooter(filePath, bypass.notes)}`;
     if (!getConfig().enabled)
       return;
     const toolLower = input.tool.toLowerCase();
-    if (toolLower === APPLY_PATCH_TOOL_NAME || !triggerTools.has(toolLower)) {
+    if (toolLower === APPLY_PATCH_TOOL_NAME || !isTriggeredTool(triggerTools, toolLower)) {
       return;
     }
-    prunePending();
+    pendingCalls.prune();
     const filePath = output.args.filePath ?? output.args.file_path ?? output.args.path;
     const content = output.args.content;
     const oldString = output.args.oldString ?? output.args.old_string;
@@ -2711,7 +2723,6 @@ ${commentBypassFooter(filePath, bypass.notes)}`;
       edits,
       tool: toolLower,
       sessionID: input.sessionID,
-      timestamp: Date.now(),
       preimage
     });
   }
@@ -2720,16 +2731,15 @@ ${commentBypassFooter(filePath, bypass.notes)}`;
     if (!getConfig().enabled)
       return;
     if (input.tool.toLowerCase() === APPLY_PATCH_TOOL_NAME) {
-      if (!triggerTools.has(APPLY_PATCH_TOOL_NAME))
+      if (!isTriggeredTool(triggerTools, APPLY_PATCH_TOOL_NAME))
         return;
       budget.touch(input.sessionID);
       await checkApplyPatch(input.sessionID, output);
       return;
     }
-    const pendingCall = pendingCalls.get(input.callID);
+    const pendingCall = pendingCalls.take(input.callID);
     if (!pendingCall)
       return;
-    pendingCalls.delete(input.callID);
     budget.touch(input.sessionID);
     const isToolFailure = output.output.toLowerCase().startsWith("error");
     if (isToolFailure) {
@@ -2958,14 +2968,12 @@ async function defaultRunCheck(filePath, content) {
   const cliPath = await getCommentCheckerPath();
   if (!cliPath)
     return [];
-  const result = await runCommentChecker({
-    session_id: "guard-audit",
-    tool_name: "Write",
-    transcript_path: "",
+  const result = await runCommentChecker(commentHookInput({
+    sessionID: "guard-audit",
+    toolName: "Write",
     cwd: process.cwd(),
-    hook_event_name: COMMENT_CHECKER_EVENT,
-    tool_input: { file_path: filePath, content }
-  });
+    toolInput: { file_path: filePath, content }
+  }));
   if (!result.hasComments)
     return [];
   return parseCommentsXml(result.message);
@@ -3166,16 +3174,19 @@ function resolveCommandAdapter(target, envPrefix, inputs) {
   target.command = resolveOption(asString, `${envPrefix}_COMMAND`, "command", inputs);
   target.timeoutMs = resolveOption((value) => asCount(value, 1), `${envPrefix}_TIMEOUT_MS`, "timeout_ms", inputs);
 }
+function resolveGuardBase(target, envPrefix, inputs, dedupWindowDefault) {
+  target.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, true), `${envPrefix}_ENABLED`, "enabled", inputs) ?? true;
+  target.customPrompt = resolveOption(asString, `${envPrefix}_CUSTOM_PROMPT`, "custom_prompt", inputs);
+  target.appendPrompt = resolveOption(asString, `${envPrefix}_APPEND_PROMPT`, "append_prompt", inputs);
+  target.maxWarningsPerFile = resolveOption((value) => asCount(value, 1), `${envPrefix}_MAX_WARNINGS_PER_FILE`, "max_warnings_per_file", inputs) ?? 0;
+  target.dedupWindowMs = resolveOption((value) => asCount(value, 0), `${envPrefix}_DEDUP_WINDOW_MS`, "dedup_window_ms", inputs) ?? dedupWindowDefault;
+  target.triggerTools = new Set(resolveOption(asTools, `${envPrefix}_TOOLS`, "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS);
+}
 function resolveConfiguration(config) {
   const options = optionContainer(pluginOptions, "comment_checker");
   const fromConfig = optionContainer(config, "comment_checker");
   const inputs = { options, config: fromConfig };
-  resolvedCommentConfig.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, true), "COMMENT_CHECKER_ENABLED", "enabled", inputs) ?? true;
-  resolvedCommentConfig.customPrompt = resolveOption(asString, "COMMENT_CHECKER_CUSTOM_PROMPT", "custom_prompt", inputs);
-  resolvedCommentConfig.appendPrompt = resolveOption(asString, "COMMENT_CHECKER_APPEND_PROMPT", "append_prompt", inputs);
-  resolvedCommentConfig.maxWarningsPerFile = resolveOption((value) => asCount(value, 1), "COMMENT_CHECKER_MAX_WARNINGS_PER_FILE", "max_warnings_per_file", inputs) ?? 0;
-  resolvedCommentConfig.dedupWindowMs = resolveOption((value) => asCount(value, 0), "COMMENT_CHECKER_DEDUP_WINDOW_MS", "dedup_window_ms", inputs) ?? 0;
-  resolvedCommentConfig.triggerTools = new Set(resolveOption(asTools, "COMMENT_CHECKER_TOOLS", "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS);
+  resolveGuardBase(resolvedCommentConfig, "COMMENT_CHECKER", inputs, 0);
   resolvedCommentConfig.paths = resolveOption(asPatterns, "COMMENT_CHECKER_PATHS", "paths", inputs) ?? [];
   resolvedCommentConfig.timeoutMs = resolveOption((value) => asCount(value, 1), "COMMENT_CHECKER_TIMEOUT_MS", "timeout_ms", inputs) ?? DEFAULT_CLI_TIMEOUT_MS;
   resolveJudge(resolvedCommentJudge, "COMMENT_CHECKER_JUDGE", subConfigInputs(options, fromConfig, "judge"));
@@ -3196,13 +3207,8 @@ function resolveTestGuardConfiguration(config) {
   const options = optionContainer(pluginOptions, "test_guard");
   const fromConfig = optionContainer(config, "test_guard");
   const inputs = { options, config: fromConfig };
-  resolvedTestGuard.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, true), "TEST_GUARD_ENABLED", "enabled", inputs) ?? true;
+  resolveGuardBase(resolvedTestGuard, "TEST_GUARD", inputs, 30000);
   resolvedTestGuard.testPatterns = resolveOption(asPatterns, "TEST_GUARD_TEST_PATTERNS", "test_patterns", inputs) ?? [...DEFAULT_TEST_PATTERNS];
-  resolvedTestGuard.maxWarningsPerFile = resolveOption((value) => asCount(value, 1), "TEST_GUARD_MAX_WARNINGS_PER_FILE", "max_warnings_per_file", inputs) ?? 0;
-  resolvedTestGuard.dedupWindowMs = resolveOption((value) => asCount(value, 0), "TEST_GUARD_DEDUP_WINDOW_MS", "dedup_window_ms", inputs) ?? 30000;
-  resolvedTestGuard.triggerTools = new Set(resolveOption(asTools, "TEST_GUARD_TOOLS", "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS);
-  resolvedTestGuard.customPrompt = resolveOption(asString, "TEST_GUARD_CUSTOM_PROMPT", "custom_prompt", inputs);
-  resolvedTestGuard.appendPrompt = resolveOption(asString, "TEST_GUARD_APPEND_PROMPT", "append_prompt", inputs);
   resolvedTestGuard.testCommand = resolveOption(asString, "TEST_GUARD_TEST_COMMAND", "test_command", inputs) ?? detectTestCommand(projectDirectory);
   resolveCommandAdapter(resolvedMutation, "TEST_GUARD_MUTATION", subConfigInputs(options, fromConfig, "mutation"));
   resolveJudge(resolvedJudge, "TEST_GUARD_JUDGE", subConfigInputs(options, fromConfig, "judge"));

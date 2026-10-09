@@ -3,25 +3,20 @@
 // `index.ts` so the test guard can reuse the engine.
 
 import { existsSync } from "node:fs"
-import { APPLY_PATCH_TOOL_NAME, COMMENT_CHECKER_EVENT } from "../../constants"
-import { getCommentCheckerPath, runCommentChecker } from "../../cli"
+import { APPLY_PATCH_TOOL_NAME } from "../../constants"
+import { commentHookInput, getCommentCheckerPath, runCommentChecker } from "../../cli"
 import { AnalyzerRegistry, type Analyzer } from "../../core/analyzer"
 import { GuardBudget } from "../../core/budget"
 import { bypassMatchers, collectBypasses, withinAllowWindow, type Bypass } from "../../core/bypass"
+import { createDebugLog } from "../../core/debug"
 import { detectLanguage, diffLines, extractPatchChanges, isCommentLine, readPreimage } from "../../core/diff"
 import { matchesAnyGlob } from "../../core/glob"
+import { PendingCallStore } from "../../core/pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "../../core/result-pipeline"
+import { isTriggeredTool } from "../../core/triggers"
 import type { HookInput, PendingCall } from "../../types"
 
-const DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1"
-
-function debugLog(...args: unknown[]) {
-  if (!DEBUG) return
-  const msg = `[${new Date().toISOString()}] [comment-checker:hook] ${args.map(a => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}\n`
-  process.stderr.write(msg)
-}
-
-const PENDING_CALL_TTL = 60_000
+const debugLog = createDebugLog("comment-checker:hook", process.env.COMMENT_CHECKER_DEBUG === "1")
 
 // Inline/file bypass, mirroring the test guard's `test-guard: allow` /
 // `test-guard-disable-file`. A comment whose added lines are all within
@@ -100,14 +95,12 @@ export function createCommentBinaryAnalyzer(getConfig: () => ResolvedCommentConf
         return {}
       }
 
-      const hookInput: HookInput = {
-        session_id: ctx.sessionID,
-        tool_name: ctx.tool,
-        transcript_path: "",
+      const hookInput = commentHookInput({
+        sessionID: ctx.sessionID,
+        toolName: ctx.tool,
         cwd: process.cwd(),
-        hook_event_name: COMMENT_CHECKER_EVENT,
-        tool_input: (ctx.args ?? {}) as HookInput["tool_input"],
-      }
+        toolInput: (ctx.args ?? {}) as HookInput["tool_input"],
+      })
 
       const result = await runCommentChecker(hookInput, { prompt: config.customPrompt, timeoutMs: config.timeoutMs })
       return result.hasComments && result.message ? { raw: result.message } : {}
@@ -133,16 +126,10 @@ export interface CommentGuard {
 }
 
 export function createCommentGuard(getConfig: () => ResolvedCommentConfig): CommentGuard {
-  const pendingCalls = new Map<string, PendingCall>()
+  const pendingCalls = new PendingCallStore<PendingCall>()
   const budget = new GuardBudget({ dedupWindowMs: 0 })
   const registry = new AnalyzerRegistry()
   registry.register(createCommentBinaryAnalyzer(getConfig))
-
-  function prunePending(now = Date.now()): void {
-    for (const [callID, call] of pendingCalls) {
-      if (now - call.timestamp > PENDING_CALL_TTL) pendingCalls.delete(callID)
-    }
-  }
 
   // Only new comment-like lines are worth checking on `write` when the previous
   // content is known: this avoids re-reporting pre-existing comments.
@@ -219,11 +206,11 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
     const { triggerTools } = getConfig()
     if (!getConfig().enabled) return
     const toolLower = input.tool.toLowerCase()
-    if (toolLower === APPLY_PATCH_TOOL_NAME || !triggerTools.has(toolLower)) {
+    if (toolLower === APPLY_PATCH_TOOL_NAME || !isTriggeredTool(triggerTools, toolLower)) {
       return
     }
 
-    prunePending()
+    pendingCalls.prune()
     const filePath = (output.args.filePath ?? output.args.file_path ?? output.args.path) as string | undefined
     const content = output.args.content as string | undefined
     const oldString = (output.args.oldString ?? output.args.old_string) as string | undefined
@@ -253,7 +240,6 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
       edits,
       tool: toolLower,
       sessionID: input.sessionID,
-      timestamp: Date.now(),
       preimage,
     })
   }
@@ -262,16 +248,15 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
     const { triggerTools } = getConfig()
     if (!getConfig().enabled) return
     if (input.tool.toLowerCase() === APPLY_PATCH_TOOL_NAME) {
-      if (!triggerTools.has(APPLY_PATCH_TOOL_NAME)) return
+      if (!isTriggeredTool(triggerTools, APPLY_PATCH_TOOL_NAME)) return
       budget.touch(input.sessionID)
       await checkApplyPatch(input.sessionID, output)
       return
     }
 
-    const pendingCall = pendingCalls.get(input.callID)
+    const pendingCall = pendingCalls.take(input.callID)
     if (!pendingCall) return
 
-    pendingCalls.delete(input.callID)
     budget.touch(input.sessionID)
 
     const isToolFailure = output.output.toLowerCase().startsWith("error")

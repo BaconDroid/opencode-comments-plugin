@@ -9,7 +9,6 @@ export interface PendingCall {
     }>;
     tool: string;
     sessionID: string;
-    timestamp: number;
     preimage?: string;
 }
 export interface PatchFileChange {
