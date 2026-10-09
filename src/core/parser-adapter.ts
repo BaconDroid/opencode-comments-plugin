@@ -3,16 +3,13 @@
 // returns findings as JSON on stdout. Advisory, fail-open, disabled by default.
 
 import { changedTestChanges } from "./ci"
+import type { CommandAdapterConfig } from "./config"
 import type { ExtractedChange } from "./diff"
 import { createAdvisoryTool, createIdleAdvisory, idleMessages, type IdleAdvisoryController } from "./idle-advisory"
 import { PLACEHOLDER_PATTERN } from "../rules/tests/patterns"
 import { runShellCommand } from "./runner"
 
-export interface ParserAdapterConfig {
-  enabled: boolean
-  command?: string
-  timeoutMs?: number
-}
+export type ParserAdapterConfig = CommandAdapterConfig
 
 export interface ParserPayloadFile {
   path: string

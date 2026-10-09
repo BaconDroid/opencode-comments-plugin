@@ -1,10 +1,7 @@
+import type { CommandAdapterConfig } from "./config";
 import type { ExtractedChange } from "./diff";
 import { type IdleAdvisoryController } from "./idle-advisory";
-export interface ParserAdapterConfig {
-    enabled: boolean;
-    command?: string;
-    timeoutMs?: number;
-}
+export type ParserAdapterConfig = CommandAdapterConfig;
 export interface ParserPayloadFile {
     path: string;
     language: string;
