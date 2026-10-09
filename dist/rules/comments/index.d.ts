@@ -1,6 +1,6 @@
 import { type Analyzer } from "../../core/analyzer";
 import type { GuardBaseConfig } from "../../core/config";
-import type { ToolExecuteInput, ToolExecuteOutput } from "../../types";
+import type { ToolGuard } from "../../types";
 export interface ResolvedCommentConfig extends GuardBaseConfig {
     dedupWindowMs: number;
     triggerTools: Set<string>;
@@ -8,10 +8,5 @@ export interface ResolvedCommentConfig extends GuardBaseConfig {
     timeoutMs: number;
 }
 export declare function createCommentBinaryAnalyzer(getConfig: () => ResolvedCommentConfig): Analyzer;
-export interface CommentGuard {
-    before(input: ToolExecuteInput, output: {
-        args: Record<string, unknown>;
-    }): Promise<void>;
-    after(input: ToolExecuteInput, output: ToolExecuteOutput): Promise<void>;
-}
+export type CommentGuard = ToolGuard;
 export declare function createCommentGuard(getConfig: () => ResolvedCommentConfig): CommentGuard;

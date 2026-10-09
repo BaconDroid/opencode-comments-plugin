@@ -12,6 +12,12 @@ export interface ToolExecuteOutput {
   metadata: unknown
 }
 
+// The hook surface shared by both guards.
+export interface ToolGuard {
+  before(input: ToolExecuteInput, output: { args: Record<string, unknown> }): void | Promise<void>
+  after(input: ToolExecuteInput, output: ToolExecuteOutput): Promise<void>
+}
+
 export interface HookInput {
   session_id: string
   tool_name: string
