@@ -3,24 +3,24 @@
 
 import { existsSync } from "node:fs"
 import { join } from "node:path"
-import { APPLY_PATCH_TOOL_NAME, DEFAULT_TRIGGER_TOOLS } from "../constants"
+import { APPLY_PATCH_TOOL_NAME } from "../constants"
 import { AnalyzerRegistry } from "./analyzer"
 import { GuardBudget } from "./budget"
 import type { Bypass } from "./bypass"
 import type { Severity } from "./config"
+import { createDebugLog } from "./debug"
 import { extractPatchChanges, extractToolChange, firstString, readPreimage, type ExtractedChange } from "./diff"
 import { appendFeedback, type Finding } from "./feedback"
+import { PendingCallStore } from "./pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "./result-pipeline"
+import { isTriggeredTool } from "./triggers"
 import { createRuleAnalyzer } from "../rules/tests/analyzer"
 import { isTestPath } from "../rules/tests/patterns"
 
-const DEBUG = process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1"
-
-function debugLog(...args: unknown[]) {
-  if (!DEBUG) return
-  const msg = `[${new Date().toISOString()}] [test-guard] ${args.map(a => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}\n`
-  process.stderr.write(msg)
-}
+const debugLog = createDebugLog(
+  "test-guard",
+  process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1",
+)
 
 export interface ResolvedTestGuard {
   enabled: boolean
@@ -33,10 +33,6 @@ export interface ResolvedTestGuard {
   appendPrompt?: string
   triggerTools?: Set<string>
 }
-
-// Mirrors `comment_checker.tools`: which tools may produce test-guard findings.
-// Omitted, the guard reacts to every supported tool (legacy behavior).
-const DEFAULT_TEST_TRIGGER_TOOLS = new Set(DEFAULT_TRIGGER_TOOLS)
 
 interface BeforeInput {
   tool: string
@@ -53,12 +49,7 @@ interface AfterOutput {
 interface PendingGuardCall {
   args: Record<string, unknown>
   preimage?: string
-  timestamp: number
 }
-
-// Parity with the comment guard: an abandoned `before` (no matching `after`)
-// must not leak forever.
-const PENDING_CALL_TTL = 60_000
 
 const DEFAULT_TEST_GUARD: ResolvedTestGuard = {
   enabled: true,
@@ -98,18 +89,12 @@ export function extractPatchEntries(patchText: string): Array<{ kind: string; pa
 
 export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard {
   const budget = new GuardBudget()
-  const pending = new Map<string, PendingGuardCall>()
+  const pending = new PendingCallStore<PendingGuardCall>()
   const pendingNotes: string[] = []
   const registry = new AnalyzerRegistry()
   registry.register(createRuleAnalyzer(getResolved))
   function queueNote(message: string): void {
     if (message.length > 0) pendingNotes.push(message)
-  }
-
-  function prunePending(now = Date.now()): void {
-    for (const [callID, call] of pending) {
-      if (now - call.timestamp > PENDING_CALL_TTL) pending.delete(callID)
-    }
   }
 
   function consumeNotes(): string[] {
@@ -130,10 +115,6 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
 
   function isProtectedPath(filePath: string, patterns: string[]): boolean {
     return isTestPath(filePath, patterns)
-  }
-
-  function triggersTool(resolved: ResolvedTestGuard, toolLower: string): boolean {
-    return (resolved.triggerTools ?? DEFAULT_TEST_TRIGGER_TOOLS).has(toolLower)
   }
 
   function pathExists(filePath: string): boolean {
@@ -177,9 +158,9 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       const args = output.args ?? {}
       const patterns = resolved.testPatterns.length > 0 ? resolved.testPatterns : []
 
-      if (!triggersTool(resolved, toolLower)) return
+      if (!isTriggeredTool(resolved.triggerTools, toolLower)) return
 
-      prunePending()
+      pending.prune()
       if (isBlocking()) {
         if (toolLower === APPLY_PATCH_TOOL_NAME) {
           const patchText = firstString(args, "patchText", "patch", "patch_text") ?? ""
@@ -208,7 +189,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       if (toolLower !== APPLY_PATCH_TOOL_NAME && filePath && typeof args.content === "string") {
         preimage = readPreimage(filePath)
       }
-      pending.set(input.callID, { args, preimage, timestamp: Date.now() })
+      pending.set(input.callID, { args, preimage })
     } catch (err) {
       if (err instanceof Error && err.message.startsWith("[test-guard]")) throw err
       debugLog("before failed (fail-open):", err)
@@ -226,10 +207,9 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
       const failed = output.output.toLowerCase().startsWith("error")
 
       if (toolLower === APPLY_PATCH_TOOL_NAME) {
-        if (triggersTool(resolved, APPLY_PATCH_TOOL_NAME) && !failed) changes = extractPatchChanges(output.metadata)
-      } else if (triggersTool(resolved, toolLower)) {
-        const call = pending.get(input.callID)
-        pending.delete(input.callID)
+        if (isTriggeredTool(resolved.triggerTools, APPLY_PATCH_TOOL_NAME) && !failed) changes = extractPatchChanges(output.metadata)
+      } else if (isTriggeredTool(resolved.triggerTools, toolLower)) {
+        const call = pending.take(input.callID)
         if (call && !failed) {
           const change = extractToolChange(toolLower, call.args, call.preimage)
           if (change) changes.push(change)

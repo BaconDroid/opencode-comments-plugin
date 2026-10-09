@@ -82,38 +82,44 @@ function resolveCommandAdapter(
   target.timeoutMs = resolveOption(value => asCount(value, 1), `${envPrefix}_TIMEOUT_MS`, "timeout_ms", inputs)
 }
 
+// Fields shared by both guards, resolved with the env > options > config
+// precedence. `dedupWindowDefault` is the only per-guard difference.
+function resolveGuardBase(
+  target: {
+    enabled: boolean
+    customPrompt?: string
+    appendPrompt?: string
+    maxWarningsPerFile: number
+    dedupWindowMs?: number
+    triggerTools?: Set<string>
+  },
+  envPrefix: string,
+  inputs: ResolveInputs,
+  dedupWindowDefault: number,
+): void {
+  target.enabled =
+    resolveOption(
+      value => (value === undefined ? undefined : asBoolean(value, true)),
+      `${envPrefix}_ENABLED`,
+      "enabled",
+      inputs,
+    ) ?? true
+  target.customPrompt = resolveOption(asString, `${envPrefix}_CUSTOM_PROMPT`, "custom_prompt", inputs)
+  target.appendPrompt = resolveOption(asString, `${envPrefix}_APPEND_PROMPT`, "append_prompt", inputs)
+  target.maxWarningsPerFile =
+    resolveOption(value => asCount(value, 1), `${envPrefix}_MAX_WARNINGS_PER_FILE`, "max_warnings_per_file", inputs) ?? 0
+  target.dedupWindowMs =
+    resolveOption(value => asCount(value, 0), `${envPrefix}_DEDUP_WINDOW_MS`, "dedup_window_ms", inputs) ?? dedupWindowDefault
+  target.triggerTools = new Set(resolveOption(asTools, `${envPrefix}_TOOLS`, "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS)
+}
+
 function resolveConfiguration(config?: unknown): void {
   const options = optionContainer(pluginOptions, "comment_checker")
   const fromConfig = optionContainer(config, "comment_checker")
   const inputs = { options, config: fromConfig }
 
-  resolvedCommentConfig.enabled =
-    resolveOption(
-      value => (value === undefined ? undefined : asBoolean(value, true)),
-      "COMMENT_CHECKER_ENABLED",
-      "enabled",
-      inputs,
-    ) ?? true
+  resolveGuardBase(resolvedCommentConfig, "COMMENT_CHECKER", inputs, 0)
 
-  resolvedCommentConfig.customPrompt = resolveOption(
-    asString,
-    "COMMENT_CHECKER_CUSTOM_PROMPT",
-    "custom_prompt",
-    inputs,
-  )
-  resolvedCommentConfig.appendPrompt = resolveOption(
-    asString,
-    "COMMENT_CHECKER_APPEND_PROMPT",
-    "append_prompt",
-    inputs,
-  )
-  resolvedCommentConfig.maxWarningsPerFile =
-    resolveOption(value => asCount(value, 1), "COMMENT_CHECKER_MAX_WARNINGS_PER_FILE", "max_warnings_per_file", inputs) ?? 0
-  resolvedCommentConfig.dedupWindowMs =
-    resolveOption(value => asCount(value, 0), "COMMENT_CHECKER_DEDUP_WINDOW_MS", "dedup_window_ms", inputs) ?? 0
-  resolvedCommentConfig.triggerTools = new Set(
-    resolveOption(asTools, "COMMENT_CHECKER_TOOLS", "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS,
-  )
   resolvedCommentConfig.paths = resolveOption(asPatterns, "COMMENT_CHECKER_PATHS", "paths", inputs) ?? []
   resolvedCommentConfig.timeoutMs =
     resolveOption(value => asCount(value, 1), "COMMENT_CHECKER_TIMEOUT_MS", "timeout_ms", inputs) ?? DEFAULT_CLI_TIMEOUT_MS
@@ -141,28 +147,10 @@ function resolveTestGuardConfiguration(config?: unknown): void {
   const fromConfig = optionContainer(config, "test_guard")
   const inputs = { options, config: fromConfig }
 
-  resolvedTestGuard.enabled = resolveOption(
-    value => (value === undefined ? undefined : asBoolean(value, true)),
-    "TEST_GUARD_ENABLED",
-    "enabled",
-    inputs,
-  ) ?? true
+  resolveGuardBase(resolvedTestGuard, "TEST_GUARD", inputs, 30_000)
 
   resolvedTestGuard.testPatterns =
     resolveOption(asPatterns, "TEST_GUARD_TEST_PATTERNS", "test_patterns", inputs) ?? [...DEFAULT_TEST_PATTERNS]
-
-  resolvedTestGuard.maxWarningsPerFile =
-    resolveOption(value => asCount(value, 1), "TEST_GUARD_MAX_WARNINGS_PER_FILE", "max_warnings_per_file", inputs) ?? 0
-
-  resolvedTestGuard.dedupWindowMs =
-    resolveOption(value => asCount(value, 0), "TEST_GUARD_DEDUP_WINDOW_MS", "dedup_window_ms", inputs) ?? 30_000
-
-  resolvedTestGuard.triggerTools = new Set(
-    resolveOption(asTools, "TEST_GUARD_TOOLS", "tools", inputs) ?? DEFAULT_TRIGGER_TOOLS,
-  )
-
-  resolvedTestGuard.customPrompt = resolveOption(asString, "TEST_GUARD_CUSTOM_PROMPT", "custom_prompt", inputs)
-  resolvedTestGuard.appendPrompt = resolveOption(asString, "TEST_GUARD_APPEND_PROMPT", "append_prompt", inputs)
 
   resolvedTestGuard.testCommand =
     resolveOption(asString, "TEST_GUARD_TEST_COMMAND", "test_command", inputs) ?? detectTestCommand(projectDirectory)

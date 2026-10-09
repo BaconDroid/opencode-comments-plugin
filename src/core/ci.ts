@@ -3,8 +3,7 @@
 
 import { existsSync, readFileSync } from "node:fs"
 import { isAbsolute, join, relative } from "node:path"
-import { getCommentCheckerPath, runCommentChecker } from "../cli"
-import { COMMENT_CHECKER_EVENT } from "../constants"
+import { commentHookInput, getCommentCheckerPath, runCommentChecker } from "../cli"
 import { runAnalyzer } from "./analyzer"
 import { extractChange, isSupportedLanguage, stripComments, type ExtractedChange, type Language } from "./diff"
 import { formatFindings, type Finding } from "./feedback"
@@ -164,14 +163,12 @@ async function defaultCommentCheck(change: ExtractedChange, directory: string): 
   const cliPath = await getCommentCheckerPath()
   if (!cliPath || !existsSync(cliPath)) return { hasComments: false, message: "" }
   return runCommentChecker(
-    {
-      session_id: "guard-check",
-      tool_name: "Edit",
-      transcript_path: "",
+    commentHookInput({
+      sessionID: "guard-check",
+      toolName: "Edit",
       cwd: directory,
-      hook_event_name: COMMENT_CHECKER_EVENT,
-      tool_input: { file_path: change.filePath, old_string: change.oldText, new_string: change.newText },
-    },
+      toolInput: { file_path: change.filePath, old_string: change.oldText, new_string: change.newText },
+    }),
     { cliPath },
   )
 }

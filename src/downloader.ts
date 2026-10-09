@@ -3,14 +3,9 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, un
 import { join } from "node:path"
 import { homedir } from "node:os"
 import { createRequire } from "node:module"
+import { createDebugLog } from "./core/debug"
 
-const DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1"
-
-function debugLog(...args: unknown[]) {
-  if (!DEBUG) return
-  const msg = `[${new Date().toISOString()}] [comment-checker:downloader] ${args.map(a => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}\n`
-  process.stderr.write(msg)
-}
+const debugLog = createDebugLog("comment-checker:downloader", process.env.COMMENT_CHECKER_DEBUG === "1")
 
 const REPO = "code-yeongyu/go-claude-code-comment-checker"
 const LATEST_URL = `https://github.com/${REPO}/releases/latest`

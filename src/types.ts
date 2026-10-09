@@ -6,7 +6,6 @@ export interface PendingCall {
   edits?: Array<{ old_string: string; new_string: string }>
   tool: string
   sessionID: string
-  timestamp: number
   preimage?: string
 }
 

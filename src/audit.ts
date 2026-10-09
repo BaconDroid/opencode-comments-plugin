@@ -7,8 +7,7 @@
 import { tool } from "@opencode-ai/plugin"
 import { readFileSync, readdirSync, statSync } from "node:fs"
 import { isAbsolute, join, relative } from "node:path"
-import { getCommentCheckerPath, runCommentChecker } from "./cli"
-import { COMMENT_CHECKER_EVENT } from "./constants"
+import { commentHookInput, getCommentCheckerPath, runCommentChecker } from "./cli"
 import { runAnalyzer } from "./core/analyzer"
 import { detectLanguage, extractChange, isSupportedLanguage, type Language } from "./core/diff"
 import type { ResolvedTestGuard } from "./core/dispatch"
@@ -229,14 +228,14 @@ export interface CommentAuditDeps {
 async function defaultRunCheck(filePath: string, content: string): Promise<Array<{ line: number; text: string }>> {
   const cliPath = await getCommentCheckerPath()
   if (!cliPath) return []
-  const result = await runCommentChecker({
-    session_id: "guard-audit",
-    tool_name: "Write",
-    transcript_path: "",
-    cwd: process.cwd(),
-    hook_event_name: COMMENT_CHECKER_EVENT,
-    tool_input: { file_path: filePath, content },
-  })
+  const result = await runCommentChecker(
+    commentHookInput({
+      sessionID: "guard-audit",
+      toolName: "Write",
+      cwd: process.cwd(),
+      toolInput: { file_path: filePath, content },
+    }),
+  )
   if (!result.hasComments) return []
   return parseCommentsXml(result.message)
 }

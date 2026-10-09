@@ -19,14 +19,20 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, un
 import { join } from "path";
 import { homedir } from "os";
 import { createRequire } from "module";
-var DEBUG = process.env.COMMENT_CHECKER_DEBUG === "1";
-function debugLog(...args) {
-  if (!DEBUG)
-    return;
-  const msg = `[${new Date().toISOString()}] [comment-checker:downloader] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
-`;
-  process.stderr.write(msg);
+
+// src/core/debug.ts
+function createDebugLog(prefix, enabled) {
+  if (!enabled)
+    return () => {};
+  return (...args) => {
+    const message = args.map((arg) => typeof arg === "object" ? JSON.stringify(arg, null, 2) : String(arg)).join(" ");
+    process.stderr.write(`[${new Date().toISOString()}] [${prefix}] ${message}
+`);
+  };
 }
+
+// src/downloader.ts
+var debugLog = createDebugLog("comment-checker:downloader", process.env.COMMENT_CHECKER_DEBUG === "1");
 var REPO = "code-yeongyu/go-claude-code-comment-checker";
 var LATEST_URL = `https://github.com/${REPO}/releases/latest`;
 var LATEST_TTL_MS = 24 * 60 * 60 * 1000;
@@ -276,13 +282,16 @@ async function runProcess(args, options = {}) {
 }
 
 // src/cli.ts
-var DEBUG2 = process.env.COMMENT_CHECKER_DEBUG === "1";
-function debugLog2(...args) {
-  if (!DEBUG2)
-    return;
-  const msg = `[${new Date().toISOString()}] [comment-checker:cli] ${args.map((a) => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ")}
-`;
-  process.stderr.write(msg);
+var debugLog2 = createDebugLog("comment-checker:cli", process.env.COMMENT_CHECKER_DEBUG === "1");
+function commentHookInput(options) {
+  return {
+    session_id: options.sessionID,
+    tool_name: options.toolName,
+    transcript_path: "",
+    cwd: options.cwd,
+    hook_event_name: COMMENT_CHECKER_EVENT,
+    tool_input: options.toolInput
+  };
 }
 function getBinaryName2() {
   return process.platform === "win32" ? "comment-checker.exe" : "comment-checker";
@@ -1521,14 +1530,12 @@ async function defaultCommentCheck(change, directory) {
   const cliPath = await getCommentCheckerPath();
   if (!cliPath || !existsSync3(cliPath))
     return { hasComments: false, message: "" };
-  return runCommentChecker({
-    session_id: "guard-check",
-    tool_name: "Edit",
-    transcript_path: "",
+  return runCommentChecker(commentHookInput({
+    sessionID: "guard-check",
+    toolName: "Edit",
     cwd: directory,
-    hook_event_name: COMMENT_CHECKER_EVENT,
-    tool_input: { file_path: change.filePath, old_string: change.oldText, new_string: change.newText }
-  }, { cliPath });
+    toolInput: { file_path: change.filePath, old_string: change.oldText, new_string: change.newText }
+  }), { cliPath });
 }
 async function runCommentDiffCheck(options, deps = {}) {
   const directory = options.directory;
@@ -1957,14 +1964,12 @@ async function defaultRunCheck(filePath, content) {
   const cliPath = await getCommentCheckerPath();
   if (!cliPath)
     return [];
-  const result = await runCommentChecker({
-    session_id: "guard-audit",
-    tool_name: "Write",
-    transcript_path: "",
+  const result = await runCommentChecker(commentHookInput({
+    sessionID: "guard-audit",
+    toolName: "Write",
     cwd: process.cwd(),
-    hook_event_name: COMMENT_CHECKER_EVENT,
-    tool_input: { file_path: filePath, content }
-  });
+    toolInput: { file_path: filePath, content }
+  }));
   if (!result.hasComments)
     return [];
   return parseCommentsXml(result.message);
