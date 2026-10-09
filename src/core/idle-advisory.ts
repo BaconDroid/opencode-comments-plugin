@@ -10,6 +10,20 @@ export interface IdleAdvisoryController {
   analyzeNow(): Promise<string>
 }
 
+// Standard disabled/unavailable/empty messages for an advisory analyzer, so
+// every adapter phrases them the same way.
+export function idleMessages(
+  label: string,
+  hint: string,
+  empty: string,
+): { disabledMessage: string; unavailableMessage: string; emptyMessage: string } {
+  return {
+    disabledMessage: `${label}: disabled (${hint}).`,
+    unavailableMessage: `${label}: unavailable.`,
+    emptyMessage: `${label}: ${empty}.`,
+  }
+}
+
 export function createIdleAdvisory(options: {
   isEnabled: () => boolean
   analyze: () => Promise<string | null>

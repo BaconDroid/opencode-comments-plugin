@@ -3,6 +3,11 @@ export interface IdleAdvisoryController {
     onIdle(sessionID: string): Promise<string | null>;
     analyzeNow(): Promise<string>;
 }
+export declare function idleMessages(label: string, hint: string, empty: string): {
+    disabledMessage: string;
+    unavailableMessage: string;
+    emptyMessage: string;
+};
 export declare function createIdleAdvisory(options: {
     isEnabled: () => boolean;
     analyze: () => Promise<string | null>;

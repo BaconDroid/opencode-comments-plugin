@@ -4,7 +4,7 @@
 
 import { changedTestChanges } from "./ci"
 import type { ExtractedChange } from "./diff"
-import { createAdvisoryTool, createIdleAdvisory, type IdleAdvisoryController } from "./idle-advisory"
+import { createAdvisoryTool, createIdleAdvisory, idleMessages, type IdleAdvisoryController } from "./idle-advisory"
 import { PLACEHOLDER_PATTERN } from "../rules/tests/patterns"
 import { runShellCommand } from "./runner"
 
@@ -131,11 +131,9 @@ export function createParserAdapter(options: {
   cooldownMs?: number
 }): ParserAdapterController {
   return createIdleAdvisory({
+    ...idleMessages("External parser", "set test_guard.parser.enabled", "no findings"),
     isEnabled: () => options.getConfig().enabled,
     cooldownMs: options.cooldownMs,
-    disabledMessage: "External parser: disabled (set test_guard.parser.enabled).",
-    unavailableMessage: "External parser: unavailable.",
-    emptyMessage: "External parser: no findings.",
     analyze: async () => {
       const changes = changedTestChanges(options.directory, "HEAD", options.getTestPatterns())
       const findings = await runParserAdapter(changes, options.getConfig(), options.run)
