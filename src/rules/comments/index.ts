@@ -11,6 +11,7 @@ import { bypassMatchers, collectBypasses, withinAllowWindow, type Bypass } from 
 import type { GuardBaseConfig } from "../../core/config"
 import { createDebugLog } from "../../core/debug"
 import { detectLanguage, diffLines, extractPatchChanges, extractToolChange, firstString, isCommentLine, readPreimage, readString } from "../../core/diff"
+import { appendGuardMessage } from "../../core/feedback"
 import { matchesAnyGlob } from "../../core/glob"
 import { PendingCallStore, type PendingToolCall } from "../../core/pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "../../core/result-pipeline"
@@ -126,7 +127,7 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
       const bypass = bypassState(change.newText, change.oldText, detectLanguage(filePath))
       if (bypass.suppress) {
         debugLog("comment guard bypassed for", filePath)
-        if (bypass.notes.length > 0) output.output += `\n\n${commentBypassFooter(filePath, bypass.notes)}`
+        if (bypass.notes.length > 0) appendGuardMessage(output, commentBypassFooter(filePath, bypass.notes))
         return
       }
 
@@ -146,8 +147,8 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
       const message = renderAnalyzerResults(results, { appendPrompt })
       if (message.length > 0) {
         budget.record(sessionID, COMMENT_RULE, filePath)
-        output.output += `\n\n${message}`
-        if (bypass.notes.length > 0) output.output += `\n\n${commentBypassFooter(filePath, bypass.notes)}`
+        appendGuardMessage(output, message)
+        if (bypass.notes.length > 0) appendGuardMessage(output, commentBypassFooter(filePath, bypass.notes))
       }
     } catch (err) {
       debugLog("comment check failed:", err)

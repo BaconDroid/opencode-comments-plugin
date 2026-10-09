@@ -49,10 +49,17 @@ export function renderFeedback(findings: Finding[], options: FeedbackOptions = {
   return options.appendPrompt ? `${rendered}\n\n${options.appendPrompt}` : rendered
 }
 
+// Appends a guard message to the tool output, behind an optional idempotent
+// marker. The test guard passes its marker; the comment guard appends raw (no
+// marker). Idempotent only when a marker is given.
+export function appendGuardMessage(output: { output: string }, message: string, marker?: string): void {
+  if (message.length === 0) return
+  if (marker && output.output.includes(marker)) return
+  output.output += marker ? `\n\n${marker}\n${message}` : `\n\n${message}`
+}
+
 // Appends feedback to the tool output. Idempotent: a second call with the same
 // marker does not duplicate the message.
 export function appendFeedback(output: { output: string }, message: string): void {
-  if (message.length === 0) return
-  if (output.output.includes(TEST_GUARD_MARKER)) return
-  output.output += `\n\n${TEST_GUARD_MARKER}\n${message}`
+  appendGuardMessage(output, message, TEST_GUARD_MARKER)
 }
