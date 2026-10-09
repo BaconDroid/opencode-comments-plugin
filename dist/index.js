@@ -760,21 +760,19 @@ function countRealLines(text, language) {
   return text.split(`
 `).map((line) => stripComments(line, language)).filter((line) => line.trim().length > 0).length;
 }
-function readString(record, ...keys) {
+function stringValue(record, keys, requireNonEmpty) {
   for (const key of keys) {
     const value = record[key];
-    if (typeof value === "string")
+    if (typeof value === "string" && (!requireNonEmpty || value.length > 0))
       return value;
   }
   return;
 }
+function readString(record, ...keys) {
+  return stringValue(record, keys, false);
+}
 function firstString(record, ...keys) {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "string" && value.length > 0)
-      return value;
-  }
-  return;
+  return stringValue(record, keys, true);
 }
 function readPreimage(filePath) {
   try {
@@ -3081,15 +3079,17 @@ function asOptionalBoolean(value) {
 function subConfigInputs(options, config, key) {
   return { options: asRecord(options?.[key]), config: asRecord(config?.[key]) };
 }
-function resolveJudge(target, envPrefix, inputs) {
+function resolveAdapterBase(target, envPrefix, inputs) {
   target.enabled = resolveOption(asOptionalBoolean, `${envPrefix}_ENABLED`, "enabled", inputs) ?? false;
-  target.model = resolveJudgeModel(resolveOption(asString, `${envPrefix}_MODEL`, "model", inputs));
   target.timeoutMs = resolveOption((value) => asCount(value, 1), `${envPrefix}_TIMEOUT_MS`, "timeout_ms", inputs);
 }
+function resolveJudge(target, envPrefix, inputs) {
+  resolveAdapterBase(target, envPrefix, inputs);
+  target.model = resolveJudgeModel(resolveOption(asString, `${envPrefix}_MODEL`, "model", inputs));
+}
 function resolveCommandAdapter(target, envPrefix, inputs) {
-  target.enabled = resolveOption(asOptionalBoolean, `${envPrefix}_ENABLED`, "enabled", inputs) ?? false;
+  resolveAdapterBase(target, envPrefix, inputs);
   target.command = resolveOption(asString, `${envPrefix}_COMMAND`, "command", inputs);
-  target.timeoutMs = resolveOption((value) => asCount(value, 1), `${envPrefix}_TIMEOUT_MS`, "timeout_ms", inputs);
 }
 function resolveGuardBase(target, envPrefix, inputs) {
   target.enabled = resolveOption((value) => value === undefined ? undefined : asBoolean(value, true), `${envPrefix}_ENABLED`, "enabled", inputs) ?? true;

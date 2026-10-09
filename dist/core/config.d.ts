@@ -7,6 +7,11 @@ export interface GuardBaseConfig {
     dedupWindowMs?: number;
     triggerTools?: Set<string>;
 }
+export interface CommandAdapterConfig {
+    enabled: boolean;
+    command?: string;
+    timeoutMs?: number;
+}
 export declare function optionContainer(value: unknown, key: string): Record<string, unknown> | undefined;
 export declare function asString(value: unknown): string | undefined;
 export declare function asCount(value: unknown, minimum: number): number | undefined;

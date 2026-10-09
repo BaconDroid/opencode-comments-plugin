@@ -21,6 +21,14 @@ export interface GuardBaseConfig {
   triggerTools?: Set<string>
 }
 
+// Options for an opt-in external command adapter (mutation testing, external
+// parser). Both share the same shape.
+export interface CommandAdapterConfig {
+  enabled: boolean
+  command?: string
+  timeoutMs?: number
+}
+
 export function optionContainer(value: unknown, key: string): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
   const object = value as Record<string, unknown>

@@ -2,15 +2,11 @@
 // mutation engine: it runs a user-configured command and parses its report.
 // Opt-in, fail-open, never destructive.
 
-import { asRecord } from "./config"
+import { asRecord, type CommandAdapterConfig } from "./config"
 import { createIdleAdvisory, idleMessages, type IdleAdvisoryController } from "./idle-advisory"
 import { runShellCommand } from "./runner"
 
-export interface MutationConfig {
-  enabled: boolean
-  command?: string
-  timeoutMs?: number
-}
+export type MutationConfig = CommandAdapterConfig
 
 export interface MutationSurvivor {
   file?: string

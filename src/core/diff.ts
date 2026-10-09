@@ -221,20 +221,22 @@ export function countRealLines(text: string, language: Language): number {
     .filter(line => line.trim().length > 0).length
 }
 
-export function readString(record: Record<string, unknown>, ...keys: string[]): string | undefined {
+// Returns the first string value among `keys`. `firstString` additionally
+// requires it to be non-empty.
+function stringValue(record: Record<string, unknown>, keys: string[], requireNonEmpty: boolean): string | undefined {
   for (const key of keys) {
     const value = record[key]
-    if (typeof value === "string") return value
+    if (typeof value === "string" && (!requireNonEmpty || value.length > 0)) return value
   }
   return undefined
 }
 
+export function readString(record: Record<string, unknown>, ...keys: string[]): string | undefined {
+  return stringValue(record, keys, false)
+}
+
 export function firstString(record: Record<string, unknown>, ...keys: string[]): string | undefined {
-  for (const key of keys) {
-    const value = record[key]
-    if (typeof value === "string" && value.length > 0) return value
-  }
-  return undefined
+  return stringValue(record, keys, true)
 }
 
 // Reads the on-disk content before a write, used by both guards so only net-new

@@ -1,9 +1,6 @@
+import { type CommandAdapterConfig } from "./config";
 import { type IdleAdvisoryController } from "./idle-advisory";
-export interface MutationConfig {
-    enabled: boolean;
-    command?: string;
-    timeoutMs?: number;
-}
+export type MutationConfig = CommandAdapterConfig;
 export interface MutationSurvivor {
     file?: string;
     line?: number;

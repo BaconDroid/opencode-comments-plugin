@@ -11,6 +11,7 @@ import {
   optionContainer,
   resolveOption,
   resolveRuleConfig,
+  type CommandAdapterConfig,
   type GuardBaseConfig,
   type ResolveInputs,
 } from "./core/config"
@@ -54,20 +55,24 @@ function subConfigInputs(
   return { options: asRecord(options?.[key]), config: asRecord(config?.[key]) }
 }
 
-function resolveJudge(target: JudgeConfig, envPrefix: string, inputs: ResolveInputs): void {
-  target.enabled = resolveOption(asOptionalBoolean, `${envPrefix}_ENABLED`, "enabled", inputs) ?? false
-  target.model = resolveJudgeModel(resolveOption(asString, `${envPrefix}_MODEL`, "model", inputs))
-  target.timeoutMs = resolveOption(value => asCount(value, 1), `${envPrefix}_TIMEOUT_MS`, "timeout_ms", inputs)
-}
-
-function resolveCommandAdapter(
-  target: { enabled: boolean; command?: string; timeoutMs?: number },
+// `enabled` and `timeout_ms`, shared by the judge and the command adapters.
+function resolveAdapterBase(
+  target: { enabled: boolean; timeoutMs?: number },
   envPrefix: string,
   inputs: ResolveInputs,
 ): void {
   target.enabled = resolveOption(asOptionalBoolean, `${envPrefix}_ENABLED`, "enabled", inputs) ?? false
-  target.command = resolveOption(asString, `${envPrefix}_COMMAND`, "command", inputs)
   target.timeoutMs = resolveOption(value => asCount(value, 1), `${envPrefix}_TIMEOUT_MS`, "timeout_ms", inputs)
+}
+
+function resolveJudge(target: JudgeConfig, envPrefix: string, inputs: ResolveInputs): void {
+  resolveAdapterBase(target, envPrefix, inputs)
+  target.model = resolveJudgeModel(resolveOption(asString, `${envPrefix}_MODEL`, "model", inputs))
+}
+
+function resolveCommandAdapter(target: CommandAdapterConfig, envPrefix: string, inputs: ResolveInputs): void {
+  resolveAdapterBase(target, envPrefix, inputs)
+  target.command = resolveOption(asString, `${envPrefix}_COMMAND`, "command", inputs)
 }
 
 // Fields shared by both guards, resolved with the env > options > config
