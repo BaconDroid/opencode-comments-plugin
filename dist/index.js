@@ -3065,22 +3065,7 @@ var GUARD_AUDIT_COMMAND = {
 };
 
 // src/index.ts
-var DEFAULT_TEST_CHECKS = {
-  "protected-paths": "warn",
-  "skip-focus-added": "warn",
-  "tautological-assertion": "warn",
-  "empty-test": "warn",
-  "unknown-test": "warn",
-  "gutted-test": "warn",
-  "matcher-loosened": "warn",
-  "swallowed-error": "warn",
-  "duplicate-test": "warn",
-  "over-mocking": "off",
-  "assertion-roulette": "off",
-  "weakened-config": "off",
-  "redundant-assertion": "off",
-  "tests-not-run": "off"
-};
+var DEFAULT_TEST_CHECKS = buildRuleChecks(false);
 var pluginOptions;
 var projectDirectory = process.cwd();
 var resolvedCommentConfig = {

@@ -13,7 +13,6 @@ import {
   resolveRuleConfig,
   type GuardBaseConfig,
   type ResolveInputs,
-  type Severity,
 } from "./core/config"
 import { createTestGuard, type ResolvedTestGuard } from "./core/dispatch"
 import { AdvisoryQueue, appendAdvisories } from "./core/advisory-queue"
@@ -24,25 +23,12 @@ import { createGuardParseTool, createParserAdapter, type ParserAdapterConfig } f
 import { createMutationAdapter, type MutationConfig } from "./core/mutation"
 import { createCommentGuard, type ResolvedCommentConfig } from "./rules/comments"
 import { DEFAULT_TEST_PATTERNS } from "./rules/tests/patterns"
+import { buildRuleChecks } from "./rules/tests"
 import { detectTestCommand } from "./core/test-command"
 import { createGuardAuditTool, GUARD_AUDIT_COMMAND } from "./audit"
 
-const DEFAULT_TEST_CHECKS: Record<string, Severity> = {
-  "protected-paths": "warn",
-  "skip-focus-added": "warn",
-  "tautological-assertion": "warn",
-  "empty-test": "warn",
-  "unknown-test": "warn",
-  "gutted-test": "warn",
-  "matcher-loosened": "warn",
-  "swallowed-error": "warn",
-  "duplicate-test": "warn",
-  "over-mocking": "off",
-  "assertion-roulette": "off",
-  "weakened-config": "off",
-  "redundant-assertion": "off",
-  "tests-not-run": "off",
-}
+// Single source of truth: deterministic rules warn, advisory rules are off.
+const DEFAULT_TEST_CHECKS = buildRuleChecks(false)
 
 let pluginOptions: unknown
 let projectDirectory = process.cwd()
