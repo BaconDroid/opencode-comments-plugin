@@ -247,27 +247,19 @@ export function readPreimage(filePath: string): string | undefined {
   }
 }
 
-// Extracts a per-file change from a tool call. `preimage` is the on-disk
-// content before the write (used for `write` so only new lines are candidates).
-export function extractToolChange(
+// Derives the old/new text a tool call represents. Shared by the test guard's
+// change extraction and the comment guard's bypass check so the arg handling
+// lives in one place.
+export function changeTextsFromTool(
   tool: string,
   args: Record<string, unknown>,
   preimage: string | undefined,
-): ExtractedChange | undefined {
-  const filePath = firstString(args, "filePath", "file_path", "path")
-  if (!filePath) return undefined
-
+): { oldText: string; newText: string } | undefined {
   const toolLower = tool.toLowerCase()
 
   if (toolLower === "write" || toolLower === "create") {
     const content = readString(args, "content", "file_text", "text") ?? ""
-    return extractChange({
-      filePath,
-      oldText: preimage ?? "",
-      newText: content,
-      isNew: preimage === undefined,
-      isDelete: false,
-    })
+    return { oldText: preimage ?? "", newText: content }
   }
 
   if (toolLower === "edit" || toolLower === "patch") {
@@ -281,15 +273,40 @@ export function extractToolChange(
         oldText += (readString(record, "old_string", "oldString") ?? "") + "\n"
         newText += (readString(record, "new_string", "newString") ?? "") + "\n"
       }
-      return extractChange({ filePath, oldText, newText, isNew: false, isDelete: false })
+      return { oldText, newText }
     }
 
-    const oldText = readString(args, "oldString", "old_string") ?? ""
-    const newText = readString(args, "newString", "new_string") ?? ""
-    return extractChange({ filePath, oldText, newText, isNew: false, isDelete: false })
+    return {
+      oldText: readString(args, "oldString", "old_string") ?? "",
+      newText: readString(args, "newString", "new_string") ?? "",
+    }
   }
 
   return undefined
+}
+
+// Extracts a per-file change from a tool call. `preimage` is the on-disk
+// content before the write (used for `write` so only new lines are candidates).
+export function extractToolChange(
+  tool: string,
+  args: Record<string, unknown>,
+  preimage: string | undefined,
+): ExtractedChange | undefined {
+  const filePath = firstString(args, "filePath", "file_path", "path")
+  if (!filePath) return undefined
+
+  const texts = changeTextsFromTool(tool, args, preimage)
+  if (!texts) return undefined
+
+  const toolLower = tool.toLowerCase()
+  const isWrite = toolLower === "write" || toolLower === "create"
+  return extractChange({
+    filePath,
+    oldText: texts.oldText,
+    newText: texts.newText,
+    isNew: isWrite && preimage === undefined,
+    isDelete: false,
+  })
 }
 
 // apply_patch reports one unified diff per file.

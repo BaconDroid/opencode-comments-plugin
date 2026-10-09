@@ -9,7 +9,7 @@ import { AnalyzerRegistry, type Analyzer } from "../../core/analyzer"
 import { GuardBudget } from "../../core/budget"
 import { bypassMatchers, collectBypasses, withinAllowWindow, type Bypass } from "../../core/bypass"
 import { createDebugLog } from "../../core/debug"
-import { detectLanguage, diffLines, extractPatchChanges, isCommentLine, readPreimage } from "../../core/diff"
+import { detectLanguage, diffLines, extractPatchChanges, extractToolChange, isCommentLine, readPreimage, readString } from "../../core/diff"
 import { matchesAnyGlob } from "../../core/glob"
 import { PendingCallStore } from "../../core/pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "../../core/result-pipeline"
@@ -48,18 +48,6 @@ function bypassState(
 
 function commentBypassFooter(filePath: string, notes: Bypass[]): string {
   return renderBypassFooter("Comment guard bypass recorded", notes.map(note => formatBypassNote(filePath, note)))
-}
-
-// The old/new text a pending call represents, for the bypass check.
-function changeOf(call: PendingCall): { oldText: string; newText: string } {
-  if (typeof call.content === "string") return { oldText: call.preimage ?? "", newText: call.content }
-  if (Array.isArray(call.edits) && call.edits.length > 0) {
-    return {
-      oldText: call.edits.map(edit => edit.old_string ?? "").join("\n"),
-      newText: call.edits.map(edit => edit.new_string ?? "").join("\n"),
-    }
-  }
-  return { oldText: call.oldString ?? "", newText: call.newString ?? "" }
 }
 
 export interface ResolvedCommentConfig {
@@ -212,10 +200,6 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
 
     pendingCalls.prune()
     const filePath = (output.args.filePath ?? output.args.file_path ?? output.args.path) as string | undefined
-    const content = output.args.content as string | undefined
-    const oldString = (output.args.oldString ?? output.args.old_string) as string | undefined
-    const newString = (output.args.newString ?? output.args.new_string) as string | undefined
-    const edits = output.args.edits as Array<{ old_string: string; new_string: string }> | undefined
 
     if (!filePath) {
       debugLog("no filePath found for tool:", toolLower)
@@ -228,16 +212,13 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
     }
 
     let preimage: string | undefined
-    if (typeof content === "string") {
+    if (typeof output.args.content === "string") {
       preimage = readPreimage(filePath)
     }
 
     pendingCalls.set(input.callID, {
       filePath,
-      content,
-      oldString,
-      newString,
-      edits,
+      args: output.args,
       tool: toolLower,
       sessionID: input.sessionID,
       preimage,
@@ -265,11 +246,13 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
       return
     }
 
+    const change = extractToolChange(pendingCall.tool, pendingCall.args, pendingCall.preimage)
+    if (!change) return
+
     if (
       pendingCall.tool === "write" &&
       pendingCall.preimage !== undefined &&
-      typeof pendingCall.content === "string" &&
-      !hasNewCommentLines(pendingCall.preimage, pendingCall.content, pendingCall.filePath)
+      !hasNewCommentLines(change.oldText, change.newText, pendingCall.filePath)
     ) {
       debugLog("no new comment lines in write; skipping")
       return
@@ -277,11 +260,11 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
 
     await reportComments(pendingCall.sessionID, pendingCall.tool.charAt(0).toUpperCase() + pendingCall.tool.slice(1), {
       file_path: pendingCall.filePath,
-      content: pendingCall.content,
-      old_string: pendingCall.oldString,
-      new_string: pendingCall.newString,
-      edits: pendingCall.edits,
-    }, output, changeOf(pendingCall))
+      content: readString(pendingCall.args, "content"),
+      old_string: readString(pendingCall.args, "oldString", "old_string"),
+      new_string: readString(pendingCall.args, "newString", "new_string"),
+      edits: pendingCall.args.edits as Array<{ old_string: string; new_string: string }> | undefined,
+    }, output, { oldText: change.oldText, newText: change.newText })
   }
 
   return { before, after }
