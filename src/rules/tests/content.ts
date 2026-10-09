@@ -4,16 +4,9 @@ import {
   maskStrings,
   stripComments,
   stripStringLiterals,
-  type ExtractedChange,
   type Language,
 } from "../../core/diff"
-import {
-  bypassMatchers,
-  collectBypasses as collectBypassesIn,
-  isFileDisabled as isFileDisabledText,
-  withinAllowWindow,
-  type Bypass,
-} from "../../core/bypass"
+import { applyBypass, bypassMatchers, type BypassCheck } from "../../core/bypass"
 import {
   ASSERTION_COUNT_PATTERNS,
   MATCHER_LOOSENINGS,
@@ -85,17 +78,13 @@ function locateLine(newText: string, needle: string): number {
   return loose >= 0 ? loose + 1 : 0
 }
 
-function withinBypass(newText: string, line: number): boolean {
-  return withinAllowWindow(newText, line, MATCHERS)
+function withinBypass(ctx: RuleContext, line: number): boolean {
+  return ctx.bypass?.covers(line) ?? false
 }
 
-export function isFileDisabled(change: ExtractedChange): boolean {
-  return isFileDisabledText(change.newText, MATCHERS)
-}
-
-// Lists every bypass marker in the file so it can be surfaced in the summary.
-export function collectBypasses(change: ExtractedChange): Bypass[] {
-  return collectBypassesIn(change.newText, MATCHERS)
+// The file's bypass markers, computed once per file by runTestRules.
+export function testBypass(newText: string): BypassCheck {
+  return applyBypass(newText, MATCHERS)
 }
 
 function addedLineFindings(
@@ -113,7 +102,7 @@ function addedLineFindings(
     if (skip?.(line)) continue
     if (!patterns.some(pattern => pattern.test(code))) continue
     const lineNumber = locateLine(ctx.change.newText, line)
-    if (withinBypass(ctx.change.newText, lineNumber)) continue
+    if (withinBypass(ctx, lineNumber)) continue
     findings.push({ rule, line: lineNumber, message, excerpt: stripComments(line, ctx.change.language).trim() })
   }
   return findings
@@ -159,7 +148,7 @@ export const swallowedErrorRule: TestRule = {
       if (!pattern.test(joined)) continue
       const sample = ctx.change.addedLines.find(line => pattern.test(codeText(line, ctx.change.language))) ?? ctx.change.addedLines[0] ?? ""
       const lineNumber = locateLine(ctx.change.newText, sample)
-      if (withinBypass(ctx.change.newText, lineNumber)) continue
+      if (withinBypass(ctx, lineNumber)) continue
       findings.push({
         rule: "swallowed-error",
         line: lineNumber,
@@ -212,7 +201,7 @@ export const matcherLoosenedRule: TestRule = {
       const addedHit = ctx.change.addedLines.find(line => loosening.after.test(codeText(line, ctx.change.language)))
       if (!addedHit) continue
       const lineNumber = locateLine(ctx.change.newText, addedHit)
-      if (withinBypass(ctx.change.newText, lineNumber)) continue
+      if (withinBypass(ctx, lineNumber)) continue
       findings.push({
         rule: "matcher-loosened",
         line: lineNumber,
@@ -439,7 +428,7 @@ export const weakenedConfigRule: TestRule = {
       if (next < previous) {
         const sample = ctx.change.addedLines.find(line => THRESHOLD_PATTERN.test(line)) ?? ""
         const lineNumber = locateLine(ctx.change.newText, sample)
-        if (!withinBypass(ctx.change.newText, lineNumber)) {
+        if (!withinBypass(ctx, lineNumber)) {
           findings.push({
             rule: "weakened-config",
             line: lineNumber,

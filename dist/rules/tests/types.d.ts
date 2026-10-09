@@ -1,4 +1,5 @@
 import type { ExtractedChange } from "../../core/diff";
+import type { BypassCheck } from "../../core/bypass";
 import type { Severity } from "../../core/config";
 export interface TestGuardConfig {
     enabled: boolean;
@@ -18,6 +19,7 @@ export interface RuleContext {
     isTestFile: boolean;
     config: TestGuardConfig;
     blocks?: TestBlock[];
+    bypass?: BypassCheck;
 }
 export interface RuleFinding {
     rule: string;

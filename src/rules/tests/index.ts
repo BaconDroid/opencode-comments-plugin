@@ -1,5 +1,5 @@
 import type { Severity } from "../../core/config"
-import { ADVISORY_RULES, DETERMINISTIC_RULES, collectBypasses, findTestBlocks, isFileDisabled, type Bypass } from "./content"
+import { ADVISORY_RULES, DETERMINISTIC_RULES, findTestBlocks, testBypass, type Bypass } from "./content"
 import type { RuleContext, RuleFinding, TestRule } from "./types"
 
 export const ALL_TEST_RULES: TestRule[] = [...DETERMINISTIC_RULES, ...ADVISORY_RULES]
@@ -22,9 +22,11 @@ export interface RunResult {
 // Fail-open: a broken rule is swallowed, never propagated.
 export function runTestRules(ctx: RuleContext): RunResult {
   if (!ctx.isTestFile) return { findings: [], bypassed: false, bypasses: [] }
-  if (isFileDisabled(ctx.change)) {
-    return { findings: [], bypassed: true, bypasses: collectBypasses(ctx.change) }
+  const bypass = testBypass(ctx.change.newText)
+  if (bypass.fileDisabled) {
+    return { findings: [], bypassed: true, bypasses: bypass.notes }
   }
+  ctx.bypass = bypass
 
   // Parse the whole-file test bodies once instead of once per body rule.
   if (!ctx.blocks) ctx.blocks = findTestBlocks(ctx.change.newText, ctx.change.language)
@@ -39,5 +41,5 @@ export function runTestRules(ctx: RuleContext): RunResult {
       // Fail-open on purpose: a rule error must never block the agent.
     }
   }
-  return { findings, bypassed: false, bypasses: collectBypasses(ctx.change) }
+  return { findings, bypassed: false, bypasses: bypass.notes }
 }

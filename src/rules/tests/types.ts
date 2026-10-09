@@ -1,4 +1,5 @@
 import type { ExtractedChange } from "../../core/diff"
+import type { BypassCheck } from "../../core/bypass"
 import type { Severity } from "../../core/config"
 
 export interface TestGuardConfig {
@@ -22,6 +23,8 @@ export interface RuleContext {
   config: TestGuardConfig
   // Computed once per file by runTestRules so whole-body rules do not re-parse.
   blocks?: TestBlock[]
+  // The file's bypass markers, computed once by runTestRules.
+  bypass?: BypassCheck
 }
 
 export interface RuleFinding {

@@ -41,6 +41,24 @@ export function isFileDisabled(text: string, matchers: BypassMatchers): boolean 
   return matchers.disableFile.test(text)
 }
 
+// The two bypass tests both guards share: a file-level disable marker, and a
+// per-line allow marker within its window. `notes` lists every marker. What a
+// bypass suppresses (whole file vs per finding) stays in each guard's policy.
+export interface BypassCheck {
+  notes: Bypass[]
+  fileDisabled: boolean
+  covers(line: number): boolean
+}
+
+export function applyBypass(newText: string, matchers: BypassMatchers): BypassCheck {
+  const notes = collectBypasses(newText, matchers)
+  return {
+    notes,
+    fileDisabled: notes.some(note => note.kind === "disable-file"),
+    covers: line => withinAllowWindow(newText, line, matchers),
+  }
+}
+
 // True when an allow marker sits within +/-window lines of the given 1-based
 // line.
 export function withinAllowWindow(

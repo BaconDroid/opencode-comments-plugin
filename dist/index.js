@@ -1193,8 +1193,13 @@ function collectBypasses(text, matchers) {
   }
   return bypasses;
 }
-function isFileDisabled(text, matchers) {
-  return matchers.disableFile.test(text);
+function applyBypass(newText, matchers) {
+  const notes = collectBypasses(newText, matchers);
+  return {
+    notes,
+    fileDisabled: notes.some((note) => note.kind === "disable-file"),
+    covers: (line) => withinAllowWindow(newText, line, matchers)
+  };
 }
 function withinAllowWindow(text, line, matchers, window = BYPASS_WINDOW) {
   if (line <= 0)
@@ -1251,14 +1256,11 @@ function locateLine(newText, needle) {
   const loose = lines.findIndex((line) => line.trim() === trimmed);
   return loose >= 0 ? loose + 1 : 0;
 }
-function withinBypass(newText, line) {
-  return withinAllowWindow(newText, line, MATCHERS);
+function withinBypass(ctx, line) {
+  return ctx.bypass?.covers(line) ?? false;
 }
-function isFileDisabled2(change) {
-  return isFileDisabled(change.newText, MATCHERS);
-}
-function collectBypasses2(change) {
-  return collectBypasses(change.newText, MATCHERS);
+function testBypass(newText) {
+  return applyBypass(newText, MATCHERS);
 }
 function addedLineFindings(ctx, rule, patterns, message, skip) {
   const findings = [];
@@ -1272,7 +1274,7 @@ function addedLineFindings(ctx, rule, patterns, message, skip) {
     if (!patterns.some((pattern) => pattern.test(code)))
       continue;
     const lineNumber = locateLine(ctx.change.newText, line);
-    if (withinBypass(ctx.change.newText, lineNumber))
+    if (withinBypass(ctx, lineNumber))
       continue;
     findings.push({ rule, line: lineNumber, message, excerpt: stripComments(line, ctx.change.language).trim() });
   }
@@ -1309,7 +1311,7 @@ var swallowedErrorRule = {
         continue;
       const sample = ctx.change.addedLines.find((line) => pattern.test(codeText(line, ctx.change.language))) ?? ctx.change.addedLines[0] ?? "";
       const lineNumber = locateLine(ctx.change.newText, sample);
-      if (withinBypass(ctx.change.newText, lineNumber))
+      if (withinBypass(ctx, lineNumber))
         continue;
       findings.push({
         rule: "swallowed-error",
@@ -1362,7 +1364,7 @@ var matcherLoosenedRule = {
       if (!addedHit)
         continue;
       const lineNumber = locateLine(ctx.change.newText, addedHit);
-      if (withinBypass(ctx.change.newText, lineNumber))
+      if (withinBypass(ctx, lineNumber))
         continue;
       findings.push({
         rule: "matcher-loosened",
@@ -1603,7 +1605,7 @@ var weakenedConfigRule = {
       if (next < previous) {
         const sample = ctx.change.addedLines.find((line) => THRESHOLD_PATTERN.test(line)) ?? "";
         const lineNumber = locateLine(ctx.change.newText, sample);
-        if (!withinBypass(ctx.change.newText, lineNumber)) {
+        if (!withinBypass(ctx, lineNumber)) {
           findings.push({
             rule: "weakened-config",
             line: lineNumber,
@@ -1745,9 +1747,11 @@ function buildRuleChecks(includeAdvisory) {
 function runTestRules(ctx) {
   if (!ctx.isTestFile)
     return { findings: [], bypassed: false, bypasses: [] };
-  if (isFileDisabled2(ctx.change)) {
-    return { findings: [], bypassed: true, bypasses: collectBypasses2(ctx.change) };
+  const bypass = testBypass(ctx.change.newText);
+  if (bypass.fileDisabled) {
+    return { findings: [], bypassed: true, bypasses: bypass.notes };
   }
+  ctx.bypass = bypass;
   if (!ctx.blocks)
     ctx.blocks = findTestBlocks(ctx.change.newText, ctx.change.language);
   const findings = [];
@@ -1759,7 +1763,7 @@ function runTestRules(ctx) {
       findings.push(...rule.run(ctx));
     } catch {}
   }
-  return { findings, bypassed: false, bypasses: collectBypasses2(ctx.change) };
+  return { findings, bypassed: false, bypasses: bypass.notes };
 }
 
 // src/rules/tests/analyzer.ts
@@ -2501,23 +2505,21 @@ import { existsSync as existsSync5 } from "fs";
 var debugLog4 = createDebugLog("comment-guard", process.env.COMMENT_CHECKER_DEBUG === "1");
 var MATCHERS2 = bypassMatchers("comment-guard");
 function bypassState(newText, oldText, language) {
-  const notes = collectBypasses(newText, MATCHERS2);
-  if (notes.some((note) => note.kind === "disable-file"))
-    return { suppress: true, notes };
+  const bypass = applyBypass(newText, MATCHERS2);
   const { added } = diffLines(oldText, newText);
   const addedComments = added.filter((line) => isCommentLine(line, language));
-  if (addedComments.length === 0)
-    return { suppress: false, notes };
   const lines = newText.split(`
 `);
   const used = new Set;
+  const lineNumbers = [];
   for (const comment of addedComments) {
     const index = lines.findIndex((line, i) => !used.has(i) && line === comment);
-    if (index < 0 || !withinAllowWindow(newText, index + 1, MATCHERS2))
-      return { suppress: false, notes };
-    used.add(index);
+    if (index >= 0)
+      used.add(index);
+    lineNumbers.push(index >= 0 ? index + 1 : 0);
   }
-  return { suppress: true, notes };
+  const suppress = bypass.fileDisabled || lineNumbers.length > 0 && lineNumbers.every((line) => bypass.covers(line));
+  return { suppress, notes: bypass.notes };
 }
 function commentBypassFooter(filePath, notes) {
   return renderBypassFooter("Comment guard bypass recorded", notes.map((note) => formatBypassNote(filePath, note)));
