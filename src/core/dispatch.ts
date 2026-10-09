@@ -1,10 +1,9 @@
 // Test-guard orchestration: config-driven rule dispatch shared by the
 // `tool.execute.before` (block) and `tool.execute.after` (warn) hooks.
 
-import { existsSync } from "node:fs"
-import { join } from "node:path"
 import { APPLY_PATCH_TOOL_NAME } from "../constants"
 import { AnalyzerRegistry } from "./analyzer"
+import { checkBlockingBefore, checkPermission, type BlockingPolicy } from "./blocking"
 import { GuardBudget } from "./budget"
 import type { Bypass } from "./bypass"
 import type { GuardBaseConfig, Severity } from "./config"
@@ -17,6 +16,8 @@ import { isTriggeredTool } from "./triggers"
 import { createRuleAnalyzer } from "../rules/tests/analyzer"
 import { isTestPath } from "../rules/tests/patterns"
 import type { PermissionDecision, PermissionLike, ToolExecuteInput, ToolExecuteOutput } from "../types"
+
+export { extractPatchEntries } from "./blocking"
 
 const debugLog = createDebugLog(
   "test-guard",
@@ -42,18 +43,6 @@ export interface TestGuard {
   permission(input: PermissionLike, output: PermissionDecision): void
 }
 
-const PATCH_ENTRY = /^\*\*\* (Add|Update|Delete) File:\s*(.+?)\s*$/gm
-
-export function extractPatchEntries(patchText: string): Array<{ kind: string; path: string }> {
-  const entries: Array<{ kind: string; path: string }> = []
-  let match: RegExpExecArray | null
-  const regex = new RegExp(PATCH_ENTRY.source, "gm")
-  while ((match = regex.exec(patchText)) !== null) {
-    entries.push({ kind: match[1]!, path: match[2]! })
-  }
-  return entries
-}
-
 export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard {
   const budget = new GuardBudget()
   const pending = new PendingCallStore<PendingToolCall>()
@@ -76,33 +65,22 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
     return isTestPath(filePath, patterns)
   }
 
-  function pathExists(filePath: string): boolean {
-    try {
-      return existsSync(filePath) || existsSync(join(process.cwd(), filePath))
-    } catch {
-      return false
-    }
+  const blockingPolicy: BlockingPolicy = {
+    isBlocking,
+    isProtectedPath: filePath => isProtectedPath(filePath, resolve().testPatterns),
+    message: (filePath, viaPatch) =>
+      viaPatch
+        ? `[test-guard] protected-paths is set to block: refusing to modify test file ${filePath}. Set "checks": { "protected-paths": "warn" } or add a bypass.`
+        : `[test-guard] protected-paths is set to block: refusing to edit existing test file ${filePath}. Set "checks": { "protected-paths": "warn" } or add a bypass.`,
   }
 
   // Defense in depth for #5894: `tool.execute.before` can be bypassed by
-  // sub-agents, but `permission.ask` still runs. When protected-paths is set to
-  // block, deny the permission for an existing test file.
+  // sub-agents, but `permission.ask` still runs.
   function permission(input: PermissionLike, output: PermissionDecision): void {
     try {
-      const resolved = resolve()
-      if (!resolved.enabled) return
-      if (!isBlocking()) return
-      if (input.type !== "edit" && input.type !== "write") return
-
-      const patterns = resolved.testPatterns
-      const candidates = Array.isArray(input.pattern) ? input.pattern : input.pattern ? [input.pattern] : []
-      for (const candidate of candidates) {
-        if (!isProtectedPath(candidate, patterns)) continue
-        if (!pathExists(candidate)) continue
-        output.status = "deny"
-        debugLog("permission denied for protected test path", candidate)
-        return
-      }
+      if (!resolve().enabled) return
+      const denied = checkPermission(input, output, blockingPolicy)
+      if (denied) debugLog("permission denied for protected test path", denied)
     } catch (err) {
       debugLog("permission failed (fail-open):", err)
     }
@@ -115,33 +93,11 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
 
       const toolLower = input.tool.toLowerCase()
       const args = output.args ?? {}
-      const patterns = resolved.testPatterns.length > 0 ? resolved.testPatterns : []
 
       if (!isTriggeredTool(resolved.triggerTools, toolLower)) return
 
       pending.prune()
-      if (isBlocking()) {
-        if (toolLower === APPLY_PATCH_TOOL_NAME) {
-          const patchText = firstString(args, "patchText", "patch", "patch_text") ?? ""
-          for (const entry of extractPatchEntries(patchText)) {
-            if (entry.kind !== "Delete" && entry.kind !== "Update") continue
-            if (!isProtectedPath(entry.path, patterns)) continue
-            // Deletes are always blocked; updates only touch an existing file.
-            if (entry.kind === "Delete" || pathExists(entry.path)) {
-              throw new Error(
-                `[test-guard] protected-paths is set to block: refusing to modify test file ${entry.path}. Set "checks": { "protected-paths": "warn" } or add a bypass.`,
-              )
-            }
-          }
-        } else {
-          const filePath = firstString(args, "filePath", "file_path", "path")
-          if (filePath && isProtectedPath(filePath, patterns) && pathExists(filePath)) {
-            throw new Error(
-              `[test-guard] protected-paths is set to block: refusing to edit existing test file ${filePath}. Set "checks": { "protected-paths": "warn" } or add a bypass.`,
-            )
-          }
-        }
-      }
+      checkBlockingBefore(toolLower, args, blockingPolicy)
 
       let preimage: string | undefined
       const filePath = firstString(args, "filePath", "file_path", "path")

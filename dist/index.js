@@ -473,10 +473,6 @@ function asRecord(value) {
   return value;
 }
 
-// src/core/dispatch.ts
-import { existsSync as existsSync4 } from "fs";
-import { join as join3 } from "path";
-
 // src/core/analyzer.ts
 function runAnalyzer(analyzer, ctx) {
   try {
@@ -509,74 +505,9 @@ class AnalyzerRegistry {
   }
 }
 
-// src/core/budget.ts
-class GuardBudget {
-  dedupWindowMs;
-  ttlMs;
-  maxWarningsPerFile;
-  seen = new Map;
-  perFile = new Map;
-  constructor(options = {}) {
-    this.dedupWindowMs = options.dedupWindowMs ?? 30000;
-    this.ttlMs = options.ttlMs ?? 60000;
-    this.maxWarningsPerFile = options.maxWarningsPerFile ?? 0;
-  }
-  setMaxWarningsPerFile(value) {
-    this.maxWarningsPerFile = value;
-  }
-  setDedupWindowMs(value) {
-    this.dedupWindowMs = value;
-  }
-  key(sessionID, ruleID, filePath) {
-    return `${sessionID}\x00${ruleID}\x00${filePath}`;
-  }
-  fileKey(sessionID, filePath) {
-    return `${sessionID}\x00${filePath}`;
-  }
-  cleanup(now = Date.now()) {
-    for (const [key, timestamp] of this.seen) {
-      if (now - timestamp > this.ttlMs)
-        this.seen.delete(key);
-    }
-    for (const [key, counter] of this.perFile) {
-      if (now - counter.lastSeen > this.ttlMs)
-        this.perFile.delete(key);
-    }
-  }
-  shouldEmit(sessionID, ruleID, filePath, now = Date.now()) {
-    this.cleanup(now);
-    const key = this.key(sessionID, ruleID, filePath);
-    const last = this.seen.get(key);
-    if (last !== undefined && now - last < this.dedupWindowMs)
-      return false;
-    if (this.maxWarningsPerFile > 0) {
-      const counter = this.perFile.get(this.fileKey(sessionID, filePath));
-      if (counter && counter.count >= this.maxWarningsPerFile)
-        return false;
-    }
-    return true;
-  }
-  record(sessionID, ruleID, filePath, now = Date.now()) {
-    this.seen.set(this.key(sessionID, ruleID, filePath), now);
-    if (this.maxWarningsPerFile <= 0)
-      return;
-    const key = this.fileKey(sessionID, filePath);
-    const existing = this.perFile.get(key);
-    if (existing) {
-      existing.count += 1;
-      existing.lastSeen = now;
-    } else {
-      this.perFile.set(key, { count: 1, lastSeen: now });
-    }
-  }
-  touch(sessionID, now = Date.now()) {
-    const prefix = `${sessionID}\x00`;
-    for (const [key, counter] of this.perFile) {
-      if (key.startsWith(prefix))
-        counter.lastSeen = now;
-    }
-  }
-}
+// src/core/blocking.ts
+import { existsSync as existsSync4 } from "fs";
+import { join as join3 } from "path";
 
 // src/core/diff.ts
 import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
@@ -883,6 +814,133 @@ function extractPatchChanges(metadata) {
     }));
   }
   return changes;
+}
+
+// src/core/blocking.ts
+var PATCH_ENTRY = /^\*\*\* (Add|Update|Delete) File:\s*(.+?)\s*$/gm;
+function extractPatchEntries(patchText) {
+  const entries = [];
+  let match;
+  const regex = new RegExp(PATCH_ENTRY.source, "gm");
+  while ((match = regex.exec(patchText)) !== null) {
+    entries.push({ kind: match[1], path: match[2] });
+  }
+  return entries;
+}
+function pathExists(filePath) {
+  try {
+    return existsSync4(filePath) || existsSync4(join3(process.cwd(), filePath));
+  } catch {
+    return false;
+  }
+}
+function checkBlockingBefore(toolLower, args, policy) {
+  if (!policy.isBlocking())
+    return;
+  if (toolLower === APPLY_PATCH_TOOL_NAME) {
+    const patchText = firstString(args, "patchText", "patch", "patch_text") ?? "";
+    for (const entry of extractPatchEntries(patchText)) {
+      if (entry.kind !== "Delete" && entry.kind !== "Update")
+        continue;
+      if (!policy.isProtectedPath(entry.path))
+        continue;
+      if (entry.kind === "Delete" || pathExists(entry.path)) {
+        throw new Error(policy.message(entry.path, true));
+      }
+    }
+    return;
+  }
+  const filePath = firstString(args, "filePath", "file_path", "path");
+  if (filePath && policy.isProtectedPath(filePath) && pathExists(filePath)) {
+    throw new Error(policy.message(filePath, false));
+  }
+}
+function checkPermission(input, output, policy) {
+  try {
+    if (!policy.isBlocking())
+      return;
+    if (input.type !== "edit" && input.type !== "write")
+      return;
+    const candidates = Array.isArray(input.pattern) ? input.pattern : input.pattern ? [input.pattern] : [];
+    for (const candidate of candidates) {
+      if (!policy.isProtectedPath(candidate))
+        continue;
+      if (!pathExists(candidate))
+        continue;
+      output.status = "deny";
+      return candidate;
+    }
+  } catch {}
+  return;
+}
+
+// src/core/budget.ts
+class GuardBudget {
+  dedupWindowMs;
+  ttlMs;
+  maxWarningsPerFile;
+  seen = new Map;
+  perFile = new Map;
+  constructor(options = {}) {
+    this.dedupWindowMs = options.dedupWindowMs ?? 30000;
+    this.ttlMs = options.ttlMs ?? 60000;
+    this.maxWarningsPerFile = options.maxWarningsPerFile ?? 0;
+  }
+  setMaxWarningsPerFile(value) {
+    this.maxWarningsPerFile = value;
+  }
+  setDedupWindowMs(value) {
+    this.dedupWindowMs = value;
+  }
+  key(sessionID, ruleID, filePath) {
+    return `${sessionID}\x00${ruleID}\x00${filePath}`;
+  }
+  fileKey(sessionID, filePath) {
+    return `${sessionID}\x00${filePath}`;
+  }
+  cleanup(now = Date.now()) {
+    for (const [key, timestamp] of this.seen) {
+      if (now - timestamp > this.ttlMs)
+        this.seen.delete(key);
+    }
+    for (const [key, counter] of this.perFile) {
+      if (now - counter.lastSeen > this.ttlMs)
+        this.perFile.delete(key);
+    }
+  }
+  shouldEmit(sessionID, ruleID, filePath, now = Date.now()) {
+    this.cleanup(now);
+    const key = this.key(sessionID, ruleID, filePath);
+    const last = this.seen.get(key);
+    if (last !== undefined && now - last < this.dedupWindowMs)
+      return false;
+    if (this.maxWarningsPerFile > 0) {
+      const counter = this.perFile.get(this.fileKey(sessionID, filePath));
+      if (counter && counter.count >= this.maxWarningsPerFile)
+        return false;
+    }
+    return true;
+  }
+  record(sessionID, ruleID, filePath, now = Date.now()) {
+    this.seen.set(this.key(sessionID, ruleID, filePath), now);
+    if (this.maxWarningsPerFile <= 0)
+      return;
+    const key = this.fileKey(sessionID, filePath);
+    const existing = this.perFile.get(key);
+    if (existing) {
+      existing.count += 1;
+      existing.lastSeen = now;
+    } else {
+      this.perFile.set(key, { count: 1, lastSeen: now });
+    }
+  }
+  touch(sessionID, now = Date.now()) {
+    const prefix = `${sessionID}\x00`;
+    for (const [key, counter] of this.perFile) {
+      if (key.startsWith(prefix))
+        counter.lastSeen = now;
+    }
+  }
 }
 
 // src/core/feedback.ts
@@ -1807,16 +1865,6 @@ var DEFAULT_TEST_GUARD = {
   checks: {},
   maxWarningsPerFile: 0
 };
-var PATCH_ENTRY = /^\*\*\* (Add|Update|Delete) File:\s*(.+?)\s*$/gm;
-function extractPatchEntries(patchText) {
-  const entries = [];
-  let match;
-  const regex = new RegExp(PATCH_ENTRY.source, "gm");
-  while ((match = regex.exec(patchText)) !== null) {
-    entries.push({ kind: match[1], path: match[2] });
-  }
-  return entries;
-}
 function createTestGuard(getResolved) {
   const budget = new GuardBudget;
   const pending = new PendingCallStore;
@@ -1835,33 +1883,18 @@ function createTestGuard(getResolved) {
   function isProtectedPath(filePath, patterns) {
     return isTestPath(filePath, patterns);
   }
-  function pathExists(filePath) {
-    try {
-      return existsSync4(filePath) || existsSync4(join3(process.cwd(), filePath));
-    } catch {
-      return false;
-    }
-  }
+  const blockingPolicy = {
+    isBlocking,
+    isProtectedPath: (filePath) => isProtectedPath(filePath, resolve().testPatterns),
+    message: (filePath, viaPatch) => viaPatch ? `[test-guard] protected-paths is set to block: refusing to modify test file ${filePath}. Set "checks": { "protected-paths": "warn" } or add a bypass.` : `[test-guard] protected-paths is set to block: refusing to edit existing test file ${filePath}. Set "checks": { "protected-paths": "warn" } or add a bypass.`
+  };
   function permission(input, output) {
     try {
-      const resolved = resolve();
-      if (!resolved.enabled)
+      if (!resolve().enabled)
         return;
-      if (!isBlocking())
-        return;
-      if (input.type !== "edit" && input.type !== "write")
-        return;
-      const patterns = resolved.testPatterns;
-      const candidates = Array.isArray(input.pattern) ? input.pattern : input.pattern ? [input.pattern] : [];
-      for (const candidate of candidates) {
-        if (!isProtectedPath(candidate, patterns))
-          continue;
-        if (!pathExists(candidate))
-          continue;
-        output.status = "deny";
-        debugLog3("permission denied for protected test path", candidate);
-        return;
-      }
+      const denied = checkPermission(input, output, blockingPolicy);
+      if (denied)
+        debugLog3("permission denied for protected test path", denied);
     } catch (err) {
       debugLog3("permission failed (fail-open):", err);
     }
@@ -1873,29 +1906,10 @@ function createTestGuard(getResolved) {
         return;
       const toolLower = input.tool.toLowerCase();
       const args = output.args ?? {};
-      const patterns = resolved.testPatterns.length > 0 ? resolved.testPatterns : [];
       if (!isTriggeredTool(resolved.triggerTools, toolLower))
         return;
       pending.prune();
-      if (isBlocking()) {
-        if (toolLower === APPLY_PATCH_TOOL_NAME) {
-          const patchText = firstString(args, "patchText", "patch", "patch_text") ?? "";
-          for (const entry of extractPatchEntries(patchText)) {
-            if (entry.kind !== "Delete" && entry.kind !== "Update")
-              continue;
-            if (!isProtectedPath(entry.path, patterns))
-              continue;
-            if (entry.kind === "Delete" || pathExists(entry.path)) {
-              throw new Error(`[test-guard] protected-paths is set to block: refusing to modify test file ${entry.path}. Set "checks": { "protected-paths": "warn" } or add a bypass.`);
-            }
-          }
-        } else {
-          const filePath = firstString(args, "filePath", "file_path", "path");
-          if (filePath && isProtectedPath(filePath, patterns) && pathExists(filePath)) {
-            throw new Error(`[test-guard] protected-paths is set to block: refusing to edit existing test file ${filePath}. Set "checks": { "protected-paths": "warn" } or add a bypass.`);
-          }
-        }
-      }
+      checkBlockingBefore(toolLower, args, blockingPolicy);
       let preimage;
       const filePath = firstString(args, "filePath", "file_path", "path");
       if (toolLower !== APPLY_PATCH_TOOL_NAME && filePath && typeof args.content === "string") {
