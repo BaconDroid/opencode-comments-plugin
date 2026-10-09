@@ -1781,7 +1781,6 @@ function createRuleAnalyzer(getConfig) {
         config: {
           enabled: config.enabled,
           testPatterns: config.testPatterns,
-          testCommand: config.testCommand ?? null,
           checks: config.checks,
           maxWarningsPerFile: 0
         }
@@ -1873,9 +1872,7 @@ function createTestGuard(getResolved) {
           const results = await registry.run("after", {
             tool: input.tool,
             sessionID: input.sessionID,
-            callID: input.callID,
-            change,
-            directory: process.cwd()
+            change
           });
           const changeFindings = [];
           const changeBypasses = [];
@@ -2593,8 +2590,7 @@ function createCommentGuard(getConfig) {
       const results = await registry.run("after", {
         tool: toolName,
         sessionID,
-        args: toolInput,
-        directory: process.cwd()
+        args: toolInput
       });
       const message = renderAnalyzerResults(results, { appendPrompt });
       if (message.length > 0) {
@@ -2877,8 +2873,8 @@ function auditTestFile(file, includeAdvisory) {
     isDelete: false
   });
   const checks = buildRuleChecks(includeAdvisory);
-  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns: [], checks, testCommand: null, isTestFile: true }));
-  const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-audit", change, directory: process.cwd() });
+  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns: [], checks, isTestFile: true }));
+  const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-audit", change });
   const findings = [];
   for (const finding of result.findings ?? []) {
     if (!validExcerpt(finding.excerpt))
@@ -3224,7 +3220,7 @@ var CommentCheckerPlugin = async (input, options) => {
       if (event.type !== "session.idle")
         return;
       const sessionID = event.properties?.sessionID ?? "";
-      const results = await analyzers.run("idle", { tool: "", sessionID, directory: projectDirectory });
+      const results = await analyzers.run("idle", { tool: "", sessionID });
       for (const result of results) {
         if (result.note)
           advisories.queue(result.note);

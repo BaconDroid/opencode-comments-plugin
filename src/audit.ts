@@ -195,8 +195,8 @@ export function auditTestFile(file: AuditFile, includeAdvisory: boolean): TestAu
   })
 
   const checks = buildRuleChecks(includeAdvisory)
-  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns: [], checks, testCommand: null, isTestFile: true }))
-  const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-audit", change, directory: process.cwd() })
+  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns: [], checks, isTestFile: true }))
+  const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-audit", change })
 
   const findings: TestAuditFinding[] = []
   for (const finding of result.findings ?? []) {

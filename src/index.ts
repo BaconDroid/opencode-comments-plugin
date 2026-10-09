@@ -226,7 +226,7 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
     event: async ({ event }) => {
       if (event.type !== "session.idle") return
       const sessionID = event.properties?.sessionID ?? ""
-      const results = await analyzers.run("idle", { tool: "", sessionID, directory: projectDirectory })
+      const results = await analyzers.run("idle", { tool: "", sessionID })
       for (const result of results) {
         if (result.note) advisories.queue(result.note)
       }

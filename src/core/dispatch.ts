@@ -108,9 +108,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
           const results = await registry.run("after", {
             tool: input.tool,
             sessionID: input.sessionID,
-            callID: input.callID,
             change,
-            directory: process.cwd(),
           })
 
           const changeFindings: Finding[] = []

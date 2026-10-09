@@ -142,7 +142,6 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
         tool: toolName,
         sessionID,
         args: toolInput as Record<string, unknown>,
-        directory: process.cwd(),
       })
       const message = renderAnalyzerResults(results, { appendPrompt })
       if (message.length > 0) {

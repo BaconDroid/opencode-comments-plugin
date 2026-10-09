@@ -13,7 +13,6 @@ export interface RuleAnalyzerConfig {
   enabled: boolean
   testPatterns: string[]
   checks: Record<string, Severity>
-  testCommand?: string | null
   // Audit and CI already selected test files, so they force `isTestFile` true.
   // When unset, the path is matched against `testPatterns`.
   isTestFile?: boolean
@@ -37,7 +36,6 @@ export function createRuleAnalyzer(getConfig: () => RuleAnalyzerConfig): SyncAna
         config: {
           enabled: config.enabled,
           testPatterns: config.testPatterns,
-          testCommand: config.testCommand ?? null,
           checks: config.checks,
           maxWarningsPerFile: 0,
         },

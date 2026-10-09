@@ -14,10 +14,8 @@ export type AnalyzerTrigger = "after" | "idle" | "on-demand"
 export interface AnalyzerContext {
   tool: string
   sessionID: string
-  callID?: string
   change?: ExtractedChange
   args?: Record<string, unknown>
-  directory: string
 }
 
 export interface AnalyzerResult {
