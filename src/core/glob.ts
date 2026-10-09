@@ -58,3 +58,12 @@ export function matchesGlob(pattern: string, filePath: string): boolean {
 export function matchesAnyGlob(patterns: string[], filePath: string): boolean {
   return patterns.some(pattern => matchesGlob(pattern, filePath))
 }
+
+// Matches `filePath` against `patterns`. An empty `patterns` matches every file,
+// unless `fallback` is given, in which case the fallback patterns are used.
+// Shared by the comment guard's `paths` allowlist and the test guard's
+// `test_patterns` selector.
+export function matchPathFilter(patterns: string[], filePath: string, fallback?: string[]): boolean {
+  if (patterns.length === 0) return fallback ? matchesAnyGlob(fallback, filePath) : true
+  return matchesAnyGlob(patterns, filePath)
+}

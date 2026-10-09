@@ -655,6 +655,11 @@ function matchesGlob(pattern, filePath) {
 function matchesAnyGlob(patterns, filePath) {
   return patterns.some((pattern) => matchesGlob(pattern, filePath));
 }
+function matchPathFilter(patterns, filePath, fallback) {
+  if (patterns.length === 0)
+    return fallback ? matchesAnyGlob(fallback, filePath) : true;
+  return matchesAnyGlob(patterns, filePath);
+}
 
 // src/rules/tests/patterns.ts
 var DEFAULT_TEST_PATTERNS = [
@@ -666,7 +671,7 @@ var DEFAULT_TEST_PATTERNS = [
   "**/*.spec.*"
 ];
 function isTestPath(filePath, patterns) {
-  return matchesAnyGlob(patterns.length > 0 ? patterns : DEFAULT_TEST_PATTERNS, filePath);
+  return matchPathFilter(patterns, filePath, DEFAULT_TEST_PATTERNS);
 }
 var SKIP_FOCUS_PATTERNS = {
   js: [/\.(?:skip|only|todo)\s*\(/, /\b(?:xit|xdescribe|xtest)\s*\(/],
@@ -1791,9 +1796,14 @@ function detectTestCommand(directory) {
 }
 
 // src/audit.ts
-import { tool } from "@opencode-ai/plugin";
+import { tool as tool2 } from "@opencode-ai/plugin";
 import { readFileSync as readFileSync4, readdirSync as readdirSync2, statSync } from "fs";
 import { isAbsolute as isAbsolute2, join as join5, relative as relative2 } from "path";
+
+// src/core/idle-advisory.ts
+import { tool } from "@opencode-ai/plugin";
+
+// src/audit.ts
 var EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "build", "vendor", ".cache", "coverage"]);
 var SECRET_PATTERNS = [/(?:^|\/)\.env(?:\.|$)/, /\.pem$/, /\.key$/, /(?:^|\/)id_(?:rsa|ed25519)$/, /\.p12$/];
 var MAX_FILES = 500;

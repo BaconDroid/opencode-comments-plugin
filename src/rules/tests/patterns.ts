@@ -11,7 +11,7 @@
 //   ruff/flake8-pytest-style PT015/PT018/B011, SonarJS S1607, SonarQube S2699.
 
 import type { Language } from "../../core/diff"
-import { matchesAnyGlob } from "../../core/glob"
+import { matchPathFilter } from "../../core/glob"
 
 export const DEFAULT_TEST_PATTERNS = [
   "**/*.test.*",
@@ -23,7 +23,7 @@ export const DEFAULT_TEST_PATTERNS = [
 ]
 
 export function isTestPath(filePath: string, patterns: string[]): boolean {
-  return matchesAnyGlob(patterns.length > 0 ? patterns : DEFAULT_TEST_PATTERNS, filePath)
+  return matchPathFilter(patterns, filePath, DEFAULT_TEST_PATTERNS)
 }
 
 // jest/no-disabled-tests + ruff PT015 + go t.Skip + rust #[ignore].
