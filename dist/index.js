@@ -1421,14 +1421,40 @@ var MOCK_IDENTIFIER_PATTERNS = [
   /\bpatch\s*\(/
 ];
 var WEAKENED_CONFIG_PATTERNS = [
-  /\|\|\s*true\b/,
-  /--passWithNoTests\b/,
-  /\bcontinue-on-error\s*:\s*true\b/,
   /@ts-nocheck\b/,
+  /--no-verify\b/,
   /#\s*ruff:\s*noqa/,
-  /\bexit\s+0\b/,
   /\bfail_under\s*=\s*0\b/
 ];
+var FORCED_SUCCESS_PATTERNS = [
+  /\|\|\s*(?:true|:)\s*$/,
+  /(?:^|[^\w])exit\s+0\b/,
+  /\bsys\.exit\(\s*0\s*\)/,
+  /\bprocess\.exit\(\s*0\s*\)/,
+  /\bcontinue-on-error:\s*true\b/,
+  /--passWithNoTests\b/
+];
+var NEGATIVE_CONTROL_PATTERNS = {
+  python: [
+    /pytest\.raises\(\s*(?:Exception|BaseException)\s*\)/,
+    /assertRaises\(\s*(?:Exception|BaseException)\s*\)/,
+    /assertRaisesRegex\(\s*(?:Exception|BaseException)/
+  ],
+  js: [/\.toThrow\s*\(\s*(?:Error\s*)?\)/, /expect\([^)]*\)\.not\.toThrow\(\s*\)/],
+  ts: [/\.toThrow\s*\(\s*(?:Error\s*)?\)/, /expect\([^)]*\)\.not\.toThrow\(\s*\)/]
+};
+var EXPECTED_ASSERTION_GATE = [
+  /\bassert/,
+  /\bexpect\s*\(/,
+  /\brequire\./,
+  /\bshould\b/
+];
+var CALL_IDENTIFIER_PATTERN = /\b([A-Za-z_]\w*)\s*\(/g;
+var JS_MOCK_CALL_PATTERN = /(?:vi|jest)\.mock\(\s*['"]([^'"]+)['"]/;
+var JS_SPY_ON_CALL_PATTERN = /(?:vi|jest)\.spyOn\(\s*(\w+)/;
+var JS_IMPORT_FROM_PATTERN = /^import\s+(.+?)\s+from\s+['"]([^'"]+)['"]/;
+var JS_REQUIRE_PATTERN = /(?:const|let|var)\s+(.+?)\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)/;
+var PY_PATCH_PATTERN = /(?:mocker\.)?patch\(\s*['"]([^'"]+)['"]/;
 var TESTS_NOT_RUN_PATTERNS = [
   /--ignore(?:=|\s)/,
   /--exclude\b/,
@@ -1984,6 +2010,248 @@ var testsNotRunRule = {
     return addedLineFindings(ctx, "tests-not-run", TESTS_NOT_RUN_PATTERNS, "A test command excludes or skips tests.");
   }
 };
+var forcedSuccessRule = {
+  id: "forced-success",
+  run(ctx) {
+    return addedLineFindings(ctx, "forced-success", FORCED_SUCCESS_PATTERNS, "Test command forced to succeed regardless of outcome.");
+  }
+};
+var MOCK_OF_SUT_MESSAGE = "The module under test is mocked; asserting on the mock cannot validate real behavior.";
+function matchesAny(patterns, text) {
+  return patterns.some((pattern) => pattern.test(text));
+}
+function testStem(filePath) {
+  const normalized = filePath.replace(/\\/g, "/");
+  let base = normalized.slice(normalized.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  if (dot > 0)
+    base = base.slice(0, dot);
+  if (base.endsWith(".test") || base.endsWith(".spec")) {
+    base = base.slice(0, base.lastIndexOf("."));
+  } else if (base.startsWith("test_")) {
+    base = base.slice("test_".length);
+  } else if (base.endsWith("_test")) {
+    base = base.slice(0, base.length - "_test".length);
+  }
+  return base;
+}
+function mockedModuleStem(spec) {
+  let value = spec.trim();
+  const slash = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
+  if (slash >= 0)
+    value = value.slice(slash + 1);
+  const dot = value.lastIndexOf(".");
+  if (dot > 0)
+    value = value.slice(0, dot);
+  return value;
+}
+function patchedModuleRoot(spec) {
+  let value = spec.trim();
+  const index = value.search(/[./]/);
+  if (index >= 0)
+    value = value.slice(0, index);
+  return value;
+}
+function importedNamesFromStem(text, stem, language) {
+  const names = new Set;
+  for (const raw of text.split(`
+`)) {
+    const line = stripComments(raw, language).trim();
+    if (line.length === 0)
+      continue;
+    const importMatch = JS_IMPORT_FROM_PATTERN.exec(line);
+    if (importMatch) {
+      if (mockedModuleStem(importMatch[2]) === stem)
+        collectJSBindings(importMatch[1], names);
+      continue;
+    }
+    const requireMatch = JS_REQUIRE_PATTERN.exec(line);
+    if (requireMatch) {
+      if (mockedModuleStem(requireMatch[2]) === stem)
+        collectJSBindings(requireMatch[1], names);
+    }
+  }
+  return names;
+}
+function collectJSBindings(binding, names) {
+  let value = binding.trim();
+  const open = value.indexOf("{");
+  if (open >= 0) {
+    const close = value.indexOf("}", open);
+    if (close >= 0) {
+      collectNamedBindings(value.slice(open + 1, close), names);
+      value = `${value.slice(0, open)}${value.slice(close + 1)}`.trim();
+    }
+  }
+  value = value.trim();
+  if (value.length === 0)
+    return;
+  if (value.startsWith("*")) {
+    const space = value.lastIndexOf(" ");
+    if (space >= 0)
+      names.add(value.slice(space + 1).trim());
+    return;
+  }
+  const first = value.replace(/,\s*$/, "").trim().split(/\s+/)[0];
+  if (first)
+    names.add(first);
+}
+function collectNamedBindings(inner, names) {
+  for (const part of inner.split(",")) {
+    let value = part.trim();
+    if (value.length === 0)
+      continue;
+    const asIndex = value.indexOf(" as ");
+    if (asIndex >= 0)
+      value = value.slice(asIndex + 4).trim();
+    names.add(value);
+  }
+}
+function mockOfSUTJavaScript(ctx) {
+  const stem = testStem(ctx.change.filePath);
+  if (stem.length === 0)
+    return [];
+  const imported = importedNamesFromStem(ctx.change.newText, stem, ctx.change.language);
+  const findings = [];
+  for (const line of ctx.change.addedLines) {
+    const code = stripComments(line, ctx.change.language).trim();
+    if (code.length === 0)
+      continue;
+    let hit = false;
+    const mockMatch = JS_MOCK_CALL_PATTERN.exec(code);
+    if (mockMatch)
+      hit = mockedModuleStem(mockMatch[1]) === stem;
+    if (!hit) {
+      const spyMatch = JS_SPY_ON_CALL_PATTERN.exec(code);
+      if (spyMatch)
+        hit = imported.has(spyMatch[1]);
+    }
+    if (!hit)
+      continue;
+    const lineNumber = locateLine(ctx.change.newText, line);
+    if (withinBypass(ctx, lineNumber))
+      continue;
+    findings.push({ rule: "mock-of-sut", line: lineNumber, message: MOCK_OF_SUT_MESSAGE, excerpt: code });
+  }
+  return findings;
+}
+function mockOfSUTPython(ctx) {
+  const stem = testStem(ctx.change.filePath);
+  if (stem.length === 0)
+    return [];
+  const findings = [];
+  for (const line of ctx.change.addedLines) {
+    const code = stripComments(line, ctx.change.language).trim();
+    if (code.length === 0)
+      continue;
+    const patchMatch = PY_PATCH_PATTERN.exec(code);
+    if (!patchMatch || patchedModuleRoot(patchMatch[1]) !== stem)
+      continue;
+    const lineNumber = locateLine(ctx.change.newText, line);
+    if (withinBypass(ctx, lineNumber))
+      continue;
+    findings.push({ rule: "mock-of-sut", line: lineNumber, message: MOCK_OF_SUT_MESSAGE, excerpt: code });
+  }
+  return findings;
+}
+var mockOfSUTRule = {
+  id: "mock-of-sut",
+  run(ctx) {
+    if (!ctx.isTestFile)
+      return [];
+    switch (ctx.change.language) {
+      case "js":
+      case "ts":
+        return mockOfSUTJavaScript(ctx);
+      case "python":
+        return mockOfSUTPython(ctx);
+      default:
+        return [];
+    }
+  }
+};
+var ASSERTION_FRAMEWORK_CALLS = new Set([
+  "expect",
+  "tobe",
+  "toequal",
+  "tobetruthy",
+  "tobedefined",
+  "tothrow",
+  "tocontain",
+  "tomatch",
+  "tomatchobject",
+  "should",
+  "require",
+  "equal",
+  "errorf",
+  "fatalf"
+]);
+function isAssertionFrameworkCall(name) {
+  const lower = name.toLowerCase();
+  if (ASSERTION_FRAMEWORK_CALLS.has(lower))
+    return true;
+  return lower.startsWith("assert") || lower.startsWith("expect") || lower.startsWith("require");
+}
+function hasRepeatedCall(counts) {
+  for (const count of counts.values())
+    if (count >= 2)
+      return true;
+  return false;
+}
+var expectedFromSUTRule = {
+  id: "expected-from-sut",
+  run(ctx) {
+    const findings = [];
+    for (const line of ctx.change.addedLines) {
+      const code = codeText(line, ctx.change.language).trim();
+      if (code.length === 0 || !matchesAny(EXPECTED_ASSERTION_GATE, code))
+        continue;
+      const counts = new Map;
+      for (const match of code.matchAll(CALL_IDENTIFIER_PATTERN)) {
+        const name = match[1];
+        if (isAssertionFrameworkCall(name))
+          continue;
+        counts.set(name, (counts.get(name) ?? 0) + 1);
+      }
+      if (!hasRepeatedCall(counts))
+        continue;
+      const lineNumber = locateLine(ctx.change.newText, line);
+      if (withinBypass(ctx, lineNumber))
+        continue;
+      findings.push({
+        rule: "expected-from-sut",
+        line: lineNumber,
+        message: "Expected value is produced by the code under test; the assertion may be self-referential.",
+        excerpt: stripComments(line, ctx.change.language).trim()
+      });
+    }
+    return findings;
+  }
+};
+var negativeControlUnrelatedRule = {
+  id: "negative-control-unrelated",
+  run(ctx) {
+    const patterns = NEGATIVE_CONTROL_PATTERNS[ctx.change.language];
+    if (!patterns || patterns.length === 0)
+      return [];
+    const findings = [];
+    for (const line of ctx.change.addedLines) {
+      const code = stripComments(line, ctx.change.language).trim();
+      if (code.length === 0 || !matchesAny(patterns, code))
+        continue;
+      const lineNumber = locateLine(ctx.change.newText, line);
+      if (withinBypass(ctx, lineNumber))
+        continue;
+      findings.push({
+        rule: "negative-control-unrelated",
+        line: lineNumber,
+        message: "Negative control is too broad and can pass for an unrelated reason.",
+        excerpt: code
+      });
+    }
+    return findings;
+  }
+};
 function findCrossFileDuplicates(files, minBodyLength = 20) {
   const first = new Map;
   const out = [];
@@ -2020,14 +2288,18 @@ var DETERMINISTIC_RULES = [
   guttedTestRule,
   matcherLoosenedRule,
   swallowedErrorRule,
-  duplicateTestRule
+  duplicateTestRule,
+  forcedSuccessRule,
+  mockOfSUTRule
 ];
 var ADVISORY_RULES = [
   overMockingRule,
   assertionRouletteRule,
   weakenedConfigRule,
   redundantAssertionRule,
-  testsNotRunRule
+  testsNotRunRule,
+  expectedFromSUTRule,
+  negativeControlUnrelatedRule
 ];
 
 // src/rules/tests/index.ts

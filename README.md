@@ -207,11 +207,18 @@ binary has no npm package, so an explicit version is the only offline source.
 | `matcher-loosened` | `assertEqual -> assertTrue`, `toBe -> toBeTruthy`, ... | warn |
 | `swallowed-error` | `except Exception: pass`, empty `catch {}` | warn |
 | `duplicate-test` | identical test bodies in the same file | warn |
+| `forced-success` | `\|\| true`, `exit 0`, `sys.exit(0)`, `process.exit(0)`, `continue-on-error: true`, `--passWithNoTests` | warn |
+| `mock-of-sut` | `vi`/`jest.mock` of the module under test, `spyOn` of an import from it, Python `patch` of it (JS/TS + Python only) | warn |
 | `over-mocking` | new mock identifiers (dummy/stub/mock/spy/fake) | off |
 | `assertion-roulette` | several assertions with no message | off |
 | `redundant-assertion` | the same assertion repeated in one test | off |
-| `weakened-config` | `\|\| true`, `--passWithNoTests`, `@ts-nocheck` | off |
+| `weakened-config` | `@ts-nocheck`, `--no-verify`, lowered `fail_under`/`cov-fail-under` | off |
 | `tests-not-run` | a test command excludes/skips tests | off |
+| `expected-from-sut` | assertion whose expected value is produced by the code under test (same call identifier on both sides) | off |
+| `negative-control-unrelated` | `pytest.raises(Exception)`, `assertRaises(Exception)`, `.toThrow()`/`.toThrow(Error)`, `expect(...).not.toThrow()` | off |
+
+`mock-of-sut` is implemented only for JavaScript/TypeScript and Python: Go and
+Rust expose no reliable circular-mock idiom, so the rule never fires for them.
 
 Only added (`+`) lines trigger a finding; comments are stripped before
 counting. Inline bypass: `// test-guard: allow <reason>` (within +/-2 lines) or

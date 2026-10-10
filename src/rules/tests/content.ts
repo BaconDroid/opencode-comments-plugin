@@ -10,8 +10,17 @@ import {
 import { applyBypass, bypassMatchers, type Bypass, type BypassCheck } from "../../core/bypass"
 import {
   ASSERTION_COUNT_PATTERNS,
+  CALL_IDENTIFIER_PATTERN,
+  EXPECTED_ASSERTION_GATE,
+  FORCED_SUCCESS_PATTERNS,
+  JS_IMPORT_FROM_PATTERN,
+  JS_MOCK_CALL_PATTERN,
+  JS_REQUIRE_PATTERN,
+  JS_SPY_ON_CALL_PATTERN,
   MATCHER_LOOSENINGS,
   MOCK_IDENTIFIER_PATTERNS,
+  NEGATIVE_CONTROL_PATTERNS,
+  PY_PATCH_PATTERN,
   SKIP_FOCUS_PATTERNS,
   SWALLOWED_ERROR_PATTERNS,
   TAUTOLOGICAL_PATTERNS,
@@ -526,6 +535,251 @@ export const testsNotRunRule: TestRule = {
   },
 }
 
+// --- forced-success ---
+
+// Added code that forces a test/command to succeed regardless of the outcome.
+export const forcedSuccessRule: TestRule = {
+  id: "forced-success",
+  run(ctx) {
+    return addedLineFindings(
+      ctx,
+      "forced-success",
+      FORCED_SUCCESS_PATTERNS,
+      "Test command forced to succeed regardless of outcome.",
+    )
+  },
+}
+
+// --- mock-of-sut ---
+
+const MOCK_OF_SUT_MESSAGE = "The module under test is mocked; asserting on the mock cannot validate real behavior."
+
+function matchesAny(patterns: RegExp[], text: string): boolean {
+  return patterns.some(pattern => pattern.test(text))
+}
+
+// The module under test, from the test file name:
+// `foo.test.ts` -> foo, `test_foo.py` -> foo, `foo_test.py` -> foo.
+function testStem(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, "/")
+  let base = normalized.slice(normalized.lastIndexOf("/") + 1)
+  const dot = base.lastIndexOf(".")
+  if (dot > 0) base = base.slice(0, dot)
+  if (base.endsWith(".test") || base.endsWith(".spec")) {
+    base = base.slice(0, base.lastIndexOf("."))
+  } else if (base.startsWith("test_")) {
+    base = base.slice("test_".length)
+  } else if (base.endsWith("_test")) {
+    base = base.slice(0, base.length - "_test".length)
+  }
+  return base
+}
+
+// `../lib/foo` -> foo (last path segment without extension).
+function mockedModuleStem(spec: string): string {
+  let value = spec.trim()
+  const slash = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"))
+  if (slash >= 0) value = value.slice(slash + 1)
+  const dot = value.lastIndexOf(".")
+  if (dot > 0) value = value.slice(0, dot)
+  return value
+}
+
+// `foo.bar.baz` -> foo (first segment).
+function patchedModuleRoot(spec: string): string {
+  let value = spec.trim()
+  const index = value.search(/[./]/)
+  if (index >= 0) value = value.slice(0, index)
+  return value
+}
+
+// Local names bound to a module whose base name equals `stem`, for the
+// `jest.spyOn(imported, ...)` form.
+function importedNamesFromStem(text: string, stem: string, language: Language): Set<string> {
+  const names = new Set<string>()
+  for (const raw of text.split("\n")) {
+    const line = stripComments(raw, language).trim()
+    if (line.length === 0) continue
+    const importMatch = JS_IMPORT_FROM_PATTERN.exec(line)
+    if (importMatch) {
+      if (mockedModuleStem(importMatch[2]!) === stem) collectJSBindings(importMatch[1]!, names)
+      continue
+    }
+    const requireMatch = JS_REQUIRE_PATTERN.exec(line)
+    if (requireMatch) {
+      if (mockedModuleStem(requireMatch[2]!) === stem) collectJSBindings(requireMatch[1]!, names)
+    }
+  }
+  return names
+}
+
+function collectJSBindings(binding: string, names: Set<string>): void {
+  let value = binding.trim()
+  const open = value.indexOf("{")
+  if (open >= 0) {
+    const close = value.indexOf("}", open)
+    if (close >= 0) {
+      collectNamedBindings(value.slice(open + 1, close), names)
+      value = `${value.slice(0, open)}${value.slice(close + 1)}`.trim()
+    }
+  }
+  value = value.trim()
+  if (value.length === 0) return
+  if (value.startsWith("*")) {
+    const space = value.lastIndexOf(" ")
+    if (space >= 0) names.add(value.slice(space + 1).trim())
+    return
+  }
+  const first = value.replace(/,\s*$/, "").trim().split(/\s+/)[0]
+  if (first) names.add(first)
+}
+
+function collectNamedBindings(inner: string, names: Set<string>): void {
+  for (const part of inner.split(",")) {
+    let value = part.trim()
+    if (value.length === 0) continue
+    const asIndex = value.indexOf(" as ")
+    if (asIndex >= 0) value = value.slice(asIndex + 4).trim()
+    names.add(value)
+  }
+}
+
+function mockOfSUTJavaScript(ctx: RuleContext): RuleFinding[] {
+  const stem = testStem(ctx.change.filePath)
+  if (stem.length === 0) return []
+  const imported = importedNamesFromStem(ctx.change.newText, stem, ctx.change.language)
+  const findings: RuleFinding[] = []
+  for (const line of ctx.change.addedLines) {
+    // Keep string literals: the mocked module path is the signal.
+    const code = stripComments(line, ctx.change.language).trim()
+    if (code.length === 0) continue
+    let hit = false
+    const mockMatch = JS_MOCK_CALL_PATTERN.exec(code)
+    if (mockMatch) hit = mockedModuleStem(mockMatch[1]!) === stem
+    if (!hit) {
+      const spyMatch = JS_SPY_ON_CALL_PATTERN.exec(code)
+      if (spyMatch) hit = imported.has(spyMatch[1]!)
+    }
+    if (!hit) continue
+    const lineNumber = locateLine(ctx.change.newText, line)
+    if (withinBypass(ctx, lineNumber)) continue
+    findings.push({ rule: "mock-of-sut", line: lineNumber, message: MOCK_OF_SUT_MESSAGE, excerpt: code })
+  }
+  return findings
+}
+
+function mockOfSUTPython(ctx: RuleContext): RuleFinding[] {
+  const stem = testStem(ctx.change.filePath)
+  if (stem.length === 0) return []
+  const findings: RuleFinding[] = []
+  for (const line of ctx.change.addedLines) {
+    // Keep string literals: the patched module path is the signal.
+    const code = stripComments(line, ctx.change.language).trim()
+    if (code.length === 0) continue
+    const patchMatch = PY_PATCH_PATTERN.exec(code)
+    if (!patchMatch || patchedModuleRoot(patchMatch[1]!) !== stem) continue
+    const lineNumber = locateLine(ctx.change.newText, line)
+    if (withinBypass(ctx, lineNumber)) continue
+    findings.push({ rule: "mock-of-sut", line: lineNumber, message: MOCK_OF_SUT_MESSAGE, excerpt: code })
+  }
+  return findings
+}
+
+// A test that mocks the module under test (circular mock). Go and Rust have no
+// reliable idiom and are intentionally not implemented.
+export const mockOfSUTRule: TestRule = {
+  id: "mock-of-sut",
+  run(ctx) {
+    if (!ctx.isTestFile) return []
+    switch (ctx.change.language) {
+      case "js":
+      case "ts":
+        return mockOfSUTJavaScript(ctx)
+      case "python":
+        return mockOfSUTPython(ctx)
+      default:
+        return []
+    }
+  },
+}
+
+// --- expected-from-sut ---
+
+const ASSERTION_FRAMEWORK_CALLS = new Set([
+  "expect", "tobe", "toequal", "tobetruthy", "tobedefined", "tothrow", "tocontain",
+  "tomatch", "tomatchobject", "should", "require", "equal", "errorf", "fatalf",
+])
+
+// Whether a call name belongs to the assertion framework itself, so two
+// unrelated framework calls on one line are not mistaken for a self-referential
+// expected value.
+function isAssertionFrameworkCall(name: string): boolean {
+  const lower = name.toLowerCase()
+  if (ASSERTION_FRAMEWORK_CALLS.has(lower)) return true
+  return lower.startsWith("assert") || lower.startsWith("expect") || lower.startsWith("require")
+}
+
+function hasRepeatedCall(counts: Map<string, number>): boolean {
+  for (const count of counts.values()) if (count >= 2) return true
+  return false
+}
+
+// An added assertion whose expected value is produced by the code under test:
+// the same call identifier appears at least twice on the line.
+export const expectedFromSUTRule: TestRule = {
+  id: "expected-from-sut",
+  run(ctx) {
+    const findings: RuleFinding[] = []
+    for (const line of ctx.change.addedLines) {
+      const code = codeText(line, ctx.change.language).trim()
+      if (code.length === 0 || !matchesAny(EXPECTED_ASSERTION_GATE, code)) continue
+      const counts = new Map<string, number>()
+      for (const match of code.matchAll(CALL_IDENTIFIER_PATTERN)) {
+        const name = match[1]!
+        if (isAssertionFrameworkCall(name)) continue
+        counts.set(name, (counts.get(name) ?? 0) + 1)
+      }
+      if (!hasRepeatedCall(counts)) continue
+      const lineNumber = locateLine(ctx.change.newText, line)
+      if (withinBypass(ctx, lineNumber)) continue
+      findings.push({
+        rule: "expected-from-sut",
+        line: lineNumber,
+        message: "Expected value is produced by the code under test; the assertion may be self-referential.",
+        excerpt: stripComments(line, ctx.change.language).trim(),
+      })
+    }
+    return findings
+  },
+}
+
+// --- negative-control-unrelated ---
+
+// A negative control too broad to prove the targeted contract. Strings are kept
+// (only comments are stripped) so `.toThrow('message')` is not mistaken for the
+// empty `.toThrow()`.
+export const negativeControlUnrelatedRule: TestRule = {
+  id: "negative-control-unrelated",
+  run(ctx) {
+    const patterns = NEGATIVE_CONTROL_PATTERNS[ctx.change.language]
+    if (!patterns || patterns.length === 0) return []
+    const findings: RuleFinding[] = []
+    for (const line of ctx.change.addedLines) {
+      const code = stripComments(line, ctx.change.language).trim()
+      if (code.length === 0 || !matchesAny(patterns, code)) continue
+      const lineNumber = locateLine(ctx.change.newText, line)
+      if (withinBypass(ctx, lineNumber)) continue
+      findings.push({
+        rule: "negative-control-unrelated",
+        line: lineNumber,
+        message: "Negative control is too broad and can pass for an unrelated reason.",
+        excerpt: code,
+      })
+    }
+    return findings
+  },
+}
+
 export interface FileText {
   filePath: string
   text: string
@@ -578,6 +832,8 @@ export const DETERMINISTIC_RULES: TestRule[] = [
   matcherLoosenedRule,
   swallowedErrorRule,
   duplicateTestRule,
+  forcedSuccessRule,
+  mockOfSUTRule,
 ]
 
 export const ADVISORY_RULES: TestRule[] = [
@@ -586,4 +842,6 @@ export const ADVISORY_RULES: TestRule[] = [
   weakenedConfigRule,
   redundantAssertionRule,
   testsNotRunRule,
+  expectedFromSUTRule,
+  negativeControlUnrelatedRule,
 ]

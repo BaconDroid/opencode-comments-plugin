@@ -19,6 +19,10 @@ export declare const weakenedConfigRule: TestRule;
 export declare const duplicateTestRule: TestRule;
 export declare const redundantAssertionRule: TestRule;
 export declare const testsNotRunRule: TestRule;
+export declare const forcedSuccessRule: TestRule;
+export declare const mockOfSUTRule: TestRule;
+export declare const expectedFromSUTRule: TestRule;
+export declare const negativeControlUnrelatedRule: TestRule;
 export interface FileText {
     filePath: string;
     text: string;

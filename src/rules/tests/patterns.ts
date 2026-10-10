@@ -118,15 +118,58 @@ export const MOCK_IDENTIFIER_PATTERNS: RegExp[] = [
   /\bpatch\s*\(/,
 ]
 
+// `|| true`, `exit 0`, `continue-on-error` and `--passWithNoTests` moved to
+// FORCED_SUCCESS_PATTERNS; only the config-weakening patterns remain.
 export const WEAKENED_CONFIG_PATTERNS: RegExp[] = [
-  /\|\|\s*true\b/,
-  /--passWithNoTests\b/,
-  /\bcontinue-on-error\s*:\s*true\b/,
   /@ts-nocheck\b/,
+  /--no-verify\b/,
   /#\s*ruff:\s*noqa/,
-  /\bexit\s+0\b/,
   /\bfail_under\s*=\s*0\b/,
 ]
+
+// forced-success: added code that forces a test/command to succeed regardless
+// of the real outcome.
+export const FORCED_SUCCESS_PATTERNS: RegExp[] = [
+  /\|\|\s*(?:true|:)\s*$/,
+  /(?:^|[^\w])exit\s+0\b/,
+  /\bsys\.exit\(\s*0\s*\)/,
+  /\bprocess\.exit\(\s*0\s*\)/,
+  /\bcontinue-on-error:\s*true\b/,
+  /--passWithNoTests\b/,
+]
+
+// negative-control-unrelated: broad negative patterns that can pass for an
+// unrelated reason. Strings are kept (only comments are stripped) so
+// `.toThrow('message')` is not mistaken for the empty `.toThrow()`.
+export const NEGATIVE_CONTROL_PATTERNS: Partial<Record<Language, RegExp[]>> = {
+  python: [
+    /pytest\.raises\(\s*(?:Exception|BaseException)\s*\)/,
+    /assertRaises\(\s*(?:Exception|BaseException)\s*\)/,
+    /assertRaisesRegex\(\s*(?:Exception|BaseException)/,
+  ],
+  js: [/\.toThrow\s*\(\s*(?:Error\s*)?\)/, /expect\([^)]*\)\.not\.toThrow\(\s*\)/],
+  ts: [/\.toThrow\s*\(\s*(?:Error\s*)?\)/, /expect\([^)]*\)\.not\.toThrow\(\s*\)/],
+}
+
+// expected-from-sut: an added assertion whose expected value is produced by the
+// code under test (the same call identifier appears at least twice on the line).
+export const EXPECTED_ASSERTION_GATE: RegExp[] = [
+  /\bassert/,
+  /\bexpect\s*\(/,
+  /\brequire\./,
+  /\bshould\b/,
+]
+
+export const CALL_IDENTIFIER_PATTERN = /\b([A-Za-z_]\w*)\s*\(/g
+
+// mock-of-sut: only JS/TS and Python expose a reliable circular-mock idiom. The
+// module path is the signal, so these run on comment-stripped text with string
+// literals intact.
+export const JS_MOCK_CALL_PATTERN = /(?:vi|jest)\.mock\(\s*['"]([^'"]+)['"]/
+export const JS_SPY_ON_CALL_PATTERN = /(?:vi|jest)\.spyOn\(\s*(\w+)/
+export const JS_IMPORT_FROM_PATTERN = /^import\s+(.+?)\s+from\s+['"]([^'"]+)['"]/
+export const JS_REQUIRE_PATTERN = /(?:const|let|var)\s+(.+?)\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)/
+export const PY_PATCH_PATTERN = /(?:mocker\.)?patch\(\s*['"]([^'"]+)['"]/
 
 export const TESTS_NOT_RUN_PATTERNS: RegExp[] = [
   /--ignore(?:=|\s)/,

@@ -1,13 +1,18 @@
 import { test, expect } from "bun:test"
 import { extractChange, type ExtractedChange } from "../../core/diff"
 import {
+  ADVISORY_RULES,
   DETERMINISTIC_RULES,
   assertionRouletteRule,
   duplicateTestRule,
   emptyTestRule,
+  expectedFromSUTRule,
   findCrossFileDuplicates,
+  forcedSuccessRule,
   guttedTestRule,
   matcherLoosenedRule,
+  mockOfSUTRule,
+  negativeControlUnrelatedRule,
   overMockingRule,
   protectedPathsRule,
   redundantAssertionRule,
@@ -18,7 +23,7 @@ import {
   unknownTestRule,
   weakenedConfigRule,
 } from "./content"
-import { runTestRules } from "."
+import { ALL_TEST_RULES, buildRuleChecks, runTestRules } from "."
 import type { RuleContext, TestRule } from "./types"
 
 const TEST_PATTERNS = ["**/*.test.ts", "**/*_test.py", "**/test_*.py"]
@@ -257,9 +262,14 @@ test("assertion-roulette stays silent when assertions carry messages", () => {
   expect(run(assertionRouletteRule, makeChange("/work/a.test.ts", "", text, { isNew: true }))).toHaveLength(0)
 })
 
-test("weakened-config flags a shell || true", () => {
-  const change = makeChange("/work/a.test.ts", "run()\n", "run() || true\n")
-  expect(run(weakenedConfigRule, change)).toHaveLength(1)
+test("weakened-config no longer flags || true or --passWithNoTests (moved to forced-success)", () => {
+  expect(run(weakenedConfigRule, makeChange("/work/a.test.ts", "run()\n", "run() || true\n"))).toHaveLength(0)
+  expect(run(weakenedConfigRule, makeChange("/work/a.test.ts", "", "bun test --passWithNoTests\n"))).toHaveLength(0)
+})
+
+test("weakened-config still flags --no-verify and fail_under = 0", () => {
+  expect(run(weakenedConfigRule, makeChange("/work/a.test.ts", "", "git commit --no-verify\n"))).toHaveLength(1)
+  expect(run(weakenedConfigRule, makeChange("/work/setup.cfg", "", "fail_under = 0\n"))).toHaveLength(1)
 })
 
 test("redundant-assertion flags the same assertion twice in one test", () => {
@@ -302,4 +312,135 @@ test("weakened-config flags a lowered coverage threshold", () => {
 
 test("every deterministic rule has a stable id", () => {
   for (const rule of DETERMINISTIC_RULES) expect(rule.id.length).toBeGreaterThan(0)
+})
+
+// --- the four new rules ---
+
+test("forced-success flags forced-success constructs and not tautologies", () => {
+  const positives: Array<[string, string, string]> = [
+    ["shell || true", "/work/a.test.ts", "run() || true\n"],
+    ["shell || :", "/work/a.test.ts", "run() || :\n"],
+    ["--passWithNoTests", "/work/a.test.ts", "bun test --passWithNoTests\n"],
+    ["exit 0", "/work/a.test.ts", "exit 0\n"],
+    ["process.exit(0)", "/work/a.test.ts", "process.exit(0)\n"],
+    ["continue-on-error", "/work/ci.yml", "continue-on-error: true\n"],
+    ["sys.exit(0)", "/work/test_a.py", "def test_a():\n    sys.exit(0)\n"],
+  ]
+  for (const [name, file, text] of positives) {
+    expect(run(forcedSuccessRule, makeChange(file, "", text), true), name).toHaveLength(1)
+  }
+
+  const negatives: Array<[string, string, string]> = [
+    ["tautological assert", "/work/test_a.py", "def test_a():\n    assert True\n"],
+    ["assertTrue(True)", "/work/test_a.py", "def test_a():\n    assertTrue(True)\n"],
+    ["plain call", "/work/a.test.ts", "run()\n"],
+    ["exit 1", "/work/a.test.ts", "exit 1\n"],
+    ["comment only", "/work/a.test.ts", "// run() || true\n"],
+  ]
+  for (const [name, file, text] of negatives) {
+    expect(run(forcedSuccessRule, makeChange(file, "", text), true), name).toHaveLength(0)
+  }
+})
+
+test("mock-of-sut flags circular mocks and ignores unrelated ones", () => {
+  const positives: Array<[string, string, string]> = [
+    ["js vi.mock of the SUT", "/work/foo.test.ts", "import { run } from './foo'\nvi.mock('./foo')\n"],
+    ["ts jest.mock of the SUT", "/work/foo.test.ts", "import { run } from '../lib/foo'\njest.mock('../lib/foo')\n"],
+    ["js spyOn of an import from the SUT", "/work/foo.test.ts", "import * as foo from './foo'\njest.spyOn(foo, 'run')\n"],
+    ["python patch of the SUT", "/work/test_foo.py", "from unittest.mock import patch\npatch('foo.bar')\n"],
+    ["python mocker.patch of the SUT", "/work/foo_test.py", "mocker.patch('foo.bar')\n"],
+  ]
+  for (const [name, file, text] of positives) {
+    expect(run(mockOfSUTRule, makeChange(file, "", text), true), name).toHaveLength(1)
+  }
+
+  const negatives: Array<[string, string, string]> = [
+    ["js mock of another module", "/work/foo.test.ts", "vi.mock('./bar')\n"],
+    ["js mock of a library", "/work/foo.test.ts", "jest.mock('some-library')\n"],
+    ["python patch of another module", "/work/test_foo.py", "patch('bar.baz')\n"],
+    ["go has no idiom", "/work/foo_test.go", "func TestX(t *testing.T) {\n\tpatch(\"foo\")\n}\n"],
+    ["rust has no idiom", "/work/foo_test.rs", "#[test]\nfn foo_test() {\n    patch(\"foo\");\n}\n"],
+    ["non-test file", "/work/foo.ts", "vi.mock('./foo')\n"],
+  ]
+  for (const [name, file, text] of negatives) {
+    const isTest = name !== "non-test file"
+    expect(run(mockOfSUTRule, makeChange(file, "", text), isTest), name).toHaveLength(0)
+  }
+})
+
+test("expected-from-sut flags self-referential assertions and not distinct ones", () => {
+  const positives: Array<[string, string, string]> = [
+    ["python assertEqual", "/work/test_a.py", "assertEqual(f(x), f(y))\n"],
+    ["python assert ==", "/work/test_a.py", "assert f(x) == f(y)\n"],
+    ["js expect/toBe", "/work/a.test.ts", "expect(f(x)).toBe(f(y))\n"],
+  ]
+  for (const [name, file, text] of positives) {
+    expect(run(expectedFromSUTRule, makeChange(file, "", text), true), name).toHaveLength(1)
+  }
+
+  const negatives: Array<[string, string, string]> = [
+    ["distinct calls", "/work/test_a.py", "assertEqual(f(x), g(y))\n"],
+    ["literal expected", "/work/a.test.ts", "expect(f(x)).toBe(3)\n"],
+    ["no call", "/work/test_a.py", "assert x == 5\n"],
+    ["not an assertion", "/work/a.test.ts", "const y = f(x)\n"],
+  ]
+  for (const [name, file, text] of negatives) {
+    expect(run(expectedFromSUTRule, makeChange(file, "", text), true), name).toHaveLength(0)
+  }
+})
+
+test("negative-control-unrelated flags broad negative controls and not typed ones", () => {
+  const positives: Array<[string, string, string]> = [
+    ["pytest.raises(Exception)", "/work/test_a.py", "with pytest.raises(Exception):\n    run()\n"],
+    ["assertRaises(Exception)", "/work/test_a.py", "self.assertRaises(Exception)\n"],
+    ["toThrow()", "/work/a.test.ts", "expect(fn).toThrow()\n"],
+    ["toThrow(Error)", "/work/a.test.ts", "expect(fn).toThrow(Error)\n"],
+    ["not.toThrow()", "/work/a.test.ts", "expect(fn).not.toThrow()\n"],
+  ]
+  for (const [name, file, text] of positives) {
+    expect(run(negativeControlUnrelatedRule, makeChange(file, "", text), true), name).toHaveLength(1)
+  }
+
+  const negatives: Array<[string, string, string]> = [
+    ["typed python exception", "/work/test_a.py", "with pytest.raises(ValueError):\n    run()\n"],
+    ["toThrow with a message", "/work/a.test.ts", "expect(fn).toThrow('boom')\n"],
+    ["rust has no pattern", "/work/a_test.rs", "assert!(result.is_err());\n"],
+  ]
+  for (const [name, file, text] of negatives) {
+    expect(run(negativeControlUnrelatedRule, makeChange(file, "", text), true), name).toHaveLength(0)
+  }
+})
+
+test("the rule catalog exposes 18 ids in order with the documented defaults", () => {
+  const ids = ALL_TEST_RULES.map(rule => rule.id)
+  expect(ids).toEqual([
+    "protected-paths",
+    "skip-focus-added",
+    "tautological-assertion",
+    "empty-test",
+    "unknown-test",
+    "gutted-test",
+    "matcher-loosened",
+    "swallowed-error",
+    "duplicate-test",
+    "forced-success",
+    "mock-of-sut",
+    "over-mocking",
+    "assertion-roulette",
+    "weakened-config",
+    "redundant-assertion",
+    "tests-not-run",
+    "expected-from-sut",
+    "negative-control-unrelated",
+  ])
+  expect(ids).toHaveLength(18)
+  expect(DETERMINISTIC_RULES).toHaveLength(11)
+  expect(ADVISORY_RULES).toHaveLength(7)
+
+  const checks = buildRuleChecks(false)
+  expect(Object.keys(checks)).toHaveLength(18)
+  expect(checks["forced-success"]).toBe("warn")
+  expect(checks["mock-of-sut"]).toBe("warn")
+  expect(checks["expected-from-sut"]).toBe("off")
+  expect(checks["negative-control-unrelated"]).toBe("off")
 })
