@@ -187,3 +187,15 @@ test("parseTestCheckerFindings falls back to the payload file and returns null w
     { file: "/fallback.ts", line: 1, rule: "x", message: "m" },
   ])
 })
+
+test("parseTestCheckerFindings survives out-of-range numeric entities without dropping findings", () => {
+  const xml =
+    '<findings file="a.ts"><finding line-number="1" rule="r1">bad &#x1114112; hex</finding><finding line-number="2" rule="r2">bad &#99999999999; dec</finding><finding line-number="3" rule="r3">ok</finding></findings>'
+
+  const findings = parseTestCheckerFindings(xml)
+  expect(findings).toEqual([
+    { file: "a.ts", line: 1, rule: "r1", message: "bad \u{FFFD} hex" },
+    { file: "a.ts", line: 2, rule: "r2", message: "bad \u{FFFD} dec" },
+    { file: "a.ts", line: 3, rule: "r3", message: "ok" },
+  ])
+})

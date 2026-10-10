@@ -262,12 +262,20 @@ export interface RunTestOptions {
   timeoutMs?: number
 }
 
+// Decodes one numeric character reference, guarding against out-of-range code
+// points: String.fromCodePoint throws a RangeError outside 0..0x10FFFF, which
+// would otherwise discard the whole authoritative stderr payload and force a
+// regex fallback. Malformed references degrade to U+FFFD.
+function safeCodePoint(codePoint: number): string {
+  return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : "\u{FFFD}"
+}
+
 // XML entity decode, mirroring the comment-guard audit parser. Kept local so the
 // comment path stays untouched.
 function decodeXml(value: string): string {
   return value
-    .replace(/&#x([0-9a-fA-F]+);/g, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_match, dec: string) => String.fromCodePoint(Number.parseInt(dec, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_match, hex: string) => safeCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_match, dec: string) => safeCodePoint(Number.parseInt(dec, 10)))
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')

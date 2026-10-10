@@ -287,6 +287,11 @@ test("tests-not-run flags an exclude flag", () => {
   expect(run(testsNotRunRule, change)).toHaveLength(1)
 })
 
+test("tests-not-run no longer flags --passWithNoTests (owned by forced-success)", () => {
+  const change = makeChange("/work/a.test.ts", "", "bun test --passWithNoTests\n")
+  expect(run(testsNotRunRule, change)).toHaveLength(0)
+})
+
 test("findCrossFileDuplicates flags identical bodies across files", () => {
   const body = ["test('a', () => {", "  expect(compute(1)).toBe(42)", "})", ""].join("\n")
   const dups = findCrossFileDuplicates([

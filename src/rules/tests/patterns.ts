@@ -177,7 +177,6 @@ export const TESTS_NOT_RUN_PATTERNS: RegExp[] = [
   /--deselect\b/,
   /-k\s+['"]?not\b/,
   /--testPathIgnorePatterns/,
-  /--passWithNoTests\b/,
 ]
 
 export const TEST_DECLARATION_PATTERNS: Partial<Record<Language, RegExp>> = {
