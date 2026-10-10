@@ -53,7 +53,7 @@ function engineConfig(overrides: Partial<RuleAnalyzerConfig & { engine: "binary"
 test("engine binary uses the binary findings when it succeeds", async () => {
   const engine = createTestEngineAnalyzer(
     () => engineConfig(),
-    async () => [{ rule: "skip-focus-added", line: 2, message: "Focused test added.", excerpt: "Focused test added." }],
+    async () => [{ file: "/work/a.test.ts", line: 2, rule: "skip-focus-added", message: "Focused test added." }],
   )
 
   const result = await engine.analyze(ctx(change("it('a', () => {\n  expect(1).toBe(1)\n})\n")))
@@ -119,7 +119,7 @@ test("engine binary falls back to regex for a delete without consulting the bina
 test("engine binary derives the excerpt from the source line, not the message", async () => {
   const engine = createTestEngineAnalyzer(
     () => engineConfig(),
-    async () => [{ rule: "skip-focus-added", line: 2, message: "Focused test added.", excerpt: "Focused test added." }],
+    async () => [{ file: "/work/a.test.ts", line: 2, rule: "skip-focus-added", message: "Focused test added." }],
   )
 
   const result = await engine.analyze(ctx(change("// header\nit.only('a', () => {}) // focused\n")))
@@ -132,7 +132,7 @@ test("engine binary derives the excerpt from the source line, not the message", 
 test("engine binary falls back to the message when the source line is unavailable", async () => {
   const engine = createTestEngineAnalyzer(
     () => engineConfig(),
-    async () => [{ rule: "skip-focus-added", line: 99, message: "Focused test added.", excerpt: "Focused test added." }],
+    async () => [{ file: "/work/a.test.ts", line: 99, rule: "skip-focus-added", message: "Focused test added." }],
   )
 
   const result = await engine.analyze(ctx(change("it.only('a', () => {})\n")))
@@ -142,7 +142,7 @@ test("engine binary falls back to the message when the source line is unavailabl
 test("engine binary surfaces the file's bypass markers", async () => {
   const engine = createTestEngineAnalyzer(
     () => engineConfig(),
-    async () => [{ rule: "skip-focus-added", line: 2, message: "Focused test added.", excerpt: "Focused test added." }],
+    async () => [{ file: "/work/a.test.ts", line: 2, rule: "skip-focus-added", message: "Focused test added." }],
   )
 
   const result = await engine.analyze(ctx(change("// test-guard: allow intentional\nit.only('a', () => {})\n")))

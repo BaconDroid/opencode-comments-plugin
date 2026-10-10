@@ -2,7 +2,7 @@ import { test, expect, beforeEach, afterEach } from "bun:test"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { runCommentChecker } from "./cli"
+import { runCommentChecker, runTestChecker, parseTestCheckerFindings } from "./cli"
 import { ensureCommentCheckerBinary, getCachedBinaryPath, getCommentCheckerVersion } from "./downloader"
 import type { HookInput } from "./types"
 
@@ -126,4 +126,64 @@ test("caches the binary per comment-checker version and drops the stale versions
   expect(await ensureCommentCheckerBinary()).toBe(versioned)
   expect(existsSync(join(cacheRoot, "0.0.0-stale"))).toBe(false)
   expect(existsSync(join(cacheRoot, "latest.json"))).toBe(true)
+})
+
+// --- test-checker (stderr `<findings>` XML contract) ---
+
+type FakeTestKind = "findings" | "no-xml" | "clean"
+
+function writeFakeTestChecker(kind: FakeTestKind): string {
+  const scriptPath = join(dir, "fake-test-checker")
+  const body = kind === "clean"
+    ? "#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' 'TEST QUALITY DETECTED: no weakened tests.' >&2\nexit 0\n"
+    : kind === "no-xml"
+      ? "#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' 'TEST QUALITY DETECTED (but no xml)' >&2\nexit 2\n"
+      : "#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' 'TEST QUALITY DETECTED' '<findings file=\"/work/a.test.ts\"><finding line-number=\"2\" rule=\"skip-focus-added\" confidence=\"high\">Focused test added.</finding></findings>' '<findings file=\"/work/b.test.ts\"><finding line-number=\"5\" rule=\"empty-test\" confidence=\"medium\">Test body has no executable statement.</finding></findings>' >&2\nexit 2\n"
+  writeFileSync(scriptPath, body)
+  chmodSync(scriptPath, 0o755)
+  return scriptPath
+}
+
+function testHookInput(): HookInput {
+  return {
+    session_id: "session-1",
+    tool_name: "Write",
+    transcript_path: "",
+    cwd: "/tmp",
+    hook_event_name: "PostToolUse",
+    tool_input: { file_path: "/work/a.test.ts", content: "it.only('a', () => {})\n" },
+  }
+}
+
+test("runTestChecker parses the exit-2 stderr findings XML for every file", async () => {
+  const findings = await runTestChecker(testHookInput(), { cliPath: writeFakeTestChecker("findings") })
+
+  expect(findings).toEqual([
+    { file: "/work/a.test.ts", line: 2, rule: "skip-focus-added", message: "Focused test added." },
+    { file: "/work/b.test.ts", line: 5, rule: "empty-test", message: "Test body has no executable statement." },
+  ])
+})
+
+test("runTestChecker returns null when exit 2 carries no parseable finding", async () => {
+  expect(await runTestChecker(testHookInput(), { cliPath: writeFakeTestChecker("no-xml") })).toBe(null)
+})
+
+test("runTestChecker returns [] on exit 0 regardless of the stderr message", async () => {
+  expect(await runTestChecker(testHookInput(), { cliPath: writeFakeTestChecker("clean") })).toEqual([])
+})
+
+test("parseTestCheckerFindings decodes XML entities and supports self-closing findings", () => {
+  const xml =
+    '<findings file="a &amp; b.ts"><finding line-number="3" rule="tautological-assertion" confidence="high">assert &lt;x&gt; &amp; true</finding><finding line-number="7" rule="empty-test"/></findings>'
+  expect(parseTestCheckerFindings(xml)).toEqual([
+    { file: "a & b.ts", line: 3, rule: "tautological-assertion", message: "assert <x> & true" },
+    { file: "a & b.ts", line: 7, rule: "empty-test", message: "" },
+  ])
+})
+
+test("parseTestCheckerFindings falls back to the payload file and returns null without XML", () => {
+  expect(parseTestCheckerFindings("just a message")).toBe(null)
+  expect(parseTestCheckerFindings('<findings><finding line-number="1" rule="x">m</finding></findings>', "/fallback.ts")).toEqual([
+    { file: "/fallback.ts", line: 1, rule: "x", message: "m" },
+  ])
 })

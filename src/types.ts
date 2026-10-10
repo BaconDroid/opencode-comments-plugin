@@ -42,13 +42,13 @@ export interface CheckResult {
   message: string
 }
 
-// One finding as reported by the `test-checker` binary (exit 2 stdout JSON),
-// normalized for the test guard. Severity is resolved later from the configured
-// rule checks; `excerpt` mirrors the binary message.
+// One finding as reported by the `test-checker` binary (exit 2, `<findings>`
+// XML on stderr), normalized for the test guard. Severity is resolved later from
+// the configured rule checks; the analyzer derives the rendered excerpt from the
+// source line.
 export interface TestCheckerFinding {
-  rule: string
+  file: string
   line: number
+  rule: string
   message: string
-  excerpt: string
-  filePath?: string
 }

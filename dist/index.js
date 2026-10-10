@@ -610,6 +610,45 @@ function startTestCheckerBackgroundInit() {
     debugLog2("test-checker background init error:", err);
   });
 }
+function decodeXml(value) {
+  return value.replace(/&#x([0-9a-fA-F]+);/g, (_match, hex) => String.fromCodePoint(Number.parseInt(hex, 16))).replace(/&#(\d+);/g, (_match, dec) => String.fromCodePoint(Number.parseInt(dec, 10))).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+}
+function parseXmlAttributes(attrText) {
+  const attributes = {};
+  const regex = /([A-Za-z_][\w:.-]*)\s*=\s*"([^"]*)"/g;
+  let match;
+  while ((match = regex.exec(attrText)) !== null) {
+    attributes[match[1]] = decodeXml(match[2]);
+  }
+  return attributes;
+}
+function parseTestCheckerFindings(stderr, fallbackFile) {
+  const findings = [];
+  const blockRegex = /<findings\b([^>]*)>([\s\S]*?)<\/findings>/g;
+  let block;
+  while ((block = blockRegex.exec(stderr)) !== null) {
+    const blockAttributes = parseXmlAttributes(block[1]);
+    const file = blockAttributes.file && blockAttributes.file.length > 0 ? blockAttributes.file : fallbackFile ?? "";
+    const body = block[2];
+    const findingRegex = /<finding\b([^>]*?)\/>|<finding\b([^>]*)>([\s\S]*?)<\/finding>/g;
+    let finding;
+    while ((finding = findingRegex.exec(body)) !== null) {
+      const attributes = parseXmlAttributes(finding[1] ?? finding[2] ?? "");
+      const rule = attributes.rule;
+      if (!rule || rule.length === 0)
+        continue;
+      const lineValue = Number(attributes["line-number"]);
+      const message = finding[3] !== undefined ? decodeXml(finding[3]).trim() : "";
+      findings.push({
+        file,
+        line: Number.isFinite(lineValue) ? lineValue : 0,
+        rule,
+        message
+      });
+    }
+  }
+  return findings.length > 0 ? findings : null;
+}
 async function runTestChecker(input, options = {}) {
   const binaryPath = options.cliPath ?? resolvedTestCliPath ?? getTestCheckerPathSync();
   if (!binaryPath || !existsSync2(binaryPath)) {
@@ -631,34 +670,11 @@ async function runTestChecker(input, options = {}) {
     debugLog2("unexpected test-checker exit code:", exitCode, "stderr:", stderr);
     return null;
   }
-  try {
-    const parsed = JSON.parse(stdout);
-    if (!Array.isArray(parsed.findings))
-      return null;
-    const findings = [];
-    for (const entry of parsed.findings) {
-      if (!entry || typeof entry !== "object")
-        continue;
-      const record = entry;
-      const rule = typeof record.rule === "string" && record.rule.length > 0 ? record.rule : undefined;
-      if (!rule)
-        continue;
-      const lineValue = typeof record.line === "number" ? record.line : Number(record.line);
-      const message = typeof record.message === "string" ? record.message : "";
-      const file = typeof record.file === "string" && record.file.length > 0 ? record.file : input.tool_input.file_path;
-      findings.push({
-        rule,
-        filePath: file,
-        line: Number.isFinite(lineValue) ? lineValue : 0,
-        message,
-        excerpt: message
-      });
-    }
-    return findings;
-  } catch (err) {
-    debugLog2("failed to parse test-checker output:", err);
-    return null;
+  const findings = parseTestCheckerFindings(stderr, input.tool_input.file_path);
+  if (findings === null) {
+    debugLog2("no parseable <finding> in test-checker stderr; falling back");
   }
+  return findings;
 }
 
 // src/core/config.ts
@@ -3144,14 +3160,14 @@ function parseCommentsXml(xml) {
     let match;
     const re = new RegExp(regex.source, "g");
     while ((match = re.exec(xml)) !== null) {
-      comments.push({ line: Number(match[1]), text: decodeXml(match[2]).trim() });
+      comments.push({ line: Number(match[1]), text: decodeXml2(match[2]).trim() });
     }
     if (comments.length > 0)
       break;
   }
   return comments;
 }
-function decodeXml(value) {
+function decodeXml2(value) {
   return value.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
 }
 var REMOVE_COMMENT_PATTERNS = [

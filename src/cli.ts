@@ -262,11 +262,68 @@ export interface RunTestOptions {
   timeoutMs?: number
 }
 
+// XML entity decode, mirroring the comment-guard audit parser. Kept local so the
+// comment path stays untouched.
+function decodeXml(value: string): string {
+  return value
+    .replace(/&#x([0-9a-fA-F]+);/g, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_match, dec: string) => String.fromCodePoint(Number.parseInt(dec, 10)))
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+}
+
+function parseXmlAttributes(attrText: string): Record<string, string> {
+  const attributes: Record<string, string> = {}
+  const regex = /([A-Za-z_][\w:.-]*)\s*=\s*"([^"]*)"/g
+  let match: RegExpExecArray | null
+  while ((match = regex.exec(attrText)) !== null) {
+    attributes[match[1]!] = decodeXml(match[2]!)
+  }
+  return attributes
+}
+
+// Parses the `test-checker` findings XML from stderr:
+//   <findings file="a.ts">
+//     <finding line-number="2" rule="R" confidence="C">message</finding>
+//   </findings>
+// One block per file, possibly several. Returns null when nothing parses, so the
+// caller falls back to the regex rules (fail-open).
+export function parseTestCheckerFindings(stderr: string, fallbackFile?: string): TestCheckerFinding[] | null {
+  const findings: TestCheckerFinding[] = []
+  const blockRegex = /<findings\b([^>]*)>([\s\S]*?)<\/findings>/g
+  let block: RegExpExecArray | null
+  while ((block = blockRegex.exec(stderr)) !== null) {
+    const blockAttributes = parseXmlAttributes(block[1]!)
+    const file = blockAttributes.file && blockAttributes.file.length > 0 ? blockAttributes.file : fallbackFile ?? ""
+    const body = block[2]!
+    const findingRegex = /<finding\b([^>]*?)\/>|<finding\b([^>]*)>([\s\S]*?)<\/finding>/g
+    let finding: RegExpExecArray | null
+    while ((finding = findingRegex.exec(body)) !== null) {
+      const attributes = parseXmlAttributes(finding[1] ?? finding[2] ?? "")
+      const rule = attributes.rule
+      if (!rule || rule.length === 0) continue
+      const lineValue = Number(attributes["line-number"])
+      const message = finding[3] !== undefined ? decodeXml(finding[3]).trim() : ""
+      findings.push({
+        file,
+        line: Number.isFinite(lineValue) ? lineValue : 0,
+        rule,
+        message,
+      })
+    }
+  }
+  return findings.length > 0 ? findings : null
+}
+
 // Runs the test-checker binary on a hook payload.
 //
 //   exit 0 -> []           (clean, or any degraded/unsupported path)
-//   exit 2 -> findings[]   (stdout JSON mapped to the test-guard shape)
-//   timeout / other exit / unparseable -> null (caller falls back to regex)
+//   exit 2 -> findings[]   (the `<findings>` XML on stderr, mapped to the
+//                           test-guard shape)
+//   timeout / other exit / no parseable `<finding>` -> null (regex fallback)
 export async function runTestChecker(input: HookInput, options: RunTestOptions = {}): Promise<TestCheckerFinding[] | null> {
   const binaryPath = options.cliPath ?? resolvedTestCliPath ?? getTestCheckerPathSync()
 
@@ -293,29 +350,9 @@ export async function runTestChecker(input: HookInput, options: RunTestOptions =
     return null
   }
 
-  try {
-    const parsed = JSON.parse(stdout) as { findings?: unknown }
-    if (!Array.isArray(parsed.findings)) return null
-    const findings: TestCheckerFinding[] = []
-    for (const entry of parsed.findings) {
-      if (!entry || typeof entry !== "object") continue
-      const record = entry as Record<string, unknown>
-      const rule = typeof record.rule === "string" && record.rule.length > 0 ? record.rule : undefined
-      if (!rule) continue
-      const lineValue = typeof record.line === "number" ? record.line : Number(record.line)
-      const message = typeof record.message === "string" ? record.message : ""
-      const file = typeof record.file === "string" && record.file.length > 0 ? record.file : input.tool_input.file_path
-      findings.push({
-        rule,
-        filePath: file,
-        line: Number.isFinite(lineValue) ? lineValue : 0,
-        message,
-        excerpt: message,
-      })
-    }
-    return findings
-  } catch (err) {
-    debugLog("failed to parse test-checker output:", err)
-    return null
+  const findings = parseTestCheckerFindings(stderr, input.tool_input.file_path)
+  if (findings === null) {
+    debugLog("no parseable <finding> in test-checker stderr; falling back")
   }
+  return findings
 }
