@@ -3,9 +3,12 @@
 // this single path instead of building a RuleContext and calling runTestRules
 // themselves.
 
-import type { Severity } from "../../core/config"
+import type { Severity, TestEngine } from "../../core/config"
 import type { Finding } from "../../core/feedback"
-import type { SyncAnalyzer } from "../../core/analyzer"
+import { createTestBinaryAnalyzer, type Analyzer, type AnalyzerContext, type SyncAnalyzer, type TestBinaryAnalyzer } from "../../core/analyzer"
+import { COMMENT_CHECKER_EVENT } from "../../constants"
+import type { ExtractedChange } from "../../core/diff"
+import type { HookInput } from "../../types"
 import { isTestPath } from "./patterns"
 import { runTestRules } from "./index"
 
@@ -58,4 +61,63 @@ function toFindings(
     severity: checks[finding.rule] ?? "off",
     excerpt: finding.excerpt,
   }))
+}
+
+export interface TestEngineConfig extends RuleAnalyzerConfig {
+  // Detection engine: the downloaded binary (default) or the regex rules.
+  engine?: TestEngine
+}
+
+// Reconstructs the hook payload the test-checker binary expects from an
+// extracted change: a new file is a `Write`, anything else an `Edit`.
+function buildTestCheckerInput(change: ExtractedChange, ctx: AnalyzerContext): HookInput {
+  const toolInput: HookInput["tool_input"] = { file_path: change.filePath }
+  let toolName: string
+  if (change.isNew) {
+    toolName = "Write"
+    toolInput.content = change.newText
+  } else {
+    toolName = "Edit"
+    toolInput.old_string = change.oldText
+    toolInput.new_string = change.newText
+  }
+  return {
+    session_id: ctx.sessionID,
+    tool_name: toolName,
+    transcript_path: "",
+    cwd: process.cwd(),
+    hook_event_name: COMMENT_CHECKER_EVENT,
+    tool_input: toolInput,
+  }
+}
+
+// The test guard's default engine. For a test change it first asks the
+// `test-checker` binary; a non-null result is authoritative. When the binary is
+// unavailable or fails (`null`), it falls back to the in-process regex rules so
+// detection still works offline. Non-test changes always use the regex rules.
+export function createTestEngineAnalyzer(
+  getConfig: () => TestEngineConfig,
+  binary: TestBinaryAnalyzer = createTestBinaryAnalyzer(),
+): Analyzer {
+  const rules = createRuleAnalyzer(getConfig)
+  return {
+    id: "test-engine",
+    trigger: "after",
+    isEnabled: () => getConfig().enabled,
+    analyze: async ctx => {
+      const change = ctx.change
+      if (!change) return {}
+      const config = getConfig()
+      const isTestFile = config.isTestFile ?? isTestPath(change.filePath, config.testPatterns)
+
+      if ((config.engine ?? "binary") === "binary" && isTestFile) {
+        const binaryFindings = await binary.analyze(buildTestCheckerInput(change, ctx))
+        if (binaryFindings !== null) {
+          return { findings: toFindings(binaryFindings, change.filePath, config.checks) }
+        }
+      }
+
+      return rules.analyze(ctx)
+    },
+  }
 }

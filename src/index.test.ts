@@ -37,6 +37,26 @@ esac
 `)
 chmodSync(binaryPath, 0o755)
 
+// Stub `test-checker` binary for the default (binary) test-guard engine. Planted
+// in the separate test-checker cache and driven by a mode file, so the exit-0 /
+// exit-2 paths are deterministic without touching the network.
+const testVersion = "0.1.0"
+const testCacheBase = join(cacheRoot, "opencode-comments-plugin", "test-checker")
+const testBinaryDir = join(testCacheBase, testVersion)
+const testBinaryPath = join(testBinaryDir, process.platform === "win32" ? "test-checker.exe" : "test-checker")
+const testModePath = join(cacheRoot, "test-mode")
+
+mkdirSync(testBinaryDir, { recursive: true })
+writeFileSync(join(testCacheBase, "latest.json"), JSON.stringify({ version: testVersion, checkedAt: Date.now() }))
+writeFileSync(testBinaryPath, `#!/bin/sh
+cat > /dev/null
+case "$(cat '${testModePath}')" in
+  clean) exit 0 ;;
+  *) printf '%s' '{"findings":[{"file":"/work/a.test.ts","line":2,"rule":"skip-focus-added","message":"Focused test added.","confidence":"high"}]}'; exit 2 ;;
+esac
+`)
+chmodSync(testBinaryPath, 0o755)
+
 const RECORD_SEP = "\u001e"
 const UNIT_SEP = "\u001f"
 const RECORD_END = `${RECORD_SEP}===END===${RECORD_SEP}\n`
@@ -105,11 +125,13 @@ const ENV_KEYS = [
   "COMMENT_CHECKER_MAX_WARNINGS_PER_FILE",
   "COMMENT_CHECKER_TOOLS",
   "COMMENT_CHECKER_TIMEOUT_MS",
+  "TEST_GUARD_ENGINE",
 ] as const
 
 beforeEach(() => {
   writeFileSync(logPath, "")
   writeFileSync(modePath, "comment")
+  writeFileSync(testModePath, "findings")
   for (const key of ENV_KEYS) delete process.env[key]
 })
 
@@ -681,6 +703,63 @@ test("test guard after hook never throws on malformed metadata", async () => {
   await hooks["tool.execute.after"]({ tool: APPLY_PATCH_TOOL_NAME, sessionID: "s", callID: "x" }, output)
 
   expect(output.output).toBe("ok")
+})
+
+// --- test-checker binary engine (default) ---
+
+const FOCUSED_TEST_CONTENT = "it.only('a', () => {\n  expect(1).toBe(1)\n})\n"
+
+test("test-checker binary: exit 2 stdout JSON becomes rendered test-guard findings", async () => {
+  const hooks = await newSession({ comment_checker: { tools: ["none"] }, test_guard: {} })
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"]({ tool: "write", sessionID: "stub-findings", callID: "stub-findings" }, {
+    args: { filePath: "/work/a.test.ts", content: FOCUSED_TEST_CONTENT },
+  })
+  await hooks["tool.execute.after"]({ tool: "write", sessionID: "stub-findings", callID: "stub-findings" }, output)
+
+  expect(output.output).toContain("skip-focus-added")
+  expect(output.output).toContain("Focused test added.")
+})
+
+test("test-checker binary: exit 0 emits nothing", async () => {
+  writeFileSync(testModePath, "clean")
+  const hooks = await newSession({ comment_checker: { tools: ["none"] }, test_guard: {} })
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"]({ tool: "write", sessionID: "stub-clean", callID: "stub-clean" }, {
+    args: { filePath: "/work/a.test.ts", content: FOCUSED_TEST_CONTENT },
+  })
+  await hooks["tool.execute.after"]({ tool: "write", sessionID: "stub-clean", callID: "stub-clean" }, output)
+
+  expect(output.output).toBe("Wrote file successfully.")
+})
+
+test("test-checker binary: engine regex bypasses the binary", async () => {
+  const hooks = await newSession({ comment_checker: { tools: ["none"] }, test_guard: { engine: "regex" } })
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"]({ tool: "write", sessionID: "stub-regex", callID: "stub-regex" }, {
+    args: { filePath: "/work/a.test.ts", content: FOCUSED_TEST_CONTENT },
+  })
+  await hooks["tool.execute.after"]({ tool: "write", sessionID: "stub-regex", callID: "stub-regex" }, output)
+
+  expect(output.output).toContain("skip-focus-added")
+  expect(output.output).not.toContain("Focused test added.")
+})
+
+test("test-checker binary: TEST_GUARD_ENGINE=regex bypasses the binary", async () => {
+  process.env.TEST_GUARD_ENGINE = "regex"
+  const hooks = await newSession({ comment_checker: { tools: ["none"] }, test_guard: {} })
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"]({ tool: "write", sessionID: "stub-env", callID: "stub-env" }, {
+    args: { filePath: "/work/a.test.ts", content: FOCUSED_TEST_CONTENT },
+  })
+  await hooks["tool.execute.after"]({ tool: "write", sessionID: "stub-env", callID: "stub-env" }, output)
+
+  expect(output.output).toContain("skip-focus-added")
+  expect(output.output).not.toContain("Focused test added.")
 })
 
 

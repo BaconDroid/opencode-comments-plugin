@@ -5,14 +5,14 @@ import { APPLY_PATCH_TOOL_NAME, DEFAULT_DEDUP_WINDOW_MS } from "../constants"
 import { AnalyzerRegistry } from "./analyzer"
 import { GuardBudget } from "./budget"
 import type { Bypass } from "./bypass"
-import type { GuardBaseConfig, Severity } from "./config"
+import type { GuardBaseConfig, Severity, TestEngine } from "./config"
 import { createDebugLog } from "./debug"
 import { extractPatchChanges, extractToolChange, firstString, readFileIfExists, type ExtractedChange } from "./diff"
 import { appendFeedback, type Finding } from "./feedback"
 import { PendingCallStore, type PendingToolCall } from "./pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "./result-pipeline"
 import { isTriggeredTool } from "./triggers"
-import { createRuleAnalyzer } from "../rules/tests/analyzer"
+import { createTestEngineAnalyzer } from "../rules/tests/analyzer"
 import type { ToolExecuteInput, ToolExecuteOutput, ToolGuard } from "../types"
 
 const debugLog = createDebugLog(
@@ -24,6 +24,9 @@ export interface ResolvedTestGuard extends GuardBaseConfig {
   testPatterns: string[]
   testCommand?: string | null
   checks: Record<string, Severity>
+  // Detection engine: the downloaded `test-checker` binary (default) with the
+  // in-process regex rules as the fail-open fallback.
+  engine?: TestEngine
 }
 
 const DEFAULT_TEST_GUARD: ResolvedTestGuard = {
@@ -31,6 +34,7 @@ const DEFAULT_TEST_GUARD: ResolvedTestGuard = {
   testPatterns: [],
   checks: {},
   maxWarningsPerFile: 0,
+  engine: "binary",
 }
 
 export type TestGuard = ToolGuard
@@ -39,7 +43,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
   const budget = new GuardBudget()
   const pending = new PendingCallStore<PendingToolCall>()
   const registry = new AnalyzerRegistry()
-  registry.register(createRuleAnalyzer(getResolved))
+  registry.register(createTestEngineAnalyzer(getResolved))
 
   function resolve(): ResolvedTestGuard {
     try {

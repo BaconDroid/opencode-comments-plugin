@@ -238,6 +238,8 @@ async function ensureCommentCheckerBinary(versionOverride) {
   }
   return downloadCommentChecker(version);
 }
+var TEST_REPO = "BaconDroid/go-claude-code-test-checker";
+var TEST_LATEST_URL = `https://github.com/${TEST_REPO}/releases/latest`;
 
 // src/core/runner.ts
 var {spawn: spawn2 } = globalThis.Bun;
@@ -1578,6 +1580,14 @@ ${body}`, count: entries.length };
 }
 
 // src/core/config.ts
+function asEngine(value) {
+  if (typeof value !== "string")
+    return;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "binary" || normalized === "regex")
+    return normalized;
+  return;
+}
 function asString(value) {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
@@ -1680,6 +1690,9 @@ function validateTestGuard(record, path, errors) {
   if (record.tools !== undefined && asTools(record.tools) === undefined) {
     errors.push(`${path}.tools must be a string array or a comma separated string`);
   }
+  if (record.engine !== undefined && asEngine(record.engine) === undefined) {
+    errors.push(`${path}.engine must be one of binary, regex`);
+  }
   if (record.checks !== undefined) {
     if (!isRecord(record.checks))
       errors.push(`${path}.checks must be an object`);
@@ -1724,6 +1737,7 @@ function validateTestGuard(record, path, errors) {
     "custom_prompt",
     "append_prompt",
     "tools",
+    "engine",
     "mutation",
     "judge",
     "parser"

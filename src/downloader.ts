@@ -254,3 +254,193 @@ export async function ensureCommentCheckerBinary(versionOverride?: string): Prom
 
   return downloadCommentChecker(version)
 }
+
+// --- test-checker ---
+//
+// The test guard's default engine is the downloaded `test-checker` binary. It
+// has no npm package (env `TEST_CHECKER_VERSION` is the only sync source) and
+// caches under a SEPARATE subdirectory so the comment guard's `cleanupStaleCache`
+// (which only walks `bin/`) can never remove it.
+
+const TEST_REPO = "BaconDroid/go-claude-code-test-checker"
+const TEST_LATEST_URL = `https://github.com/${TEST_REPO}/releases/latest`
+
+export function getTestCheckerCacheDir(): string {
+  const xdgCache = process.env.XDG_CACHE_HOME
+  const base = xdgCache || join(homedir(), ".cache")
+  return join(base, "opencode-comments-plugin", "test-checker")
+}
+
+export function getTestCheckerBinaryName(): string {
+  return process.platform === "win32" ? "test-checker.exe" : "test-checker"
+}
+
+export function getCachedTestCheckerPath(version?: string | null): string | null {
+  if (!version) return null
+  const binaryPath = join(getTestCheckerCacheDir(), version, getTestCheckerBinaryName())
+  return existsSync(binaryPath) ? binaryPath : null
+}
+
+export function getTestCheckerVersion(): string | null {
+  const version = process.env.TEST_CHECKER_VERSION
+  return typeof version === "string" && version.trim().length > 0 ? version.trim() : null
+}
+
+function getTestLatestCachePath(): string {
+  return join(getTestCheckerCacheDir(), LATEST_CACHE_FILE)
+}
+
+function readTestLatestCache(): LatestCache | null {
+  try {
+    const parsed = JSON.parse(readFileSync(getTestLatestCachePath(), "utf8")) as Partial<LatestCache>
+    if (typeof parsed.version === "string" && parsed.version.length > 0 && typeof parsed.checkedAt === "number") {
+      return { version: parsed.version, checkedAt: parsed.checkedAt }
+    }
+  } catch {
+    debugLog("no test-checker latest-version cache")
+  }
+  return null
+}
+
+function writeTestLatestCache(version: string): void {
+  try {
+    const dir = getTestCheckerCacheDir()
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    writeFileSync(getTestLatestCachePath(), JSON.stringify({ version, checkedAt: Date.now() }))
+  } catch (err) {
+    debugLog("failed to cache test-checker latest version:", err)
+  }
+}
+
+export function getPreferredTestCheckerVersionSync(): string | null {
+  return readTestLatestCache()?.version ?? getTestCheckerVersion()
+}
+
+export async function getLatestTestCheckerVersion(): Promise<string | null> {
+  const cached = readTestLatestCache()
+  if (cached && Date.now() - cached.checkedAt < LATEST_TTL_MS) {
+    return cached.version
+  }
+
+  try {
+    const response = await fetch(TEST_LATEST_URL, { redirect: "manual" })
+    const version = parseLatestTag(response.headers.get("location"))
+    if (version) {
+      debugLog("resolved latest test-checker release:", version)
+      writeTestLatestCache(version)
+      return version
+    }
+    debugLog("could not parse latest test-checker release location:", response.headers.get("location"))
+  } catch (err) {
+    debugLog("failed to resolve latest test-checker release:", err)
+  }
+
+  if (cached) return cached.version
+  return getTestCheckerVersion()
+}
+
+export function cleanupTestCheckerStaleCache(version: string): void {
+  let entries: string[]
+  try {
+    entries = readdirSync(getTestCheckerCacheDir())
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    if (entry === version || entry === LATEST_CACHE_FILE) continue
+    try {
+      rmSync(join(getTestCheckerCacheDir(), entry), { recursive: true, force: true })
+    } catch (err) {
+      debugLog("Failed to remove stale test-checker cache entry:", entry, err)
+    }
+  }
+}
+
+export async function downloadTestChecker(versionOverride?: string): Promise<string | null> {
+  const platformKey = `${process.platform}-${process.arch}`
+  const platformInfo = PLATFORM_MAP[platformKey]
+
+  if (!platformInfo) {
+    debugLog("Unsupported platform:", platformKey)
+    return null
+  }
+
+  const version = versionOverride ?? getTestCheckerVersion()
+  if (!version) {
+    debugLog("Cannot resolve a test-checker version; refusing to download a stale binary")
+    return null
+  }
+
+  const cacheDir = join(getTestCheckerCacheDir(), version)
+  const binaryName = getTestCheckerBinaryName()
+  const binaryPath = join(cacheDir, binaryName)
+
+  if (existsSync(binaryPath)) {
+    debugLog("Binary already cached at:", binaryPath)
+    return binaryPath
+  }
+
+  const { os, arch, ext } = platformInfo
+  const assetName = `test-checker_v${version}_${os}_${arch}.${ext}`
+  const downloadUrl = `https://github.com/${TEST_REPO}/releases/download/v${version}/${assetName}`
+
+  debugLog("Downloading from:", downloadUrl)
+  console.log("[opencode-comments-plugin] Downloading test-checker binary...")
+
+  try {
+    if (!existsSync(cacheDir)) {
+      mkdirSync(cacheDir, { recursive: true })
+    }
+
+    const response = await fetch(downloadUrl, { redirect: "follow" })
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    }
+
+    const archivePath = join(cacheDir, assetName)
+    const arrayBuffer = await response.arrayBuffer()
+    await Bun.write(archivePath, arrayBuffer)
+
+    debugLog("Downloaded archive to:", archivePath)
+
+    if (ext === "tar.gz") {
+      await extractTarGz(archivePath, cacheDir)
+    } else {
+      await extractZip(archivePath, cacheDir)
+    }
+
+    if (existsSync(archivePath)) {
+      unlinkSync(archivePath)
+    }
+
+    if (process.platform !== "win32" && existsSync(binaryPath)) {
+      chmodSync(binaryPath, 0o755)
+    }
+
+    debugLog("Successfully downloaded binary to:", binaryPath)
+    console.log("[opencode-comments-plugin] test-checker binary ready.")
+
+    cleanupTestCheckerStaleCache(version)
+
+    return binaryPath
+  } catch (err) {
+    debugLog("Failed to download test-checker:", err)
+    console.error(`[opencode-comments-plugin] Failed to download test-checker: ${err instanceof Error ? err.message : err}`)
+    console.error("[opencode-comments-plugin] Test checking disabled.")
+    return null
+  }
+}
+
+export async function ensureTestCheckerBinary(versionOverride?: string): Promise<string | null> {
+  const version = versionOverride ?? (await getLatestTestCheckerVersion())
+  if (!version) return null
+
+  const cachedPath = getCachedTestCheckerPath(version)
+  if (cachedPath) {
+    debugLog("Using cached test-checker binary:", cachedPath)
+    cleanupTestCheckerStaleCache(version)
+    return cachedPath
+  }
+
+  return downloadTestChecker(version)
+}

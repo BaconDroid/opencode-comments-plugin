@@ -38,3 +38,14 @@ export interface CheckResult {
   hasComments: boolean
   message: string
 }
+
+// One finding as reported by the `test-checker` binary (exit 2 stdout JSON),
+// normalized for the test guard. Severity is resolved later from the configured
+// rule checks; `excerpt` mirrors the binary message.
+export interface TestCheckerFinding {
+  rule: string
+  line: number
+  message: string
+  excerpt: string
+  filePath?: string
+}

@@ -10,6 +10,17 @@
 
 export type Severity = "off" | "warn"
 
+// Detection engine for the test guard: the downloaded `test-checker` binary
+// (default) or the in-process deterministic rules.
+export type TestEngine = "binary" | "regex"
+
+export function asEngine(value: unknown): TestEngine | undefined {
+  if (typeof value !== "string") return undefined
+  const normalized = value.trim().toLowerCase()
+  if (normalized === "binary" || normalized === "regex") return normalized
+  return undefined
+}
+
 // Options shared by both guards, resolved with the env > options > config
 // precedence. Each guard extends it with its own fields.
 export interface GuardBaseConfig {

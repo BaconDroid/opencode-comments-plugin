@@ -1,5 +1,5 @@
-import type { Severity } from "../../core/config";
-import type { SyncAnalyzer } from "../../core/analyzer";
+import type { Severity, TestEngine } from "../../core/config";
+import { type Analyzer, type SyncAnalyzer, type TestBinaryAnalyzer } from "../../core/analyzer";
 export interface RuleAnalyzerConfig {
     enabled: boolean;
     testPatterns: string[];
@@ -7,3 +7,7 @@ export interface RuleAnalyzerConfig {
     isTestFile?: boolean;
 }
 export declare function createRuleAnalyzer(getConfig: () => RuleAnalyzerConfig): SyncAnalyzer;
+export interface TestEngineConfig extends RuleAnalyzerConfig {
+    engine?: TestEngine;
+}
+export declare function createTestEngineAnalyzer(getConfig: () => TestEngineConfig, binary?: TestBinaryAnalyzer): Analyzer;

@@ -1,9 +1,10 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { DEFAULT_CLI_TIMEOUT_MS, DEFAULT_DEDUP_WINDOW_MS, DEFAULT_TRIGGER_TOOLS } from "./constants"
-import { startBackgroundInit } from "./cli"
+import { startBackgroundInit, startTestCheckerBackgroundInit } from "./cli"
 import {
   asBoolean,
   asCount,
+  asEngine,
   asPatterns,
   asRecord,
   asString,
@@ -116,6 +117,7 @@ const resolvedTestGuard: ResolvedTestGuard = {
   checks: { ...DEFAULT_TEST_CHECKS },
   maxWarningsPerFile: 0,
   triggerTools: new Set(DEFAULT_TRIGGER_TOOLS),
+  engine: "binary",
 }
 
 const resolvedMutation: MutationConfig = { enabled: false }
@@ -136,6 +138,8 @@ function resolveTestGuardConfiguration(config?: unknown): void {
 
   resolvedTestGuard.testCommand =
     resolveOption(asString, "TEST_GUARD_TEST_COMMAND", "test_command", inputs) ?? detectTestCommand(projectDirectory)
+
+  resolvedTestGuard.engine = resolveOption(asEngine, "TEST_GUARD_ENGINE", "engine", inputs) ?? "binary"
 
   resolveCommandAdapter(resolvedMutation, "TEST_GUARD_MUTATION", subConfigInputs(options, fromConfig, "mutation"))
   resolveJudge(resolvedJudge, "TEST_GUARD_JUDGE", subConfigInputs(options, fromConfig, "judge"))
@@ -170,6 +174,7 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
   resolveConfiguration()
   resolveTestGuardConfiguration()
   startBackgroundInit()
+  startTestCheckerBackgroundInit()
 
   const commentGuard = createCommentGuard(() => resolvedCommentConfig)
   const testGuard = createTestGuard(() => resolvedTestGuard)

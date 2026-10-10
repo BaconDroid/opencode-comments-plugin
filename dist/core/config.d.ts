@@ -1,4 +1,6 @@
 export type Severity = "off" | "warn";
+export type TestEngine = "binary" | "regex";
+export declare function asEngine(value: unknown): TestEngine | undefined;
 export interface GuardBaseConfig {
     enabled: boolean;
     customPrompt?: string;
