@@ -787,8 +787,7 @@ var TESTS_NOT_RUN_PATTERNS = [
   /--exclude\b/,
   /--deselect\b/,
   /-k\s+['"]?not\b/,
-  /--testPathIgnorePatterns/,
-  /--passWithNoTests\b/
+  /--testPathIgnorePatterns/
 ];
 var TEST_DECLARATION_PATTERNS = {
   js: /(?:^|[^\w.])(?:it|test|describe)(?:\.(?:skip|only|todo|each|concurrent))?\s*\(/,

@@ -610,8 +610,11 @@ function startTestCheckerBackgroundInit() {
     debugLog2("test-checker background init error:", err);
   });
 }
+function safeCodePoint(codePoint) {
+  return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 1114111 ? String.fromCodePoint(codePoint) : "\uFFFD";
+}
 function decodeXml(value) {
-  return value.replace(/&#x([0-9a-fA-F]+);/g, (_match, hex) => String.fromCodePoint(Number.parseInt(hex, 16))).replace(/&#(\d+);/g, (_match, dec) => String.fromCodePoint(Number.parseInt(dec, 10))).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+  return value.replace(/&#x([0-9a-fA-F]+);/g, (_match, hex) => safeCodePoint(Number.parseInt(hex, 16))).replace(/&#(\d+);/g, (_match, dec) => safeCodePoint(Number.parseInt(dec, 10))).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
 }
 function parseXmlAttributes(attrText) {
   const attributes = {};
@@ -1460,8 +1463,7 @@ var TESTS_NOT_RUN_PATTERNS = [
   /--exclude\b/,
   /--deselect\b/,
   /-k\s+['"]?not\b/,
-  /--testPathIgnorePatterns/,
-  /--passWithNoTests\b/
+  /--testPathIgnorePatterns/
 ];
 var TEST_DECLARATION_PATTERNS = {
   js: /(?:^|[^\w.])(?:it|test|describe)(?:\.(?:skip|only|todo|each|concurrent))?\s*\(/,
