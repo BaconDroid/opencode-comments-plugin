@@ -39,7 +39,9 @@ chmodSync(binaryPath, 0o755)
 
 // Stub `test-checker` binary for the default (binary) test-guard engine. Planted
 // in the separate test-checker cache and driven by a mode file, so the exit-0 /
-// exit-2 paths are deterministic without touching the network.
+// exit-2 paths are deterministic without touching the network. On findings it
+// mirrors the real contract: a human message plus a `<findings>` XML block on
+// stderr and exit 2; on success a message on stderr and exit 0.
 const testVersion = "0.1.0"
 const testCacheBase = join(cacheRoot, "opencode-comments-plugin", "test-checker")
 const testBinaryDir = join(testCacheBase, testVersion)
@@ -51,8 +53,8 @@ writeFileSync(join(testCacheBase, "latest.json"), JSON.stringify({ version: test
 writeFileSync(testBinaryPath, `#!/bin/sh
 cat > /dev/null
 case "$(cat '${testModePath}')" in
-  clean) exit 0 ;;
-  *) printf '%s' '{"findings":[{"file":"/work/a.test.ts","line":2,"rule":"skip-focus-added","message":"Focused test added.","confidence":"high"}]}'; exit 2 ;;
+  clean) printf '%s\\n' 'TEST QUALITY DETECTED: no weakened tests.' >&2; exit 0 ;;
+  *) printf '%s\\n' 'TEST QUALITY DETECTED' '<findings file="/work/a.test.ts"><finding line-number="2" rule="skip-focus-added" confidence="high">Focused test added.</finding></findings>' >&2; exit 2 ;;
 esac
 `)
 chmodSync(testBinaryPath, 0o755)

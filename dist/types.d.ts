@@ -38,9 +38,8 @@ export interface CheckResult {
     message: string;
 }
 export interface TestCheckerFinding {
-    rule: string;
+    file: string;
     line: number;
+    rule: string;
     message: string;
-    excerpt: string;
-    filePath?: string;
 }

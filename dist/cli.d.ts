@@ -21,4 +21,5 @@ export interface RunTestOptions {
     cliPath?: string;
     timeoutMs?: number;
 }
+export declare function parseTestCheckerFindings(stderr: string, fallbackFile?: string): TestCheckerFinding[] | null;
 export declare function runTestChecker(input: HookInput, options?: RunTestOptions): Promise<TestCheckerFinding[] | null>;
