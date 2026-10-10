@@ -59,6 +59,14 @@ test("rejects an unknown test_guard key", () => {
   expect(result.errors.join()).toContain("nope")
 })
 
+test("accepts the test_guard.engine values and rejects an unknown one", () => {
+  expect(validateTupleOptions({ test_guard: { engine: "binary" } }).valid).toBe(true)
+  expect(validateTupleOptions({ test_guard: { engine: "regex" } }).valid).toBe(true)
+  expect(validateTupleOptions({ test_guard: { engine: "BINARY" } }).valid).toBe(true)
+  expect(validateTupleOptions({ test_guard: { engine: "ast" } }).valid).toBe(false)
+  expect(validateTupleOptions({ test_guard: { engine: 3 } }).valid).toBe(false)
+})
+
 test("accepts a valid mutation block", () => {
   expect(
     validateTupleOptions({ test_guard: { mutation: { enabled: true, command: "npx stryker run", timeout_ms: 60000 } } }).valid,

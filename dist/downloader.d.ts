@@ -7,3 +7,12 @@ export declare function getLatestCommentCheckerVersion(): Promise<string | null>
 export declare function cleanupStaleCache(version: string): void;
 export declare function downloadCommentChecker(versionOverride?: string): Promise<string | null>;
 export declare function ensureCommentCheckerBinary(versionOverride?: string): Promise<string | null>;
+export declare function getTestCheckerCacheDir(): string;
+export declare function getTestCheckerBinaryName(): string;
+export declare function getCachedTestCheckerPath(version?: string | null): string | null;
+export declare function getTestCheckerVersion(): string | null;
+export declare function getPreferredTestCheckerVersionSync(): string | null;
+export declare function getLatestTestCheckerVersion(): Promise<string | null>;
+export declare function cleanupTestCheckerStaleCache(version: string): void;
+export declare function downloadTestChecker(versionOverride?: string): Promise<string | null>;
+export declare function ensureTestCheckerBinary(versionOverride?: string): Promise<string | null>;

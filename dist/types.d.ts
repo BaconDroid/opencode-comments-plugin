@@ -36,3 +36,10 @@ export interface CheckResult {
     hasComments: boolean;
     message: string;
 }
+export interface TestCheckerFinding {
+    rule: string;
+    line: number;
+    message: string;
+    excerpt: string;
+    filePath?: string;
+}

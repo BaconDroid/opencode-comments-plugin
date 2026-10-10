@@ -163,6 +163,7 @@ tests. It reuses the same tuple, under a sibling `test_guard` key:
       "comment_checker": { "custom_prompt": "DETECTED:\n{{comments}}\nFix it." },
       "test_guard": {
         "enabled": true,
+        "engine": "binary",
         "test_patterns": ["**/*.test.*", "**/*_test.*", "**/test_*.py", "**/tests/**"],
         "checks": { "protected-paths": "warn", "skip-focus-added": "warn" },
         "mutation": { "enabled": false, "command": "npx stryker run --reporters json", "timeout_ms": 120000 },
@@ -178,6 +179,22 @@ Deterministic rules default to `warn`, advisory rules to `off`; `off` disables a
 rule. The test guard is advisory only: it never blocks and never rewrites the
 file. All internal guard errors are swallowed (fail-open), so the guard can never
 prevent the agent's action.
+
+### Detection engine
+
+The test guard detects through the downloaded `test-checker` binary by default
+(`test_guard.engine: "binary"`), mirroring how the comment guard uses the
+`comment-checker` binary. The binary is resolved from the latest GitHub release of
+`BaconDroid/go-claude-code-test-checker` (checked at most once a day), cached
+under `~/.cache/opencode-comments-plugin/test-checker/<version>/`, and downloaded
+on demand. It is AST-grade (tree-sitter) for Python, JS/TS, Rust and Go.
+
+If the binary is unavailable (offline, unsupported platform, timeout or a
+download failure), the guard falls back to the in-process regex rules below, so a
+missing binary only degrades precision — never the guard's safety. Set
+`test_guard.engine: "regex"` (or `TEST_GUARD_ENGINE=regex`) to force the
+deterministic regex engine. `TEST_CHECKER_VERSION` pins the binary version; the
+binary has no npm package, so an explicit version is the only offline source.
 
 | Rule | Signal | Default |
 |---|---|---|
@@ -205,7 +222,7 @@ file-level `// test-guard-disable-file`.
 advisory notes still surface on the next tool call regardless of this filter.
 
 Env vars mirror the comment guard: `TEST_GUARD_ENABLED`,
-`TEST_GUARD_TEST_PATTERNS`, `TEST_GUARD_TOOLS`,
+`TEST_GUARD_ENGINE`, `TEST_GUARD_TEST_PATTERNS`, `TEST_GUARD_TOOLS`,
 `TEST_GUARD_MAX_WARNINGS_PER_FILE`, `TEST_GUARD_DEDUP_WINDOW_MS`,
 `TEST_GUARD_CUSTOM_PROMPT`,
 `TEST_GUARD_APPEND_PROMPT`, `TEST_GUARD_MUTATION_ENABLED`,
@@ -214,6 +231,7 @@ Env vars mirror the comment guard: `TEST_GUARD_ENABLED`,
 `TEST_GUARD_JUDGE_TIMEOUT_MS`, `TEST_GUARD_PARSER_ENABLED`,
 `TEST_GUARD_PARSER_COMMAND`, `TEST_GUARD_PARSER_TIMEOUT_MS`, and
 `TEST_GUARD_CHECK_<RULE>` (env > tuple options > config hook).
+`TEST_CHECKER_VERSION` pins the installed `test-checker` binary version.
 
 ### Mutation (opt-in, phase 2)
 
@@ -279,9 +297,10 @@ tampercheck Apache-2.0, pr-test-guard MIT and veredicto up to v0.3.3). Other
 languages are ignored by the test guard rather than matched with unvalidated
 rules.
 
-Known limits: the built-in rules are regex-based (no AST), so a test
-declaration written inside a string or a regex literal can be misread — use the
-opt-in external parser adapter for AST-grade precision. Cross-file duplicate
+Known limits: the default `test-checker` binary is AST-grade (tree-sitter), but
+the regex fallback that runs when it is unavailable can misread a test
+declaration written inside a string or a regex literal — use the opt-in external
+parser adapter for AST-grade precision without the binary. Cross-file duplicate
 detection runs in the audit/CI paths, not the live per-file hook.
 
 ## Debug

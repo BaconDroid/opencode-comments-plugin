@@ -232,6 +232,161 @@ async function ensureCommentCheckerBinary(versionOverride) {
   }
   return downloadCommentChecker(version);
 }
+var TEST_REPO = "BaconDroid/go-claude-code-test-checker";
+var TEST_LATEST_URL = `https://github.com/${TEST_REPO}/releases/latest`;
+function getTestCheckerCacheDir() {
+  const xdgCache = process.env.XDG_CACHE_HOME;
+  const base = xdgCache || join(homedir(), ".cache");
+  return join(base, "opencode-comments-plugin", "test-checker");
+}
+function getTestCheckerBinaryName() {
+  return process.platform === "win32" ? "test-checker.exe" : "test-checker";
+}
+function getCachedTestCheckerPath(version) {
+  if (!version)
+    return null;
+  const binaryPath = join(getTestCheckerCacheDir(), version, getTestCheckerBinaryName());
+  return existsSync(binaryPath) ? binaryPath : null;
+}
+function getTestCheckerVersion() {
+  const version = process.env.TEST_CHECKER_VERSION;
+  return typeof version === "string" && version.trim().length > 0 ? version.trim() : null;
+}
+function getTestLatestCachePath() {
+  return join(getTestCheckerCacheDir(), LATEST_CACHE_FILE);
+}
+function readTestLatestCache() {
+  try {
+    const parsed = JSON.parse(readFileSync(getTestLatestCachePath(), "utf8"));
+    if (typeof parsed.version === "string" && parsed.version.length > 0 && typeof parsed.checkedAt === "number") {
+      return { version: parsed.version, checkedAt: parsed.checkedAt };
+    }
+  } catch {
+    debugLog("no test-checker latest-version cache");
+  }
+  return null;
+}
+function writeTestLatestCache(version) {
+  try {
+    const dir = getTestCheckerCacheDir();
+    if (!existsSync(dir))
+      mkdirSync(dir, { recursive: true });
+    writeFileSync(getTestLatestCachePath(), JSON.stringify({ version, checkedAt: Date.now() }));
+  } catch (err) {
+    debugLog("failed to cache test-checker latest version:", err);
+  }
+}
+function getPreferredTestCheckerVersionSync() {
+  return readTestLatestCache()?.version ?? getTestCheckerVersion();
+}
+async function getLatestTestCheckerVersion() {
+  const cached = readTestLatestCache();
+  if (cached && Date.now() - cached.checkedAt < LATEST_TTL_MS) {
+    return cached.version;
+  }
+  try {
+    const response = await fetch(TEST_LATEST_URL, { redirect: "manual" });
+    const version = parseLatestTag(response.headers.get("location"));
+    if (version) {
+      debugLog("resolved latest test-checker release:", version);
+      writeTestLatestCache(version);
+      return version;
+    }
+    debugLog("could not parse latest test-checker release location:", response.headers.get("location"));
+  } catch (err) {
+    debugLog("failed to resolve latest test-checker release:", err);
+  }
+  if (cached)
+    return cached.version;
+  return getTestCheckerVersion();
+}
+function cleanupTestCheckerStaleCache(version) {
+  let entries;
+  try {
+    entries = readdirSync(getTestCheckerCacheDir());
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry === version || entry === LATEST_CACHE_FILE)
+      continue;
+    try {
+      rmSync(join(getTestCheckerCacheDir(), entry), { recursive: true, force: true });
+    } catch (err) {
+      debugLog("Failed to remove stale test-checker cache entry:", entry, err);
+    }
+  }
+}
+async function downloadTestChecker(versionOverride) {
+  const platformKey = `${process.platform}-${process.arch}`;
+  const platformInfo = PLATFORM_MAP[platformKey];
+  if (!platformInfo) {
+    debugLog("Unsupported platform:", platformKey);
+    return null;
+  }
+  const version = versionOverride ?? getTestCheckerVersion();
+  if (!version) {
+    debugLog("Cannot resolve a test-checker version; refusing to download a stale binary");
+    return null;
+  }
+  const cacheDir = join(getTestCheckerCacheDir(), version);
+  const binaryName = getTestCheckerBinaryName();
+  const binaryPath = join(cacheDir, binaryName);
+  if (existsSync(binaryPath)) {
+    debugLog("Binary already cached at:", binaryPath);
+    return binaryPath;
+  }
+  const { os, arch, ext } = platformInfo;
+  const assetName = `test-checker_v${version}_${os}_${arch}.${ext}`;
+  const downloadUrl = `https://github.com/${TEST_REPO}/releases/download/v${version}/${assetName}`;
+  debugLog("Downloading from:", downloadUrl);
+  console.log("[opencode-comments-plugin] Downloading test-checker binary...");
+  try {
+    if (!existsSync(cacheDir)) {
+      mkdirSync(cacheDir, { recursive: true });
+    }
+    const response = await fetch(downloadUrl, { redirect: "follow" });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    const archivePath = join(cacheDir, assetName);
+    const arrayBuffer = await response.arrayBuffer();
+    await Bun.write(archivePath, arrayBuffer);
+    debugLog("Downloaded archive to:", archivePath);
+    if (ext === "tar.gz") {
+      await extractTarGz(archivePath, cacheDir);
+    } else {
+      await extractZip(archivePath, cacheDir);
+    }
+    if (existsSync(archivePath)) {
+      unlinkSync(archivePath);
+    }
+    if (process.platform !== "win32" && existsSync(binaryPath)) {
+      chmodSync(binaryPath, 493);
+    }
+    debugLog("Successfully downloaded binary to:", binaryPath);
+    console.log("[opencode-comments-plugin] test-checker binary ready.");
+    cleanupTestCheckerStaleCache(version);
+    return binaryPath;
+  } catch (err) {
+    debugLog("Failed to download test-checker:", err);
+    console.error(`[opencode-comments-plugin] Failed to download test-checker: ${err instanceof Error ? err.message : err}`);
+    console.error("[opencode-comments-plugin] Test checking disabled.");
+    return null;
+  }
+}
+async function ensureTestCheckerBinary(versionOverride) {
+  const version = versionOverride ?? await getLatestTestCheckerVersion();
+  if (!version)
+    return null;
+  const cachedPath = getCachedTestCheckerPath(version);
+  if (cachedPath) {
+    debugLog("Using cached test-checker binary:", cachedPath);
+    cleanupTestCheckerStaleCache(version);
+    return cachedPath;
+  }
+  return downloadTestChecker(version);
+}
 
 // src/core/runner.ts
 var {spawn: spawn2 } = globalThis.Bun;
@@ -394,8 +549,127 @@ async function runCommentChecker(input, options = {}) {
   debugLog2("unexpected exit code:", exitCode, "stderr:", stderr);
   return { hasComments: false, message: "" };
 }
+function findTestCheckerPathSync() {
+  const version = getPreferredTestCheckerVersionSync();
+  if (!version) {
+    debugLog2("cannot resolve a test-checker version; binary engine unavailable");
+    return null;
+  }
+  const cachedPath = getCachedTestCheckerPath(version);
+  if (cachedPath) {
+    debugLog2("found test-checker in cache:", cachedPath);
+    cleanupTestCheckerStaleCache(version);
+    return cachedPath;
+  }
+  debugLog2("no test-checker binary found in known locations");
+  return null;
+}
+var resolvedTestCliPath = null;
+var testInitPromise = null;
+async function getTestCheckerPath() {
+  if (resolvedTestCliPath !== null) {
+    return resolvedTestCliPath;
+  }
+  if (testInitPromise) {
+    return testInitPromise;
+  }
+  testInitPromise = (async () => {
+    const version = await getLatestTestCheckerVersion();
+    if (!version) {
+      debugLog2("cannot resolve a test-checker version; binary engine unavailable");
+      return null;
+    }
+    const syncPath = findTestCheckerPathSync();
+    if (syncPath && existsSync2(syncPath)) {
+      resolvedTestCliPath = syncPath;
+      debugLog2("using sync-resolved test-checker path:", syncPath);
+      return syncPath;
+    }
+    debugLog2("triggering lazy test-checker download...");
+    const downloadedPath = await ensureTestCheckerBinary(version);
+    if (downloadedPath) {
+      resolvedTestCliPath = downloadedPath;
+      debugLog2("using downloaded test-checker path:", downloadedPath);
+      return downloadedPath;
+    }
+    debugLog2("no test-checker binary available");
+    return null;
+  })();
+  return testInitPromise;
+}
+function getTestCheckerPathSync() {
+  return resolvedTestCliPath ?? findTestCheckerPathSync();
+}
+function startTestCheckerBackgroundInit() {
+  if (testInitPromise)
+    return;
+  testInitPromise = getTestCheckerPath();
+  testInitPromise.then((path) => {
+    debugLog2("test-checker background init complete:", path || "no binary");
+  }).catch((err) => {
+    debugLog2("test-checker background init error:", err);
+  });
+}
+async function runTestChecker(input, options = {}) {
+  const binaryPath = options.cliPath ?? resolvedTestCliPath ?? getTestCheckerPathSync();
+  if (!binaryPath || !existsSync2(binaryPath)) {
+    debugLog2("test-checker binary not found");
+    return null;
+  }
+  const jsonInput = JSON.stringify(input);
+  debugLog2("running test-checker with input:", jsonInput.substring(0, 200));
+  const outcome = await runProcess([binaryPath], { stdin: jsonInput, timeoutMs: options.timeoutMs });
+  if (outcome === "timeout") {
+    debugLog2("test-checker abandoned after timeout or stream failure");
+    return null;
+  }
+  const { stdout, stderr, exitCode } = outcome;
+  debugLog2("test-checker exit code:", exitCode, "stdout length:", stdout.length, "stderr length:", stderr.length);
+  if (exitCode === 0)
+    return [];
+  if (exitCode !== 2) {
+    debugLog2("unexpected test-checker exit code:", exitCode, "stderr:", stderr);
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(stdout);
+    if (!Array.isArray(parsed.findings))
+      return null;
+    const findings = [];
+    for (const entry of parsed.findings) {
+      if (!entry || typeof entry !== "object")
+        continue;
+      const record = entry;
+      const rule = typeof record.rule === "string" && record.rule.length > 0 ? record.rule : undefined;
+      if (!rule)
+        continue;
+      const lineValue = typeof record.line === "number" ? record.line : Number(record.line);
+      const message = typeof record.message === "string" ? record.message : "";
+      const file = typeof record.file === "string" && record.file.length > 0 ? record.file : input.tool_input.file_path;
+      findings.push({
+        rule,
+        filePath: file,
+        line: Number.isFinite(lineValue) ? lineValue : 0,
+        message,
+        excerpt: message
+      });
+    }
+    return findings;
+  } catch (err) {
+    debugLog2("failed to parse test-checker output:", err);
+    return null;
+  }
+}
 
 // src/core/config.ts
+function asEngine(value) {
+  if (typeof value !== "string")
+    return;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "binary" || normalized === "regex")
+    return normalized;
+  return;
+}
 function optionContainer(value, key) {
   if (!value || typeof value !== "object" || Array.isArray(value))
     return;
@@ -499,6 +773,17 @@ class AnalyzerRegistry {
     }
     return results;
   }
+}
+function createTestBinaryAnalyzer(run = runTestChecker) {
+  return {
+    async analyze(input) {
+      try {
+        return await run(input);
+      } catch {
+        return null;
+      }
+    }
+  };
 }
 
 // src/core/budget.ts
@@ -1804,6 +2089,48 @@ function toFindings(findings, filePath, checks) {
     excerpt: finding.excerpt
   }));
 }
+function buildTestCheckerInput(change, ctx) {
+  const toolInput = { file_path: change.filePath };
+  let toolName;
+  if (change.isNew) {
+    toolName = "Write";
+    toolInput.content = change.newText;
+  } else {
+    toolName = "Edit";
+    toolInput.old_string = change.oldText;
+    toolInput.new_string = change.newText;
+  }
+  return {
+    session_id: ctx.sessionID,
+    tool_name: toolName,
+    transcript_path: "",
+    cwd: process.cwd(),
+    hook_event_name: COMMENT_CHECKER_EVENT,
+    tool_input: toolInput
+  };
+}
+function createTestEngineAnalyzer(getConfig, binary = createTestBinaryAnalyzer()) {
+  const rules = createRuleAnalyzer(getConfig);
+  return {
+    id: "test-engine",
+    trigger: "after",
+    isEnabled: () => getConfig().enabled,
+    analyze: async (ctx) => {
+      const change = ctx.change;
+      if (!change)
+        return {};
+      const config = getConfig();
+      const isTestFile = config.isTestFile ?? isTestPath(change.filePath, config.testPatterns);
+      if ((config.engine ?? "binary") === "binary" && isTestFile) {
+        const binaryFindings = await binary.analyze(buildTestCheckerInput(change, ctx));
+        if (binaryFindings !== null) {
+          return { findings: toFindings(binaryFindings, change.filePath, config.checks) };
+        }
+      }
+      return rules.analyze(ctx);
+    }
+  };
+}
 
 // src/core/dispatch.ts
 var debugLog3 = createDebugLog("test-guard", process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1");
@@ -1811,13 +2138,14 @@ var DEFAULT_TEST_GUARD = {
   enabled: true,
   testPatterns: [],
   checks: {},
-  maxWarningsPerFile: 0
+  maxWarningsPerFile: 0,
+  engine: "binary"
 };
 function createTestGuard(getResolved) {
   const budget = new GuardBudget;
   const pending = new PendingCallStore;
   const registry = new AnalyzerRegistry;
-  registry.register(createRuleAnalyzer(getResolved));
+  registry.register(createTestEngineAnalyzer(getResolved));
   function resolve() {
     try {
       return getResolved();
@@ -3097,7 +3425,8 @@ var resolvedTestGuard = {
   testCommand: null,
   checks: { ...DEFAULT_TEST_CHECKS },
   maxWarningsPerFile: 0,
-  triggerTools: new Set(DEFAULT_TRIGGER_TOOLS)
+  triggerTools: new Set(DEFAULT_TRIGGER_TOOLS),
+  engine: "binary"
 };
 var resolvedMutation = { enabled: false };
 var resolvedJudge = { enabled: false };
@@ -3110,6 +3439,7 @@ function resolveTestGuardConfiguration(config) {
   resolveGuardBase(resolvedTestGuard, "TEST_GUARD", inputs);
   resolvedTestGuard.testPatterns = resolveOption(asPatterns, "TEST_GUARD_TEST_PATTERNS", "test_patterns", inputs) ?? [...DEFAULT_TEST_PATTERNS];
   resolvedTestGuard.testCommand = resolveOption(asString, "TEST_GUARD_TEST_COMMAND", "test_command", inputs) ?? detectTestCommand(projectDirectory);
+  resolvedTestGuard.engine = resolveOption(asEngine, "TEST_GUARD_ENGINE", "engine", inputs) ?? "binary";
   resolveCommandAdapter(resolvedMutation, "TEST_GUARD_MUTATION", subConfigInputs(options, fromConfig, "mutation"));
   resolveJudge(resolvedJudge, "TEST_GUARD_JUDGE", subConfigInputs(options, fromConfig, "judge"));
   resolveCommandAdapter(resolvedParser, "TEST_GUARD_PARSER", subConfigInputs(options, fromConfig, "parser"));
@@ -3142,6 +3472,7 @@ var CommentCheckerPlugin = async (input, options) => {
   resolveConfiguration();
   resolveTestGuardConfiguration();
   startBackgroundInit();
+  startTestCheckerBackgroundInit();
   const commentGuard = createCommentGuard(() => resolvedCommentConfig);
   const testGuard = createTestGuard(() => resolvedTestGuard);
   const auditTool = createGuardAuditTool({ directory: projectDirectory, getConfig: () => resolvedTestGuard });

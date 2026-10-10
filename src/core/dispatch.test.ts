@@ -15,6 +15,9 @@ function config(overrides: Partial<ResolvedTestGuard> = {}): ResolvedTestGuard {
     testPatterns: [...DEFAULT_TEST_PATTERNS],
     checks: { "skip-focus-added": "warn", "protected-paths": "warn" },
     maxWarningsPerFile: 0,
+    // These tests pin the deterministic regex engine; the binary engine and its
+    // fallback are covered by `rules/tests/analyzer.test.ts` and `index.test.ts`.
+    engine: "regex",
     ...overrides,
   }
 }
