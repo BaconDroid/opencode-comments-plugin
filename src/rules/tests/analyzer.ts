@@ -5,12 +5,14 @@
 
 import type { Severity, TestEngine } from "../../core/config"
 import type { Finding } from "../../core/feedback"
-import { createTestBinaryAnalyzer, type Analyzer, type AnalyzerContext, type SyncAnalyzer, type TestBinaryAnalyzer } from "../../core/analyzer"
+import type { Analyzer, AnalyzerContext, SyncAnalyzer, TestCheckerRunner } from "../../core/analyzer"
 import { COMMENT_CHECKER_EVENT } from "../../constants"
-import type { ExtractedChange } from "../../core/diff"
-import type { HookInput } from "../../types"
+import { stripComments, type ExtractedChange } from "../../core/diff"
+import type { HookInput, TestCheckerFinding } from "../../types"
+import { runTestChecker } from "../../cli"
 import { isTestPath } from "./patterns"
 import { runTestRules } from "./index"
+import { collectBypasses } from "./content"
 
 export interface RuleAnalyzerConfig {
   enabled: boolean
@@ -87,17 +89,47 @@ function buildTestCheckerInput(change: ExtractedChange, ctx: AnalyzerContext): H
     transcript_path: "",
     cwd: process.cwd(),
     hook_event_name: COMMENT_CHECKER_EVENT,
+    // The plugin already classified the path; the binary honors this so custom
+    // `test_patterns` cannot cause a false negative.
+    is_test_file: true,
     tool_input: toolInput,
   }
+}
+
+// The excerpt shown to the user: the offending source line (comment-stripped,
+// whitespace-collapsed), not the binary's human message. Falls back to the
+// message when the line is 0, out of range or blank.
+function excerptFromSource(change: ExtractedChange, line: number, fallback: string): string {
+  if (line <= 0) return fallback
+  const lines = change.newText.split("\n")
+  if (line > lines.length) return fallback
+  const stripped = stripComments(lines[line - 1] ?? "", change.language).replace(/\s+/g, " ").trim()
+  return stripped.length > 0 ? stripped : fallback
+}
+
+function binaryToFindings(
+  findings: TestCheckerFinding[],
+  change: ExtractedChange,
+  checks: Record<string, Severity>,
+): Finding[] {
+  return findings.map(finding => ({
+    rule: finding.rule,
+    filePath: change.filePath,
+    line: finding.line,
+    message: finding.message,
+    severity: checks[finding.rule] ?? "off",
+    excerpt: excerptFromSource(change, finding.line, finding.message),
+  }))
 }
 
 // The test guard's default engine. For a test change it first asks the
 // `test-checker` binary; a non-null result is authoritative. When the binary is
 // unavailable or fails (`null`), it falls back to the in-process regex rules so
-// detection still works offline. Non-test changes always use the regex rules.
+// detection still works offline. Non-test changes, deletes and empty-newText
+// changes always use the regex rules (the binary would silently clear them).
 export function createTestEngineAnalyzer(
   getConfig: () => TestEngineConfig,
-  binary: TestBinaryAnalyzer = createTestBinaryAnalyzer(),
+  run: TestCheckerRunner = runTestChecker,
 ): Analyzer {
   const rules = createRuleAnalyzer(getConfig)
   return {
@@ -109,11 +141,25 @@ export function createTestEngineAnalyzer(
       if (!change) return {}
       const config = getConfig()
       const isTestFile = config.isTestFile ?? isTestPath(change.filePath, config.testPatterns)
+      const useBinary =
+        (config.engine ?? "binary") === "binary" &&
+        isTestFile &&
+        !change.isDelete &&
+        change.newText.trim().length > 0
 
-      if ((config.engine ?? "binary") === "binary" && isTestFile) {
-        const binaryFindings = await binary.analyze(buildTestCheckerInput(change, ctx))
+      if (useBinary) {
+        let binaryFindings: TestCheckerFinding[] | null = null
+        try {
+          binaryFindings = await run(buildTestCheckerInput(change, ctx))
+        } catch {
+          // Fail-open: an engine failure degrades to the regex fallback.
+          binaryFindings = null
+        }
         if (binaryFindings !== null) {
-          return { findings: toFindings(binaryFindings, change.filePath, config.checks) }
+          return {
+            findings: binaryToFindings(binaryFindings, change, config.checks),
+            bypasses: collectBypasses(change),
+          }
         }
       }
 

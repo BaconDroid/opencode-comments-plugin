@@ -8,7 +8,7 @@
 import type { Bypass } from "./bypass"
 import type { ExtractedChange } from "./diff"
 import type { Finding } from "./feedback"
-import { runTestChecker, type RunTestOptions } from "../cli"
+import type { RunTestOptions } from "../cli"
 import type { HookInput, TestCheckerFinding } from "../types"
 
 export type AnalyzerTrigger = "after" | "idle" | "on-demand"
@@ -87,25 +87,9 @@ export class AnalyzerRegistry {
   }
 }
 
-// Seam for the test guard's binary engine: runs the downloaded `test-checker`
-// binary over a hook payload and returns its normalized findings, or `null` when
-// the binary is unavailable or failed (so the caller falls back to the regex
-// rules). Injectable so tests can supply a stub runner.
+// Seam for the test guard's binary engine: a plain runner that executes the
+// downloaded `test-checker` binary over a hook payload and returns its
+// normalized findings, or `null` when the binary is unavailable or failed (so
+// the caller falls back to the regex rules). Injectable so tests can supply a
+// stub.
 export type TestCheckerRunner = (input: HookInput, options?: RunTestOptions) => Promise<TestCheckerFinding[] | null>
-
-export interface TestBinaryAnalyzer {
-  analyze(input: HookInput): Promise<TestCheckerFinding[] | null>
-}
-
-export function createTestBinaryAnalyzer(run: TestCheckerRunner = runTestChecker): TestBinaryAnalyzer {
-  return {
-    async analyze(input: HookInput): Promise<TestCheckerFinding[] | null> {
-      try {
-        return await run(input)
-      } catch {
-        // Fail-open: an analyzer failure degrades to the regex fallback.
-        return null
-      }
-    },
-  }
-}

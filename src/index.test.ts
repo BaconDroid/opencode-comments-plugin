@@ -762,4 +762,20 @@ test("test-checker binary: TEST_GUARD_ENGINE=regex bypasses the binary", async (
   expect(output.output).not.toContain("Focused test added.")
 })
 
+test("test-checker binary: the bypass footer still appears on the binary path", async () => {
+  const hooks = await newSession({ comment_checker: { tools: ["none"] }, test_guard: {} })
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"]({ tool: "write", sessionID: "stub-bypass", callID: "stub-bypass" }, {
+    args: {
+      filePath: "/work/a.test.ts",
+      content: "// test-guard: allow intentional\nit.only('a', () => {\n  expect(1).toBe(1)\n})\n",
+    },
+  })
+  await hooks["tool.execute.after"]({ tool: "write", sessionID: "stub-bypass", callID: "stub-bypass" }, output)
+
+  expect(output.output).toContain("skip-focus-added")
+  expect(output.output).toContain("Test guard bypass recorded")
+})
+
 

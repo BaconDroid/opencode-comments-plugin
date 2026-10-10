@@ -4,9 +4,10 @@ import {
   maskStrings,
   stripComments,
   stripStringLiterals,
+  type ExtractedChange,
   type Language,
 } from "../../core/diff"
-import { applyBypass, bypassMatchers, type BypassCheck } from "../../core/bypass"
+import { applyBypass, bypassMatchers, type Bypass, type BypassCheck } from "../../core/bypass"
 import {
   ASSERTION_COUNT_PATTERNS,
   MATCHER_LOOSENINGS,
@@ -85,6 +86,12 @@ function withinBypass(ctx: RuleContext, line: number): boolean {
 // The file's bypass markers, computed once per file by runTestRules.
 export function testBypass(newText: string): BypassCheck {
   return applyBypass(newText, MATCHERS)
+}
+
+// The bypass markers surfaced for one change, matching what `runTestRules`
+// returns so the binary path renders the same "bypass recorded" footer.
+export function collectBypasses(change: ExtractedChange): Bypass[] {
+  return testBypass(change.newText).notes
 }
 
 function addedLineFindings(

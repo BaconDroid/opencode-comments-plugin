@@ -774,17 +774,6 @@ class AnalyzerRegistry {
     return results;
   }
 }
-function createTestBinaryAnalyzer(run = runTestChecker) {
-  return {
-    async analyze(input) {
-      try {
-        return await run(input);
-      } catch {
-        return null;
-      }
-    }
-  };
-}
 
 // src/core/budget.ts
 class GuardBudget {
@@ -1550,6 +1539,9 @@ function withinBypass(ctx, line) {
 function testBypass(newText) {
   return applyBypass(newText, MATCHERS);
 }
+function collectBypasses2(change) {
+  return testBypass(change.newText).notes;
+}
 function addedLineFindings(ctx, rule, patterns, message, skip) {
   const findings = [];
   for (const line of ctx.change.addedLines) {
@@ -2106,10 +2098,31 @@ function buildTestCheckerInput(change, ctx) {
     transcript_path: "",
     cwd: process.cwd(),
     hook_event_name: COMMENT_CHECKER_EVENT,
+    is_test_file: true,
     tool_input: toolInput
   };
 }
-function createTestEngineAnalyzer(getConfig, binary = createTestBinaryAnalyzer()) {
+function excerptFromSource(change, line, fallback) {
+  if (line <= 0)
+    return fallback;
+  const lines = change.newText.split(`
+`);
+  if (line > lines.length)
+    return fallback;
+  const stripped = stripComments(lines[line - 1] ?? "", change.language).replace(/\s+/g, " ").trim();
+  return stripped.length > 0 ? stripped : fallback;
+}
+function binaryToFindings(findings, change, checks) {
+  return findings.map((finding) => ({
+    rule: finding.rule,
+    filePath: change.filePath,
+    line: finding.line,
+    message: finding.message,
+    severity: checks[finding.rule] ?? "off",
+    excerpt: excerptFromSource(change, finding.line, finding.message)
+  }));
+}
+function createTestEngineAnalyzer(getConfig, run = runTestChecker) {
   const rules = createRuleAnalyzer(getConfig);
   return {
     id: "test-engine",
@@ -2121,10 +2134,19 @@ function createTestEngineAnalyzer(getConfig, binary = createTestBinaryAnalyzer()
         return {};
       const config = getConfig();
       const isTestFile = config.isTestFile ?? isTestPath(change.filePath, config.testPatterns);
-      if ((config.engine ?? "binary") === "binary" && isTestFile) {
-        const binaryFindings = await binary.analyze(buildTestCheckerInput(change, ctx));
+      const useBinary = (config.engine ?? "binary") === "binary" && isTestFile && !change.isDelete && change.newText.trim().length > 0;
+      if (useBinary) {
+        let binaryFindings = null;
+        try {
+          binaryFindings = await run(buildTestCheckerInput(change, ctx));
+        } catch {
+          binaryFindings = null;
+        }
         if (binaryFindings !== null) {
-          return { findings: toFindings(binaryFindings, change.filePath, config.checks) };
+          return {
+            findings: binaryToFindings(binaryFindings, change, config.checks),
+            bypasses: collectBypasses2(change)
+          };
         }
       }
       return rules.analyze(ctx);

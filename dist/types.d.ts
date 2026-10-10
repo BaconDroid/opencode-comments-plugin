@@ -20,6 +20,7 @@ export interface HookInput {
     transcript_path: string;
     cwd: string;
     hook_event_name: string;
+    is_test_file?: boolean;
     tool_input: {
         file_path?: string;
         content?: string;
