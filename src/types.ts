@@ -24,6 +24,9 @@ export interface HookInput {
   transcript_path: string
   cwd: string
   hook_event_name: string
+  // Set by the test guard so the binary honors the plugin's own test-file
+  // classification (custom `test_patterns`). The comment path never sets it.
+  is_test_file?: boolean
   tool_input: {
     file_path?: string
     content?: string

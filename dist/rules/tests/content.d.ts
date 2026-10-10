@@ -1,8 +1,9 @@
-import { type Language } from "../../core/diff";
-import { type BypassCheck } from "../../core/bypass";
+import { type ExtractedChange, type Language } from "../../core/diff";
+import { type Bypass, type BypassCheck } from "../../core/bypass";
 import type { TestBlock, TestRule } from "./types";
 export type { Bypass } from "../../core/bypass";
 export declare function testBypass(newText: string): BypassCheck;
+export declare function collectBypasses(change: ExtractedChange): Bypass[];
 export declare const skipFocusAddedRule: TestRule;
 export declare const tautologicalAssertionRule: TestRule;
 export declare const swallowedErrorRule: TestRule;
