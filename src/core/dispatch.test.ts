@@ -1,10 +1,11 @@
 import { test, expect, beforeEach, afterEach, setSystemTime } from "bun:test"
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { TEST_GUARD_MARKER } from "./feedback"
-import { createTestGuard, type ResolvedTestGuard } from "./dispatch"
+import { createTestGuard, type ResolvedTestGuard, type TestGuardDeps } from "./dispatch"
 import { DEFAULT_TEST_PATTERNS } from "../rules/tests/patterns"
+import { runTestChecker } from "../cli"
 import type { Severity } from "./config"
 
 const dir = mkdtempSync(join(tmpdir(), "test-guard-"))
@@ -26,8 +27,8 @@ type Output = { title: string; output: string; metadata: unknown }
 
 const INPUT = { tool: "write", sessionID: "s1", callID: "c1" }
 
-function guarded(resolved: ResolvedTestGuard) {
-  return createTestGuard(() => resolved)
+function guarded(resolved: ResolvedTestGuard, deps: TestGuardDeps = {}) {
+  return createTestGuard(() => resolved, deps)
 }
 
 let counter = 0
@@ -217,3 +218,55 @@ test("does not process a pending call older than the TTL", async () => {
   await guard.after({ ...INPUT, callID: stale }, output)
   expect(output.output).toBe("Wrote file successfully.")
 })
+
+// --- test-checker "did not run" ---
+
+function fakeTestChecker(name: string, body: string): string {
+  const path = join(dir, name)
+  writeFileSync(path, body)
+  chmodSync(path, 0o755)
+  return path
+}
+
+function guardWithChecker(cliPath: string) {
+  return guarded(config({ engine: "binary" }), {
+    runTestChecker: input => runTestChecker(input, { cliPath, timeoutMs: 200 }),
+  })
+}
+
+async function writeTestFile(guard: ReturnType<typeof guarded>, sessionID: string, callID: string): Promise<Output> {
+  const args = {
+    filePath: "/work/clean.test.ts",
+    content: "it('a', () => {\n  expect(1).toBe(1)\n})\n",
+  }
+  guard.before({ tool: "write", sessionID, callID }, { args })
+  const output: Output = { title: "", output: "Wrote file successfully.", metadata: {} }
+  await guard.after({ tool: "write", sessionID, callID }, output)
+  return output
+}
+
+const DID_NOT_RUN_CASES = [
+  { label: "exit 1", body: "#!/bin/sh\ncat > /dev/null\nexit 1\n", reason: "exited with code 1" },
+  { label: "exit 127", body: "#!/bin/sh\ncat > /dev/null\nexit 127\n", reason: "exited with code 127" },
+  { label: "ENOENT", body: null, reason: "binary not found" },
+  { label: "timeout", body: "#!/bin/sh\nsleep 30\n", reason: "timed out or could not be spawned" },
+] as const
+
+for (const scenario of DID_NOT_RUN_CASES) {
+  test(`test guard warns once per session and does not block when the checker did not run (${scenario.label})`, async () => {
+    const cliPath = scenario.body === null
+      ? join(dir, "missing-test-checker")
+      : fakeTestChecker(`fake-test-checker-${scenario.label}`, scenario.body)
+    const guard = guardWithChecker(cliPath)
+    const session = `test-did-not-run-${scenario.label}`
+
+    const first = await writeTestFile(guard, session, `first-${scenario.label}`)
+    expect(first.output).toContain("test-checker did not run — nothing checked this write.")
+    expect(first.output).toContain(scenario.reason)
+    expect(first.output.startsWith("Wrote file successfully.")).toBe(true)
+
+    const second = await writeTestFile(guard, session, `second-${scenario.label}`)
+    expect(second.output).toBe("Wrote file successfully.")
+    expect(second.output).not.toContain("did not run")
+  }, 20_000)
+}

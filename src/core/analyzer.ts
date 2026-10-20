@@ -9,7 +9,7 @@ import type { Bypass } from "./bypass"
 import type { ExtractedChange } from "./diff"
 import type { Finding } from "./feedback"
 import type { RunTestOptions } from "../cli"
-import type { HookInput, TestCheckerFinding } from "../types"
+import type { HookInput, TestCheckerResult } from "../types"
 
 export type AnalyzerTrigger = "after" | "idle" | "on-demand"
 
@@ -27,6 +27,9 @@ export interface AnalyzerResult {
   raw?: string
   // Bypass markers to surface in a footer.
   bypasses?: Bypass[]
+  // Set when the engine could not run. The guard surfaces it once per session
+  // and otherwise leaves the edit alone.
+  didNotRun?: string
   // Message queued for the next tool call (idle analyzers).
   note?: string
 }
@@ -89,7 +92,6 @@ export class AnalyzerRegistry {
 
 // Seam for the test guard's binary engine: a plain runner that executes the
 // downloaded `test-checker` binary over a hook payload and returns its
-// normalized findings, or `null` when the binary is unavailable or failed (so
-// the caller falls back to the regex rules). Injectable so tests can supply a
-// stub.
-export type TestCheckerRunner = (input: HookInput, options?: RunTestOptions) => Promise<TestCheckerFinding[] | null>
+// normalized outcome, telling "ran" apart from "did not run" so the guard can
+// warn about the latter. Injectable so tests can supply a stub.
+export type TestCheckerRunner = (input: HookInput, options?: RunTestOptions) => Promise<TestCheckerResult>

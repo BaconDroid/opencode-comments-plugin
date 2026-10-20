@@ -17,7 +17,7 @@ import {
 import { runProcess } from "./core/runner"
 import { createDebugLog } from "./core/debug"
 import { COMMENT_CHECKER_BINARY_NAME, COMMENT_CHECKER_EVENT } from "./constants"
-import type { CheckResult, HookInput, TestCheckerFinding } from "./types"
+import type { CheckResult, HookInput, TestCheckerFinding, TestCheckerResult } from "./types"
 
 const debugLog = createDebugLog("comment-checker:cli", process.env.COMMENT_CHECKER_DEBUG === "1")
 
@@ -136,17 +136,26 @@ export interface RunOptions {
   timeoutMs?: number
 }
 
+// First stderr line, for a compact "did not run" reason.
+function firstLine(text: string): string {
+  return text.trim().split("\n")[0]?.trim() ?? ""
+}
+
+function didNotRunComment(reason: string): CheckResult {
+  return { hasComments: false, message: "", didNotRun: { reason } }
+}
+
 export async function runCommentChecker(input: HookInput, options: RunOptions = {}): Promise<CheckResult> {
   const binaryPath = options.cliPath ?? resolvedCliPath ?? getCommentCheckerPathSync()
 
   if (!binaryPath) {
     debugLog("comment-checker binary not found")
-    return { hasComments: false, message: "" }
+    return didNotRunComment("binary not found")
   }
 
   if (!existsSync(binaryPath)) {
     debugLog("comment-checker binary does not exist:", binaryPath)
-    return { hasComments: false, message: "" }
+    return didNotRunComment(`binary not found at ${binaryPath}`)
   }
 
   const jsonInput = JSON.stringify(input)
@@ -160,7 +169,7 @@ export async function runCommentChecker(input: HookInput, options: RunOptions = 
   const outcome = await runProcess(args, { stdin: jsonInput, timeoutMs: options.timeoutMs })
   if (outcome === "timeout") {
     debugLog("comment-checker abandoned after timeout or stream failure")
-    return { hasComments: false, message: "" }
+    return didNotRunComment("timed out or could not be spawned")
   }
 
   const { stdout, stderr, exitCode } = outcome
@@ -175,7 +184,8 @@ export async function runCommentChecker(input: HookInput, options: RunOptions = 
   }
 
   debugLog("unexpected exit code:", exitCode, "stderr:", stderr)
-  return { hasComments: false, message: "" }
+  const detail = firstLine(stderr)
+  return didNotRunComment(`exited with code ${exitCode}${detail ? `: ${detail}` : ""}`)
 }
 
 // --- test-checker ---
@@ -328,16 +338,23 @@ export function parseTestCheckerFindings(stderr: string, fallbackFile?: string):
 
 // Runs the test-checker binary on a hook payload.
 //
-//   exit 0 -> []           (clean, or any degraded/unsupported path)
-//   exit 2 -> findings[]   (the `<findings>` XML on stderr, mapped to the
-//                           test-guard shape)
-//   timeout / other exit / no parseable `<finding>` -> null (regex fallback)
-export async function runTestChecker(input: HookInput, options: RunTestOptions = {}): Promise<TestCheckerFinding[] | null> {
+//   exit 0 -> findings []  (clean)
+//   exit 2 -> findings     (the `<findings>` XML on stderr, mapped to the
+//                           test-guard shape); if nothing parses, `fallback`
+//                           so the caller uses the regex rules
+//   spawn/ENOENT/timeout/other exit -> `did-not-run`, so the caller can say so
+//                           instead of reporting a silent "no findings"
+export async function runTestChecker(input: HookInput, options: RunTestOptions = {}): Promise<TestCheckerResult> {
   const binaryPath = options.cliPath ?? resolvedTestCliPath ?? getTestCheckerPathSync()
 
-  if (!binaryPath || !existsSync(binaryPath)) {
+  if (!binaryPath) {
     debugLog("test-checker binary not found")
-    return null
+    return { kind: "did-not-run", reason: "binary not found" }
+  }
+
+  if (!existsSync(binaryPath)) {
+    debugLog("test-checker binary does not exist:", binaryPath)
+    return { kind: "did-not-run", reason: `binary not found at ${binaryPath}` }
   }
 
   const jsonInput = JSON.stringify(input)
@@ -346,21 +363,23 @@ export async function runTestChecker(input: HookInput, options: RunTestOptions =
   const outcome = await runProcess([binaryPath], { stdin: jsonInput, timeoutMs: options.timeoutMs })
   if (outcome === "timeout") {
     debugLog("test-checker abandoned after timeout or stream failure")
-    return null
+    return { kind: "did-not-run", reason: "timed out or could not be spawned" }
   }
 
   const { stdout, stderr, exitCode } = outcome
   debugLog("test-checker exit code:", exitCode, "stdout length:", stdout.length, "stderr length:", stderr.length)
 
-  if (exitCode === 0) return []
+  if (exitCode === 0) return { kind: "findings", findings: [] }
   if (exitCode !== 2) {
     debugLog("unexpected test-checker exit code:", exitCode, "stderr:", stderr)
-    return null
+    const detail = firstLine(stderr)
+    return { kind: "did-not-run", reason: `exited with code ${exitCode}${detail ? `: ${detail}` : ""}` }
   }
 
   const findings = parseTestCheckerFindings(stderr, input.tool_input.file_path)
   if (findings === null) {
     debugLog("no parseable <finding> in test-checker stderr; falling back")
+    return { kind: "fallback" }
   }
-  return findings
+  return { kind: "findings", findings }
 }

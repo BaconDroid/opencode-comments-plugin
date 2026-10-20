@@ -53,7 +53,7 @@ function engineConfig(overrides: Partial<RuleAnalyzerConfig & { engine: "binary"
 test("engine binary uses the binary findings when it succeeds", async () => {
   const engine = createTestEngineAnalyzer(
     () => engineConfig(),
-    async () => [{ file: "/work/a.test.ts", line: 2, rule: "skip-focus-added", message: "Focused test added." }],
+    async () => ({ kind: "findings", findings: [{ file: "/work/a.test.ts", line: 2, rule: "skip-focus-added", message: "Focused test added." }] }),
   )
 
   const result = await engine.analyze(ctx(change("it('a', () => {\n  expect(1).toBe(1)\n})\n")))
@@ -61,7 +61,7 @@ test("engine binary uses the binary findings when it succeeds", async () => {
 })
 
 test("engine binary falls back to the regex rules when the binary is unavailable", async () => {
-  const engine = createTestEngineAnalyzer(() => engineConfig(), async () => null)
+  const engine = createTestEngineAnalyzer(() => engineConfig(), async () => ({ kind: "fallback" }))
 
   const result = await engine.analyze(ctx(change("it.only('a', () => {\n  expect(1).toBe(1)\n})\n")))
   expect(result.findings?.some(finding => finding.rule === "skip-focus-added")).toBe(true)
@@ -71,7 +71,7 @@ test("engine regex never invokes the binary", async () => {
   let called = false
   const engine = createTestEngineAnalyzer(() => engineConfig({ engine: "regex" }), async () => {
     called = true
-    return []
+    return { kind: "findings", findings: [] }
   })
 
   const result = await engine.analyze(ctx(change("it.only('a', () => {\n  expect(1).toBe(1)\n})\n")))
@@ -83,12 +83,23 @@ test("engine binary does not invoke the binary for a non-test change", async () 
   let called = false
   const engine = createTestEngineAnalyzer(() => engineConfig(), async () => {
     called = true
-    return []
+    return { kind: "findings", findings: [] }
   })
 
   const result = await engine.analyze(ctx(change("const a = 1\n", "/work/plain.ts")))
   expect(called).toBe(false)
   expect(result.findings ?? []).toEqual([])
+})
+
+test("engine binary reports did-not-run and still falls back to the regex rules", async () => {
+  const engine = createTestEngineAnalyzer(
+    () => engineConfig(),
+    async () => ({ kind: "did-not-run", reason: "exited with code 1" }),
+  )
+
+  const result = await engine.analyze(ctx(change("it.only('a', () => {\n  expect(1).toBe(1)\n})\n")))
+  expect(result.didNotRun).toBe("exited with code 1")
+  expect(result.findings?.some(finding => finding.rule === "skip-focus-added")).toBe(true)
 })
 
 // --- review fixes ---
@@ -99,7 +110,7 @@ test("engine binary falls back to regex for a delete without consulting the bina
     () => engineConfig({ checks: { "protected-paths": "warn" } }),
     async () => {
       called = true
-      return []
+      return { kind: "findings", findings: [] }
     },
   )
 
@@ -119,7 +130,7 @@ test("engine binary falls back to regex for a delete without consulting the bina
 test("engine binary derives the excerpt from the source line, not the message", async () => {
   const engine = createTestEngineAnalyzer(
     () => engineConfig(),
-    async () => [{ file: "/work/a.test.ts", line: 2, rule: "skip-focus-added", message: "Focused test added." }],
+    async () => ({ kind: "findings", findings: [{ file: "/work/a.test.ts", line: 2, rule: "skip-focus-added", message: "Focused test added." }] }),
   )
 
   const result = await engine.analyze(ctx(change("// header\nit.only('a', () => {}) // focused\n")))
@@ -132,7 +143,7 @@ test("engine binary derives the excerpt from the source line, not the message", 
 test("engine binary falls back to the message when the source line is unavailable", async () => {
   const engine = createTestEngineAnalyzer(
     () => engineConfig(),
-    async () => [{ file: "/work/a.test.ts", line: 99, rule: "skip-focus-added", message: "Focused test added." }],
+    async () => ({ kind: "findings", findings: [{ file: "/work/a.test.ts", line: 99, rule: "skip-focus-added", message: "Focused test added." }] }),
   )
 
   const result = await engine.analyze(ctx(change("it.only('a', () => {})\n")))
@@ -142,7 +153,7 @@ test("engine binary falls back to the message when the source line is unavailabl
 test("engine binary surfaces the file's bypass markers", async () => {
   const engine = createTestEngineAnalyzer(
     () => engineConfig(),
-    async () => [{ file: "/work/a.test.ts", line: 2, rule: "skip-focus-added", message: "Focused test added." }],
+    async () => ({ kind: "findings", findings: [{ file: "/work/a.test.ts", line: 2, rule: "skip-focus-added", message: "Focused test added." }] }),
   )
 
   const result = await engine.analyze(ctx(change("// test-guard: allow intentional\nit.only('a', () => {})\n")))

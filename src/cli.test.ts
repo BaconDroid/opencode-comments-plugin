@@ -26,9 +26,10 @@ afterEach(() => {
   else process.env.XDG_CACHE_HOME = previousXdg
 })
 
-type FakeKind = "clean" | "comment" | "hang"
+type FakeKind = "clean" | "comment" | "hang" | "exit1" | "exit127"
 
 function writeFakeBinary(kind: FakeKind): string {
+  const exitCode = kind === "comment" ? 2 : kind === "exit1" ? 1 : kind === "exit127" ? 127 : 0
   const body = kind === "hang"
     ? "#!/bin/sh\nsleep 30\n"
     : [
@@ -36,7 +37,7 @@ function writeFakeBinary(kind: FakeKind): string {
         `printf '%s\\n' "$@" > '${argsPath}'`,
         `cat > '${stdinPath}'`,
         ...(kind === "comment" ? ['echo "comments detected" >&2'] : []),
-        `exit ${kind === "comment" ? 2 : 0}`,
+        `exit ${exitCode}`,
         "",
       ].join("\n")
   writeFileSync(scriptPath, body)
@@ -95,16 +96,50 @@ test("ignores an empty prompt instead of passing a bare --prompt flag", async ()
 test("ignores a CLI that never answers instead of hanging the tool call", async () => {
   const result = await runCommentChecker(hookInput(), { cliPath: writeFakeBinary("hang") })
 
-  expect(result).toEqual({ hasComments: false, message: "" })
+  expect(result.hasComments).toBe(false)
+  expect(result.message).toBe("")
+  expect(result.didNotRun?.reason).toContain("timed out")
 }, 20_000)
 
 test("honours the timeout option so a hung CLI cannot block the tool call", async () => {
   const started = Date.now()
   const result = await runCommentChecker(hookInput(), { cliPath: writeFakeBinary("hang"), timeoutMs: 200 })
 
-  expect(result).toEqual({ hasComments: false, message: "" })
+  expect(result.hasComments).toBe(false)
+  expect(result.message).toBe("")
+  expect(result.didNotRun?.reason).toContain("timed out")
   expect(Date.now() - started).toBeLessThan(5_000)
 }, 20_000)
+
+test("reports exit 1 as did not run instead of a clean result", async () => {
+  const result = await runCommentChecker(hookInput(), { cliPath: writeFakeBinary("exit1") })
+
+  expect(result).toEqual({ hasComments: false, message: "", didNotRun: { reason: "exited with code 1" } })
+})
+
+test("reports exit 127 as did not run", async () => {
+  const result = await runCommentChecker(hookInput(), { cliPath: writeFakeBinary("exit127") })
+
+  expect(result.didNotRun?.reason).toBe("exited with code 127")
+})
+
+test("reports ENOENT as did not run when the binary path is missing", async () => {
+  const missing = join(dir, "missing-comment-checker")
+  const result = await runCommentChecker(hookInput(), { cliPath: missing })
+
+  expect(result.hasComments).toBe(false)
+  expect(result.didNotRun?.reason).toBe(`binary not found at ${missing}`)
+})
+
+test("reports a non-executable binary as did not run", async () => {
+  const path = join(dir, "not-executable")
+  writeFileSync(path, "#!/bin/sh\nexit 0\n")
+
+  const result = await runCommentChecker(hookInput(), { cliPath: path })
+
+  expect(result.hasComments).toBe(false)
+  expect(result.didNotRun?.reason).toContain("could not be spawned")
+})
 
 test("caches the binary per comment-checker version and drops the stale versions", async () => {
   process.env.XDG_CACHE_HOME = dir
@@ -130,15 +165,19 @@ test("caches the binary per comment-checker version and drops the stale versions
 
 // --- test-checker (stderr `<findings>` XML contract) ---
 
-type FakeTestKind = "findings" | "no-xml" | "clean"
+type FakeTestKind = "findings" | "no-xml" | "clean" | "exit1" | "exit127" | "hang"
 
 function writeFakeTestChecker(kind: FakeTestKind): string {
   const scriptPath = join(dir, "fake-test-checker")
-  const body = kind === "clean"
-    ? "#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' 'TEST QUALITY DETECTED: no weakened tests.' >&2\nexit 0\n"
-    : kind === "no-xml"
-      ? "#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' 'TEST QUALITY DETECTED (but no xml)' >&2\nexit 2\n"
-      : "#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' 'TEST QUALITY DETECTED' '<findings file=\"/work/a.test.ts\"><finding line-number=\"2\" rule=\"skip-focus-added\" confidence=\"high\">Focused test added.</finding></findings>' '<findings file=\"/work/b.test.ts\"><finding line-number=\"5\" rule=\"empty-test\" confidence=\"medium\">Test body has no executable statement.</finding></findings>' >&2\nexit 2\n"
+  const body = kind === "hang"
+    ? "#!/bin/sh\nsleep 30\n"
+    : kind === "clean"
+      ? "#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' 'TEST QUALITY DETECTED: no weakened tests.' >&2\nexit 0\n"
+      : kind === "no-xml"
+        ? "#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' 'TEST QUALITY DETECTED (but no xml)' >&2\nexit 2\n"
+        : kind === "exit1" || kind === "exit127"
+          ? `#!/bin/sh\ncat > /dev/null\nexit ${kind === "exit1" ? 1 : 127}\n`
+          : "#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' 'TEST QUALITY DETECTED' '<findings file=\"/work/a.test.ts\"><finding line-number=\"2\" rule=\"skip-focus-added\" confidence=\"high\">Focused test added.</finding></findings>' '<findings file=\"/work/b.test.ts\"><finding line-number=\"5\" rule=\"empty-test\" confidence=\"medium\">Test body has no executable statement.</finding></findings>' >&2\nexit 2\n"
   writeFileSync(scriptPath, body)
   chmodSync(scriptPath, 0o755)
   return scriptPath
@@ -156,21 +195,56 @@ function testHookInput(): HookInput {
 }
 
 test("runTestChecker parses the exit-2 stderr findings XML for every file", async () => {
-  const findings = await runTestChecker(testHookInput(), { cliPath: writeFakeTestChecker("findings") })
+  const result = await runTestChecker(testHookInput(), { cliPath: writeFakeTestChecker("findings") })
 
-  expect(findings).toEqual([
-    { file: "/work/a.test.ts", line: 2, rule: "skip-focus-added", message: "Focused test added." },
-    { file: "/work/b.test.ts", line: 5, rule: "empty-test", message: "Test body has no executable statement." },
-  ])
+  expect(result).toEqual({
+    kind: "findings",
+    findings: [
+      { file: "/work/a.test.ts", line: 2, rule: "skip-focus-added", message: "Focused test added." },
+      { file: "/work/b.test.ts", line: 5, rule: "empty-test", message: "Test body has no executable statement." },
+    ],
+  })
 })
 
-test("runTestChecker returns null when exit 2 carries no parseable finding", async () => {
-  expect(await runTestChecker(testHookInput(), { cliPath: writeFakeTestChecker("no-xml") })).toBe(null)
+test("runTestChecker falls back when exit 2 carries no parseable finding", async () => {
+  expect(await runTestChecker(testHookInput(), { cliPath: writeFakeTestChecker("no-xml") })).toEqual({ kind: "fallback" })
 })
 
-test("runTestChecker returns [] on exit 0 regardless of the stderr message", async () => {
-  expect(await runTestChecker(testHookInput(), { cliPath: writeFakeTestChecker("clean") })).toEqual([])
+test("runTestChecker returns no findings on exit 0 regardless of the stderr message", async () => {
+  expect(await runTestChecker(testHookInput(), { cliPath: writeFakeTestChecker("clean") })).toEqual({
+    kind: "findings",
+    findings: [],
+  })
 })
+
+test("runTestChecker reports exit 1 as did not run", async () => {
+  expect(await runTestChecker(testHookInput(), { cliPath: writeFakeTestChecker("exit1") })).toEqual({
+    kind: "did-not-run",
+    reason: "exited with code 1",
+  })
+})
+
+test("runTestChecker reports exit 127 as did not run", async () => {
+  expect(await runTestChecker(testHookInput(), { cliPath: writeFakeTestChecker("exit127") })).toEqual({
+    kind: "did-not-run",
+    reason: "exited with code 127",
+  })
+})
+
+test("runTestChecker reports ENOENT as did not run when the binary path is missing", async () => {
+  const missing = join(dir, "missing-test-checker")
+  expect(await runTestChecker(testHookInput(), { cliPath: missing })).toEqual({
+    kind: "did-not-run",
+    reason: `binary not found at ${missing}`,
+  })
+})
+
+test("runTestChecker reports a timeout as did not run", async () => {
+  expect(await runTestChecker(testHookInput(), { cliPath: writeFakeTestChecker("hang"), timeoutMs: 200 })).toEqual({
+    kind: "did-not-run",
+    reason: "timed out or could not be spawned",
+  })
+}, 20_000)
 
 test("parseTestCheckerFindings decodes XML entities and supports self-closing findings", () => {
   const xml =
