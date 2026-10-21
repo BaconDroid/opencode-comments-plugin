@@ -2,13 +2,13 @@
 // `tool.execute.before` (block) and `tool.execute.after` (warn) hooks.
 
 import { APPLY_PATCH_TOOL_NAME, DEFAULT_DEDUP_WINDOW_MS } from "../constants"
-import { AnalyzerRegistry } from "./analyzer"
+import { AnalyzerRegistry, type TestCheckerRunner } from "./analyzer"
 import { GuardBudget } from "./budget"
 import type { Bypass } from "./bypass"
 import type { GuardBaseConfig, Severity, TestEngine } from "./config"
 import { createDebugLog } from "./debug"
 import { extractPatchChanges, extractToolChange, firstString, readFileIfExists, type ExtractedChange } from "./diff"
-import { appendFeedback, type Finding } from "./feedback"
+import { appendFeedback, didNotRunMessage, type Finding } from "./feedback"
 import { PendingCallStore, type PendingToolCall } from "./pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "./result-pipeline"
 import { isTriggeredTool } from "./triggers"
@@ -39,11 +39,20 @@ const DEFAULT_TEST_GUARD: ResolvedTestGuard = {
 
 export type TestGuard = ToolGuard
 
-export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard {
+export interface TestGuardDeps {
+  runTestChecker?: TestCheckerRunner
+}
+
+export function createTestGuard(
+  getResolved: () => ResolvedTestGuard,
+  deps: TestGuardDeps = {},
+): TestGuard {
   const budget = new GuardBudget()
   const pending = new PendingCallStore<PendingToolCall>()
   const registry = new AnalyzerRegistry()
-  registry.register(createTestEngineAnalyzer(getResolved))
+  registry.register(createTestEngineAnalyzer(getResolved, deps.runTestChecker))
+  // One "did not run" warning per session, independent of the finding budget.
+  const didNotRunWarned = new Set<string>()
 
   function resolve(): ResolvedTestGuard {
     try {
@@ -105,6 +114,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
 
         const findings: Finding[] = []
         const bypassNotes: string[] = []
+        let didNotRun: string | undefined
         for (const change of changes) {
           const results = await registry.run("after", {
             tool: input.tool,
@@ -117,6 +127,7 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
           for (const result of results) {
             if (result.findings) changeFindings.push(...result.findings)
             if (result.bypasses) changeBypasses.push(...result.bypasses)
+            if (result.didNotRun !== undefined) didNotRun ??= result.didNotRun
           }
 
           for (const bypass of changeBypasses) {
@@ -138,6 +149,11 @@ export function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard
             budget.record(input.sessionID, rule, change.filePath)
             for (const finding of ruleFindings) findings.push(finding)
           }
+        }
+
+        if (didNotRun !== undefined && !didNotRunWarned.has(input.sessionID)) {
+          didNotRunWarned.add(input.sessionID)
+          parts.push(didNotRunMessage("test-checker", didNotRun))
         }
 
         let message = renderAnalyzerResults([{ findings }], {

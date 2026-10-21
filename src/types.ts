@@ -40,6 +40,10 @@ export interface HookInput {
 export interface CheckResult {
   hasComments: boolean
   message: string
+  // Set when the checker could not run at all (missing or non-executable
+  // binary, spawn failure, timeout, or an exit code other than 0/2). When
+  // present, no check happened: `hasComments` is false and `message` is empty.
+  didNotRun?: { reason: string }
 }
 
 // One finding as reported by the `test-checker` binary (exit 2, `<findings>`
@@ -52,3 +56,14 @@ export interface TestCheckerFinding {
   rule: string
   message: string
 }
+
+// Result of one `test-checker` invocation.
+//   findings    -> the binary ran; an empty list means it found nothing
+//   fallback    -> the binary ran (exit 2) but its stderr carried no parseable
+//                  findings, so the caller uses the in-process regex rules
+//   did-not-run -> no check happened (missing/non-executable binary, spawn
+//                  failure, timeout, or an exit code other than 0/2)
+export type TestCheckerResult =
+  | { kind: "findings"; findings: TestCheckerFinding[] }
+  | { kind: "fallback" }
+  | { kind: "did-not-run"; reason: string }

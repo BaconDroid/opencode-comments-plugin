@@ -8,7 +8,7 @@ import type { Finding } from "../../core/feedback"
 import type { Analyzer, AnalyzerContext, SyncAnalyzer, TestCheckerRunner } from "../../core/analyzer"
 import { COMMENT_CHECKER_EVENT } from "../../constants"
 import { stripComments, type ExtractedChange } from "../../core/diff"
-import type { HookInput, TestCheckerFinding } from "../../types"
+import type { HookInput, TestCheckerFinding, TestCheckerResult } from "../../types"
 import { runTestChecker } from "../../cli"
 import { isTestPath } from "./patterns"
 import { runTestRules } from "./index"
@@ -123,10 +123,13 @@ function binaryToFindings(
 }
 
 // The test guard's default engine. For a test change it first asks the
-// `test-checker` binary; a non-null result is authoritative. When the binary is
-// unavailable or fails (`null`), it falls back to the in-process regex rules so
-// detection still works offline. Non-test changes, deletes and empty-newText
-// changes always use the regex rules (the binary would silently clear them).
+// `test-checker` binary; its findings are authoritative. When the binary cannot
+// run, the change still falls back to the in-process regex rules so detection
+// works offline, and the result carries `didNotRun` so the guard can say the
+// binary checked nothing. A `fallback` outcome (exit 2 with unparseable stderr)
+// uses the regex rules silently, as before. Non-test changes, deletes and
+// empty-newText changes always use the regex rules (the binary would silently
+// clear them).
 export function createTestEngineAnalyzer(
   getConfig: () => TestEngineConfig,
   run: TestCheckerRunner = runTestChecker,
@@ -148,18 +151,21 @@ export function createTestEngineAnalyzer(
         change.newText.trim().length > 0
 
       if (useBinary) {
-        let binaryFindings: TestCheckerFinding[] | null = null
+        let outcome: TestCheckerResult | null = null
         try {
-          binaryFindings = await run(buildTestCheckerInput(change, ctx))
+          outcome = await run(buildTestCheckerInput(change, ctx))
         } catch {
           // Fail-open: an engine failure degrades to the regex fallback.
-          binaryFindings = null
+          outcome = null
         }
-        if (binaryFindings !== null) {
+        if (outcome?.kind === "findings") {
           return {
-            findings: binaryToFindings(binaryFindings, change, config.checks),
+            findings: binaryToFindings(outcome.findings, change, config.checks),
             bypasses: collectBypasses(change),
           }
+        }
+        if (outcome?.kind === "did-not-run") {
+          return { ...rules.analyze(ctx), didNotRun: outcome.reason }
         }
       }
 

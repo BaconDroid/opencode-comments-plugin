@@ -58,6 +58,12 @@ export function appendGuardMessage(output: { output: string }, message: string, 
   output.output += marker ? `\n\n${marker}\n${message}` : `\n\n${message}`
 }
 
+// The user-facing warning for a binary engine that could not run. Both guards
+// share it so the wording (and the reason on the next line) stays identical.
+export function didNotRunMessage(tool: string, reason: string): string {
+  return `${tool} did not run — nothing checked this write.\n${reason}`
+}
+
 // Appends feedback to the tool output. Idempotent: a second call with the same
 // marker does not duplicate the message.
 export function appendFeedback(output: { output: string }, message: string): void {

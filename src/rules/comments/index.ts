@@ -2,21 +2,20 @@
 // its warning to the tool output, with opt-in bypass markers. Extracted from
 // `index.ts` so the test guard can reuse the engine.
 
-import { existsSync } from "node:fs"
 import { APPLY_PATCH_TOOL_NAME } from "../../constants"
-import { commentHookInput, getCommentCheckerPath, runCommentChecker } from "../../cli"
+import { commentHookInput, getCommentCheckerPath, runCommentChecker, type RunOptions } from "../../cli"
 import { AnalyzerRegistry, type Analyzer } from "../../core/analyzer"
 import { GuardBudget } from "../../core/budget"
 import { applyBypass, bypassMatchers, type Bypass } from "../../core/bypass"
 import type { GuardBaseConfig } from "../../core/config"
 import { createDebugLog } from "../../core/debug"
 import { detectLanguage, diffLines, extractPatchChanges, extractToolChange, firstString, isCommentLine, readFileIfExists, readString } from "../../core/diff"
-import { appendGuardMessage } from "../../core/feedback"
+import { appendGuardMessage, didNotRunMessage } from "../../core/feedback"
 import { matchPathFilter } from "../../core/glob"
 import { PendingCallStore, type PendingToolCall } from "../../core/pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "../../core/result-pipeline"
 import { isTriggeredTool } from "../../core/triggers"
-import type { HookInput, ToolExecuteInput, ToolExecuteOutput, ToolGuard } from "../../types"
+import type { CheckResult, HookInput, ToolExecuteInput, ToolExecuteOutput, ToolGuard } from "../../types"
 
 const debugLog = createDebugLog("comment-guard", process.env.COMMENT_CHECKER_DEBUG === "1")
 
@@ -68,19 +67,24 @@ function isCheckedPath(filePath: string, paths: string[]): boolean {
 }
 
 // Wraps the comment-checker binary as an analyzer. It only produces the raw CLI
-// message; the guard keeps its budget, bypass handling and raw append.
-export function createCommentBinaryAnalyzer(getConfig: () => ResolvedCommentConfig): Analyzer {
+// message (or the reason it could not run); the guard keeps its budget, bypass
+// handling and raw append.
+export type CommentCheckRunner = (input: HookInput, options?: RunOptions) => Promise<CheckResult>
+export type CommentCheckerPathResolver = () => Promise<string | null>
+
+export function createCommentBinaryAnalyzer(
+  getConfig: () => ResolvedCommentConfig,
+  run: CommentCheckRunner = runCommentChecker,
+  resolvePath: CommentCheckerPathResolver = getCommentCheckerPath,
+): Analyzer {
   return {
     id: "comment-binary",
     trigger: "after",
     isEnabled: () => getConfig().enabled,
     analyze: async ctx => {
       const config = getConfig()
-      const cliPath = await getCommentCheckerPath()
-      if (!cliPath || !existsSync(cliPath)) {
-        debugLog("CLI not available, skipping comment check")
-        return {}
-      }
+      const cliPath = await resolvePath()
+      if (!cliPath) debugLog("comment-checker path not resolved; the engine will report did-not-run")
 
       const hookInput = commentHookInput({
         sessionID: ctx.sessionID,
@@ -89,7 +93,12 @@ export function createCommentBinaryAnalyzer(getConfig: () => ResolvedCommentConf
         toolInput: (ctx.args ?? {}) as HookInput["tool_input"],
       })
 
-      const result = await runCommentChecker(hookInput, { prompt: config.customPrompt, timeoutMs: config.timeoutMs })
+      const result = await run(hookInput, {
+        cliPath: cliPath ?? undefined,
+        prompt: config.customPrompt,
+        timeoutMs: config.timeoutMs,
+      })
+      if (result.didNotRun) return { didNotRun: result.didNotRun.reason }
       return result.hasComments && result.message ? { raw: result.message } : {}
     },
   }
@@ -97,11 +106,27 @@ export function createCommentBinaryAnalyzer(getConfig: () => ResolvedCommentConf
 
 export type CommentGuard = ToolGuard
 
-export function createCommentGuard(getConfig: () => ResolvedCommentConfig): CommentGuard {
+export interface CommentGuardDeps {
+  runCheck?: CommentCheckRunner
+  resolvePath?: CommentCheckerPathResolver
+}
+
+export function createCommentGuard(
+  getConfig: () => ResolvedCommentConfig,
+  deps: CommentGuardDeps = {},
+): CommentGuard {
   const pendingCalls = new PendingCallStore<PendingToolCall>()
   const budget = new GuardBudget()
   const registry = new AnalyzerRegistry()
-  registry.register(createCommentBinaryAnalyzer(getConfig))
+  registry.register(createCommentBinaryAnalyzer(getConfig, deps.runCheck, deps.resolvePath))
+  // One "did not run" warning per session, independent of the finding budget.
+  const didNotRunWarned = new Set<string>()
+
+  function warnDidNotRun(sessionID: string, output: { output: string }, reason: string): void {
+    if (didNotRunWarned.has(sessionID)) return
+    didNotRunWarned.add(sessionID)
+    appendGuardMessage(output, didNotRunMessage("comment-checker", reason))
+  }
 
   // Only new comment-like lines are worth checking on `write` when the previous
   // content is known: this avoids re-reporting pre-existing comments.
@@ -141,6 +166,9 @@ export function createCommentGuard(getConfig: () => ResolvedCommentConfig): Comm
         sessionID,
         args: toolInput as Record<string, unknown>,
       })
+      const didNotRun = results.find(result => result.didNotRun !== undefined)?.didNotRun
+      if (didNotRun !== undefined) warnDidNotRun(sessionID, output, didNotRun)
+
       const message = renderAnalyzerResults(results, { appendPrompt })
       if (message.length > 0) {
         budget.record(sessionID, COMMENT_RULE, filePath)
