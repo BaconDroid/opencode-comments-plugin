@@ -175,10 +175,12 @@ tests. It reuses the same tuple, under a sibling `test_guard` key:
 }
 ```
 
-Deterministic rules default to `warn`, advisory rules to `off`; `off` disables a
-rule. The test guard is advisory only: it never blocks and never rewrites the
-file. All internal guard errors are swallowed (fail-open), so the guard can never
-prevent the agent's action.
+Deterministic regex rules default to `warn`, advisory regex rules to `off`;
+every `test-checker` binary id defaults to `warn` because the binary already
+applies its own confidence gate. `off` disables a rule. The test guard is
+advisory only: it never blocks and never rewrites the file. All internal guard
+errors are swallowed (fail-open), so the guard can never prevent the agent's
+action.
 
 ### Detection engine
 
@@ -196,6 +198,33 @@ missing binary only degrades precision — never the guard's safety. Set
 deterministic regex engine. `TEST_CHECKER_VERSION` pins the binary version; the
 binary has no npm package, so an explicit version is the only offline source.
 
+The plugin resolves both binaries from its cache directory, **not from `PATH`**:
+
+- comment guard: `$XDG_CACHE_HOME/opencode-comments-plugin/bin/<version>/comment-checker`
+  (with `XDG_CACHE_HOME` unset, `~/.cache/...`)
+- test guard: `$XDG_CACHE_HOME/opencode-comments-plugin/test-checker/<version>/test-checker`
+
+This is deliberately different from the test-checker's own documented Claude
+Code/OpenCode hook command, which invokes `test-checker` by name and therefore
+resolves it from `PATH`; if that command is not on `PATH` the edit goes
+unchecked and the wrapper stays silent. The plugin never shells out by name, so
+a stale `PATH` cannot change which engine it uses.
+
+Rule ids are a generated contract with the binary. `src/rules/tests/binary-rule-ids.json`
+is rewritten from the test-checker README `## Rules` paragraph by
+`node scripts/generate-rule-ids.mjs`; point `TC_REPO` at a current checkout when
+the default `../test-checker` is stale or absent. Every binary id is enabled at
+`warn` because the binary has already applied its own confidence gate. Older
+regex ids keep working through aliases: `skip-focus-added` -> `skip-added` /
+`focus-added`, `tautological-assertion` -> `tautological-assertion` /
+`constant-assertion`, `matcher-loosened` -> `weakened-assertion`, `empty-test` ->
+`no-assertion`, `forced-success` -> `gate-weakened`, `expected-from-sut` ->
+`expected-copied-from-actual`, `weakened-config` -> `tolerance-broadened`.
+
+The real-binary contract test is opt-in: set `TC_BINARY` to a local
+test-checker build, e.g.
+`TC_BINARY=/path/to/test-checker bun test src/rules/tests/real-binary.test.ts`.
+
 | Rule | Signal | Default |
 |---|---|---|
 | `protected-paths` | edit/delete of an existing test file (new files exempt) | warn |
@@ -209,7 +238,7 @@ binary has no npm package, so an explicit version is the only offline source.
 | `duplicate-test` | identical test bodies in the same file | warn |
 | `forced-success` | `\|\| true`, `exit 0`, `sys.exit(0)`, `process.exit(0)`, `continue-on-error: true`, `--passWithNoTests` | warn |
 | `mock-of-sut` | `vi`/`jest.mock` of the module under test, `spyOn` of an import from it, Python `patch` of it (JS/TS + Python only) | warn |
-| `over-mocking` | new mock identifiers (dummy/stub/mock/spy/fake) | off |
+| `over-mocking` | new mock identifiers (dummy/stub/mock/spy/fake) | warn (shared with the binary) |
 | `assertion-roulette` | several assertions with no message | off |
 | `redundant-assertion` | the same assertion repeated in one test | off |
 | `weakened-config` | `@ts-nocheck`, `--no-verify`, lowered `fail_under`/`cov-fail-under` | off |

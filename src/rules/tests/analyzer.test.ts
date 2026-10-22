@@ -102,6 +102,25 @@ test("engine binary reports did-not-run and still falls back to the regex rules"
   expect(result.findings?.some(finding => finding.rule === "skip-focus-added")).toBe(true)
 })
 
+test("did-not-run suppresses the fallback protected-paths finding for the same change", async () => {
+  const engine = createTestEngineAnalyzer(
+    () => engineConfig({ checks: { "protected-paths": "warn" } }),
+    async () => ({ kind: "did-not-run", reason: "binary not found" }),
+  )
+  const edited = extractChange({
+    filePath: "/work/a.test.ts",
+    oldText: "it('a', () => {\n  expect(1).toBe(1)\n})\n",
+    newText: "it('a', () => {\n  expect(2).toBe(2)\n})\n",
+    isNew: false,
+    isDelete: false,
+  })
+
+  const result = await engine.analyze(ctx(edited))
+
+  expect(result.didNotRun).toBe("binary not found")
+  expect(result.findings?.some(finding => finding.rule === "protected-paths")).toBe(false)
+})
+
 // --- review fixes ---
 
 test("engine binary falls back to regex for a delete without consulting the binary", async () => {

@@ -200,8 +200,8 @@ test("runTestChecker parses the exit-2 stderr findings XML for every file", asyn
   expect(result).toEqual({
     kind: "findings",
     findings: [
-      { file: "/work/a.test.ts", line: 2, rule: "skip-focus-added", message: "Focused test added." },
-      { file: "/work/b.test.ts", line: 5, rule: "empty-test", message: "Test body has no executable statement." },
+      { file: "/work/a.test.ts", line: 2, rule: "skip-focus-added", message: "Focused test added.", confidence: "high" },
+      { file: "/work/b.test.ts", line: 5, rule: "empty-test", message: "Test body has no executable statement.", confidence: "medium" },
     ],
   })
 })
@@ -250,7 +250,7 @@ test("parseTestCheckerFindings decodes XML entities and supports self-closing fi
   const xml =
     '<findings file="a &amp; b.ts"><finding line-number="3" rule="tautological-assertion" confidence="high">assert &lt;x&gt; &amp; true</finding><finding line-number="7" rule="empty-test"/></findings>'
   expect(parseTestCheckerFindings(xml)).toEqual([
-    { file: "a & b.ts", line: 3, rule: "tautological-assertion", message: "assert <x> & true" },
+    { file: "a & b.ts", line: 3, rule: "tautological-assertion", message: "assert <x> & true", confidence: "high" },
     { file: "a & b.ts", line: 7, rule: "empty-test", message: "" },
   ])
 })

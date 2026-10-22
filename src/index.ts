@@ -26,6 +26,7 @@ import { createMutationAdapter, type MutationConfig } from "./core/mutation"
 import { createCommentGuard, type ResolvedCommentConfig } from "./rules/comments"
 import { DEFAULT_TEST_PATTERNS } from "./rules/tests/patterns"
 import { buildRuleChecks } from "./rules/tests"
+import { LEGACY_RULE_ALIASES } from "./rules/tests/rule-ids"
 import { detectTestCommand } from "./core/test-command"
 import { createGuardAuditTool, GUARD_AUDIT_COMMAND } from "./audit"
 
@@ -149,6 +150,7 @@ function resolveTestGuardConfiguration(config?: unknown): void {
     envPrefix: "TEST_GUARD_",
     options,
     config: fromConfig,
+    aliases: LEGACY_RULE_ALIASES,
   })
 }
 

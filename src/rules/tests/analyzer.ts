@@ -7,12 +7,34 @@ import type { Severity, TestEngine } from "../../core/config"
 import type { Finding } from "../../core/feedback"
 import type { Analyzer, AnalyzerContext, SyncAnalyzer, TestCheckerRunner } from "../../core/analyzer"
 import { COMMENT_CHECKER_EVENT } from "../../constants"
+import { createDebugLog } from "../../core/debug"
 import { stripComments, type ExtractedChange } from "../../core/diff"
 import type { HookInput, TestCheckerFinding, TestCheckerResult } from "../../types"
 import { runTestChecker } from "../../cli"
 import { isTestPath } from "./patterns"
 import { runTestRules } from "./index"
 import { collectBypasses } from "./content"
+import { resolveRuleSeverity } from "./rule-ids"
+
+const debugLog = createDebugLog(
+  "test-guard",
+  process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1",
+)
+
+// Unknown ids are logged once per session per id, never once per finding.
+const unknownRuleWarned = new Set<string>()
+
+function severityFor(checks: Record<string, Severity>, ruleId: string, sessionID: string): Severity {
+  const resolution = resolveRuleSeverity(checks, ruleId)
+  if (!resolution.known) {
+    const key = `${sessionID}\u0000${ruleId}`
+    if (!unknownRuleWarned.has(key)) {
+      unknownRuleWarned.add(key)
+      debugLog(`unknown test-checker rule id "${ruleId}" — enabled at warn`)
+    }
+  }
+  return resolution.severity
+}
 
 export interface RuleAnalyzerConfig {
   enabled: boolean
@@ -45,7 +67,10 @@ export function createRuleAnalyzer(getConfig: () => RuleAnalyzerConfig): SyncAna
           maxWarningsPerFile: 0,
         },
       })
-      return { findings: toFindings(result.findings, change.filePath, config.checks), bypasses: result.bypasses }
+      return {
+        findings: toFindings(result.findings, change.filePath, config.checks, ctx.sessionID),
+        bypasses: result.bypasses,
+      }
     },
   }
 }
@@ -54,13 +79,14 @@ function toFindings(
   findings: Array<{ rule: string; line: number; message: string; excerpt: string }>,
   filePath: string,
   checks: Record<string, Severity>,
+  sessionID: string,
 ): Finding[] {
   return findings.map(finding => ({
     rule: finding.rule,
     filePath,
     line: finding.line,
     message: finding.message,
-    severity: checks[finding.rule] ?? "off",
+    severity: severityFor(checks, finding.rule, sessionID),
     excerpt: finding.excerpt,
   }))
 }
@@ -111,14 +137,16 @@ function binaryToFindings(
   findings: TestCheckerFinding[],
   change: ExtractedChange,
   checks: Record<string, Severity>,
+  sessionID: string,
 ): Finding[] {
   return findings.map(finding => ({
     rule: finding.rule,
     filePath: change.filePath,
     line: finding.line,
     message: finding.message,
-    severity: checks[finding.rule] ?? "off",
+    severity: severityFor(checks, finding.rule, sessionID),
     excerpt: excerptFromSource(change, finding.line, finding.message),
+    ...(finding.confidence ? { confidence: finding.confidence } : {}),
   }))
 }
 
@@ -160,12 +188,21 @@ export function createTestEngineAnalyzer(
         }
         if (outcome?.kind === "findings") {
           return {
-            findings: binaryToFindings(outcome.findings, change, config.checks),
+            findings: binaryToFindings(outcome.findings, change, config.checks, ctx.sessionID),
             bypasses: collectBypasses(change),
           }
         }
         if (outcome?.kind === "did-not-run") {
-          return { ...rules.analyze(ctx), didNotRun: outcome.reason }
+          // The fallback still runs so detection works offline, but
+          // `protected-paths` fires for every edit of an existing test file and
+          // would bury the "did not run" warning under a second, unrelated
+          // message. Suppress it only for this change when the binary skipped.
+          const fallback = rules.analyze(ctx)
+          return {
+            ...fallback,
+            findings: (fallback.findings ?? []).filter(finding => finding.rule !== "protected-paths"),
+            didNotRun: outcome.reason,
+          }
         }
       }
 

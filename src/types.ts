@@ -55,6 +55,9 @@ export interface TestCheckerFinding {
   line: number
   rule: string
   message: string
+  // The binary's own confidence (high/medium/low), preserved so the plugin does
+  // not silently downgrade a finding it chose to report.
+  confidence?: string
 }
 
 // Result of one `test-checker` invocation.
