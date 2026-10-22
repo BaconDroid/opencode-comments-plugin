@@ -443,9 +443,15 @@ test("the rule catalog exposes 18 ids in order with the documented defaults", ()
   expect(ADVISORY_RULES).toHaveLength(7)
 
   const checks = buildRuleChecks(false)
-  expect(Object.keys(checks)).toHaveLength(18)
+  // 18 regex ids + 25 binary-only ids (6 ids are shared).
+  expect(Object.keys(checks)).toHaveLength(43)
   expect(checks["forced-success"]).toBe("warn")
   expect(checks["mock-of-sut"]).toBe("warn")
   expect(checks["expected-from-sut"]).toBe("off")
   expect(checks["negative-control-unrelated"]).toBe("off")
+  // Binary ids are the source of truth and are never off by default.
+  expect(checks["focus-added"]).toBe("warn")
+  expect(checks["weakened-assertion"]).toBe("warn")
+  // Shared ids follow the binary default even when the regex rule is advisory.
+  expect(checks["over-mocking"]).toBe("warn")
 })

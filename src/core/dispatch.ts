@@ -13,12 +13,16 @@ import { PendingCallStore, type PendingToolCall } from "./pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "./result-pipeline"
 import { isTriggeredTool } from "./triggers"
 import { createTestEngineAnalyzer } from "../rules/tests/analyzer"
+import { resolveRuleSeverity } from "../rules/tests/rule-ids"
 import type { ToolExecuteInput, ToolExecuteOutput, ToolGuard } from "../types"
 
 const debugLog = createDebugLog(
   "test-guard",
   process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1",
 )
+
+// Unknown ids are logged once per session per id, never once per finding.
+const unknownRuleWarned = new Set<string>()
 
 export interface ResolvedTestGuard extends GuardBaseConfig {
   testPatterns: string[]
@@ -143,11 +147,20 @@ export function createTestGuard(
           }
 
           for (const [rule, ruleFindings] of grouped) {
-            const level = resolved.checks[rule] ?? "off"
-            if (level === "off") continue
+            // Exact config key, then a legacy alias, then warn. A binary id the
+            // plugin does not know must never be silently disabled.
+            const resolution = resolveRuleSeverity(resolved.checks, rule)
+            if (!resolution.known) {
+              const key = `${input.sessionID}\u0000${rule}`
+              if (!unknownRuleWarned.has(key)) {
+                unknownRuleWarned.add(key)
+                debugLog(`unknown test-checker rule id "${rule}" — enabled at warn`)
+              }
+            }
+            if (resolution.severity === "off") continue
             if (!budget.shouldEmit(input.sessionID, rule, change.filePath)) continue
             budget.record(input.sessionID, rule, change.filePath)
-            for (const finding of ruleFindings) findings.push(finding)
+            for (const finding of ruleFindings) findings.push({ ...finding, severity: resolution.severity })
           }
         }
 

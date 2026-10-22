@@ -325,11 +325,13 @@ export function parseTestCheckerFindings(stderr: string, fallbackFile?: string):
       if (!rule || rule.length === 0) continue
       const lineValue = Number(attributes["line-number"])
       const message = finding[3] !== undefined ? decodeXml(finding[3]).trim() : ""
+      const confidence = attributes.confidence
       findings.push({
         file,
         line: Number.isFinite(lineValue) ? lineValue : 0,
         rule,
         message,
+        ...(confidence ? { confidence } : {}),
       })
     }
   }

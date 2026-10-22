@@ -14,6 +14,10 @@ export interface Finding {
   message: string
   severity: Severity
   excerpt: string
+  // Present for findings reported by the binary engine. The binary's own
+  // confidence gate already ran, so this is carried through for the reader
+  // instead of being folded into the plugin's warn/off severity.
+  confidence?: string
 }
 
 export interface FeedbackOptions {
@@ -34,7 +38,8 @@ export function formatFindings(findings: Finding[], maxExcerpt = 80): string {
   return findings
     .map(finding => {
       const location = `${finding.filePath}:${finding.line}`
-      return `- [${finding.severity}] ${finding.rule} (${location}): ${finding.message}\n  > ${truncateExcerpt(finding.excerpt, maxExcerpt)}`
+      const confidence = finding.confidence ? ` (confidence: ${finding.confidence})` : ""
+      return `- [${finding.severity}] ${finding.rule} (${location}): ${finding.message}${confidence}\n  > ${truncateExcerpt(finding.excerpt, maxExcerpt)}`
     })
     .join("\n")
 }
