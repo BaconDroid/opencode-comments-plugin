@@ -6,6 +6,9 @@
 // Point TC_REPO at a current checkout when ../test-checker is stale/missing:
 //
 //   TC_REPO=/path/to/test-checker node scripts/generate-rule-ids.mjs
+//   TC_REPO=/path/to/test-checker node scripts/generate-rule-ids.mjs --check
+//
+// `--check` regenerates in memory and exits 1 on a diff without writing.
 import { execFileSync } from "node:child_process"
 import { readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
@@ -33,6 +36,19 @@ export function parseRulesParagraph(markdown) {
 const markdown = readFileSync(readmePath, "utf8")
 const rules = parseRulesParagraph(markdown)
 const ref = execFileSync("git", ["-C", tcRepo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim()
+const generated = `${JSON.stringify({ source: "BaconDroid/test-checker", ref, rules }, null, 2)}\n`
 
-writeFileSync(outputPath, `${JSON.stringify({ source: "BaconDroid/test-checker", ref, rules }, null, 2)}\n`)
-console.log(`wrote ${rules.length} rule ids from ${readmePath} (${ref}) to ${outputPath}`)
+if (process.argv.includes("--check")) {
+  const current = readFileSync(outputPath, "utf8")
+  if (current !== generated) {
+    console.error(
+      `rule-id contract is stale: ${outputPath} does not match ${readmePath} (${ref}). ` +
+        "Run `npm run rules:generate` and commit the result.",
+    )
+    process.exit(1)
+  }
+  console.log(`rule-id contract is up to date (${rules.length} ids, ${ref})`)
+} else {
+  writeFileSync(outputPath, generated)
+  console.log(`wrote ${rules.length} rule ids from ${readmePath} (${ref}) to ${outputPath}`)
+}

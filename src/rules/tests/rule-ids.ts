@@ -23,19 +23,14 @@ export interface BinaryRuleIdTable {
 export const BINARY_RULE_ID_TABLE = binaryRuleIds as BinaryRuleIdTable
 export const BINARY_RULE_IDS: readonly string[] = BINARY_RULE_ID_TABLE.rules
 
-// Old regex rule id -> binary rule id(s) carrying the same signal. Verified
-// against each rule's message:
-// - skip-focus-added: the regex flagged every `.skip`/`.only`; the binary
-//   splits that into `skip-added` and `focus-added`.
-// - tautological-assertion: the regex flagged `assert True`-style tautologies;
-//   the binary additionally reports literal-vs-literal `constant-assertion`.
-// - matcher-loosened: the regex's loosened matchers are the binary's
-//   `weakened-assertion`.
-// - empty-test: a test body with no executable statement is `no-assertion`.
-// - forced-success: forcing a command to pass is `gate-weakened`.
-// - expected-from-sut: an expectation produced by the SUT is
-//   `expected-copied-from-actual`.
-// - weakened-config: lowered thresholds/coverage gates are `tolerance-broadened`.
+// Legacy regex id -> binary id(s) carrying the same signal, one line each:
+// skip-focus-added -> skip-added, focus-added: the regex flagged `.skip` and `.only` together; the binary splits them.
+// tautological-assertion -> tautological-assertion, constant-assertion: the regex's always-true check also covered literal-vs-literal comparisons.
+// matcher-loosened -> weakened-assertion: a weaker matcher for the same assertion subject is the binary's diff-aware weakening rule.
+// empty-test -> no-assertion: a test body with no executable statement has no assertion to run.
+// forced-success -> gate-weakened: forcing a command to pass weakens the test gate itself.
+// expected-from-sut -> expected-copied-from-actual: an expectation produced by the code under test copies the actual value.
+// weakened-config -> tolerance-broadened: lowered coverage/test thresholds broaden the tolerated failure surface.
 export const LEGACY_RULE_ALIASES: Readonly<Record<string, readonly string[]>> = {
   "skip-focus-added": ["skip-added", "focus-added"],
   "tautological-assertion": ["tautological-assertion", "constant-assertion"],

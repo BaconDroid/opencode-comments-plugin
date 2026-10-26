@@ -1,6 +1,6 @@
 {
   "source": "BaconDroid/test-checker",
-  "ref": "d8d14ce208e02cb95e38366d4710bf8e35e6e085",
+  "ref": "60e58e0bee091490ef194a5995d1964938839ab8",
   "rules": [
     "skip-added",
     "focus-added",
@@ -25,6 +25,8 @@
     "retry-added",
     "agent-memo-test",
     "allow-added",
+    "allow-invalid",
+    "config-edited",
     "gate-weakened",
     "commented-out-test",
     "source-grep-test",

@@ -7,7 +7,7 @@ import { LEGACY_RULE_ALIASES, resolveRuleSeverity } from "./rule-ids"
 import { resolveRuleConfig } from "../../core/config"
 
 // Independent oracle: the test-checker README `## Rules` paragraph at main
-// d8d14ce. Kept as a literal so this test still fails if the generated JSON
+// 60e58e0. Kept as a literal so this test still fails if the generated JSON
 // loses an id while the tc checkout is unavailable (e.g. in CI).
 const AUTHORITATIVE_RULE_IDS = [
   "skip-added",
@@ -33,6 +33,8 @@ const AUTHORITATIVE_RULE_IDS = [
   "retry-added",
   "agent-memo-test",
   "allow-added",
+  "allow-invalid",
+  "config-edited",
   "gate-weakened",
   "commented-out-test",
   "source-grep-test",
@@ -43,7 +45,7 @@ const AUTHORITATIVE_RULE_IDS = [
   "mirror-implementation-test",
 ] as const
 
-const EXPECTED_REF = "d8d14ce208e02cb95e38366d4710bf8e35e6e085"
+const EXPECTED_REF = "60e58e0bee091490ef194a5995d1964938839ab8"
 
 function parseRulesParagraph(markdown: string): string[] {
   const heading = /^##\s+Rules\s*$/m.exec(markdown)
@@ -58,7 +60,7 @@ const readmePath = join(tcRepo, "README.md")
 const hasReadme = existsSync(readmePath)
 if (!hasReadme) console.warn(`[binary-rule-ids] skipping README comparison: ${readmePath} not found (set TC_REPO to a test-checker checkout)`)
 
-test("the contract JSON is well formed, unique and points at tc main d8d14ce", () => {
+test("the contract JSON is well formed, unique and points at tc main 60e58e0", () => {
   expect(binaryRuleIds.source).toBe("BaconDroid/test-checker")
   expect(binaryRuleIds.ref).toBe(EXPECTED_REF)
   expect(Array.isArray(binaryRuleIds.rules)).toBe(true)
@@ -113,17 +115,42 @@ test("severity resolution prefers exact, then a legacy alias, then warn", () => 
   expect(resolveRuleSeverity({}, "future-binary-id")).toEqual({ severity: "warn", known: false })
 })
 
-test("a legacy config override propagates to the current binary ids", () => {
-  const schema = buildRuleChecks(false)
-  const checks = resolveRuleConfig(schema, {
-    envPrefix: "TEST_GUARD_",
-    options: { checks: { "skip-focus-added": "off" } },
-    aliases: LEGACY_RULE_ALIASES,
-  })
-  expect(checks["skip-added"]).toBe("off")
-  expect(checks["focus-added"]).toBe("off")
+test("every alias target is a real id in the generated tc contract", () => {
+  for (const targets of Object.values(LEGACY_RULE_ALIASES)) {
+    expect(targets.length).toBeGreaterThan(0)
+    for (const target of targets) {
+      expect(binaryRuleIds.rules).toContain(target)
+    }
+  }
+})
 
-  // An explicit current-id setting wins over the legacy alias.
+test("every legacy config override reaches every alias target for off, warn and invalid error", () => {
+  const schema = buildRuleChecks(false)
+  for (const [legacy, targets] of Object.entries(LEGACY_RULE_ALIASES)) {
+    for (const level of ["off", "warn"] as const) {
+      const checks = resolveRuleConfig(schema, {
+        envPrefix: "TEST_GUARD_",
+        options: { checks: { [legacy]: level } },
+        aliases: LEGACY_RULE_ALIASES,
+      })
+      for (const target of targets) expect(checks[target], `${legacy} -> ${target} (${level})`).toBe(level)
+      // No over-propagation: an id that is not an alias target keeps its default.
+      expect(checks["snapshot-regenerated"]).toBe("warn")
+    }
+
+    // `error` is not a valid Severity; the override is ignored and the binary
+    // default (warn) wins for every target.
+    const invalid = resolveRuleConfig(schema, {
+      envPrefix: "TEST_GUARD_",
+      options: { checks: { [legacy]: "error" } },
+      aliases: LEGACY_RULE_ALIASES,
+    })
+    for (const target of targets) expect(invalid[target], `${legacy} -> ${target} (error)`).toBe("warn")
+  }
+})
+
+test("an explicit current-id setting wins over a legacy alias", () => {
+  const schema = buildRuleChecks(false)
   const explicit = resolveRuleConfig(schema, {
     envPrefix: "TEST_GUARD_",
     options: { checks: { "skip-focus-added": "off", "focus-added": "warn" } },

@@ -32,7 +32,8 @@
 		"build": "bun build src/index.ts --outdir dist --target bun --format esm --external @opencode-ai/plugin && bun build src/bin.ts --outdir dist --target bun --format esm --external @opencode-ai/plugin && tsc --emitDeclarationOnly",
 		"test": "bun test",
 		"typecheck": "tsc --noEmit",
-		"rules:generate": "node scripts/generate-rule-ids.mjs"
+		"rules:generate": "node scripts/generate-rule-ids.mjs",
+		"check:rule-ids": "node scripts/generate-rule-ids.mjs --check"
 	},
 	"dependencies": {
 		"@code-yeongyu/comment-checker": "^0.8.2",

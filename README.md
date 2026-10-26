@@ -211,15 +211,29 @@ unchecked and the wrapper stays silent. The plugin never shells out by name, so
 a stale `PATH` cannot change which engine it uses.
 
 Rule ids are a generated contract with the binary. `src/rules/tests/binary-rule-ids.json`
-is rewritten from the test-checker README `## Rules` paragraph by
-`node scripts/generate-rule-ids.mjs`; point `TC_REPO` at a current checkout when
-the default `../test-checker` is stale or absent. Every binary id is enabled at
-`warn` because the binary has already applied its own confidence gate. Older
-regex ids keep working through aliases: `skip-focus-added` -> `skip-added` /
-`focus-added`, `tautological-assertion` -> `tautological-assertion` /
-`constant-assertion`, `matcher-loosened` -> `weakened-assertion`, `empty-test` ->
-`no-assertion`, `forced-success` -> `gate-weakened`, `expected-from-sut` ->
-`expected-copied-from-actual`, `weakened-config` -> `tolerance-broadened`.
+is rewritten from the test-checker README `## Rules` paragraph (33 ids at tc
+`60e58e0`) by `node scripts/generate-rule-ids.mjs`; point `TC_REPO` at a current
+checkout when the default `../test-checker` is stale or absent. Every binary id
+is enabled at `warn` because the binary has already applied its own confidence
+gate. `npm run check:rule-ids` regenerates in memory and exits non-zero on any
+diff, so a tc bump can be detected without rewriting the file.
+
+Older regex ids keep working through these aliases. An explicit legacy override
+applies to every listed binary id unless that id is configured itself:
+
+| legacy regex id | binary id(s) | why |
+|---|---|---|
+| `skip-focus-added` | `skip-added`, `focus-added` | the regex flagged `.skip` and `.only` together; the binary splits them |
+| `tautological-assertion` | `tautological-assertion`, `constant-assertion` | the regex's always-true check also covered literal-vs-literal comparisons |
+| `matcher-loosened` | `weakened-assertion` | a weaker matcher for the same assertion subject is the binary's diff-aware weakening rule |
+| `empty-test` | `no-assertion` | a test body with no executable statement has no assertion to run |
+| `forced-success` | `gate-weakened` | forcing a command to pass weakens the test gate itself |
+| `expected-from-sut` | `expected-copied-from-actual` | an expectation produced by the code under test copies the actual value |
+| `weakened-config` | `tolerance-broadened` | lowered coverage/test thresholds broaden the tolerated failure surface |
+
+The rule-id check is **advisory, not a required check**. CI runs it with
+`continue-on-error: true` after cloning tc main, so a stale checkout of the
+test-checker repo cannot block an unrelated PR.
 
 The real-binary contract test is opt-in: set `TC_BINARY` to a local
 test-checker build, e.g.
@@ -248,6 +262,34 @@ test-checker build, e.g.
 
 `mock-of-sut` is implemented only for JavaScript/TypeScript and Python: Go and
 Rust expose no reliable circular-mock idiom, so the rule never fires for them.
+
+#### Legacy regex-only ids
+
+Twelve regex ids are plugin-only (not shared with the binary): six map to a
+binary id through the alias table above, and six have no binary counterpart at
+all. All twelve are **legacy regex advisories**: they only run when the binary
+engine is unavailable (or `engine: "regex"` is forced). Most binary rules —
+`allow-invalid`, `config-edited`, `snapshot-regenerated`,
+`expected-copied-from-actual`, `harness-edited`, and others — have no regex
+fallback equivalent, so offline coverage is intentionally narrower.
+
+| Regex id | Default | Detectable from an edit hook |
+|---|---|---|
+| `protected-paths` | warn | yes — any edit/delete of an existing test file |
+| `skip-focus-added` | warn | yes — added `.skip`/`.only`/ignore lines |
+| `empty-test` | warn | only when the edit fragment contains the whole test |
+| `unknown-test` | warn | only when the edit fragment contains the whole test |
+| `matcher-loosened` | warn | yes — removed and added matcher lines are compared |
+| `forced-success` | warn | yes — added `\|\| true`/`exit 0`/`--passWithNoTests` lines |
+| `weakened-config` | off | yes — added config lines; threshold deltas need removed+added lines |
+| `assertion-roulette` | off | only when the edit fragment contains the whole test |
+| `redundant-assertion` | off | only when the edit fragment contains the whole test |
+| `tests-not-run` | off | yes — added command lines that exclude tests |
+| `expected-from-sut` | off | yes — added assertion lines |
+| `negative-control-unrelated` | off | yes — added overly broad negative-control lines |
+
+The six shared ids (`tautological-assertion`, `gutted-test`, `swallowed-error`,
+`duplicate-test`, `mock-of-sut`, `over-mocking`) exist in both engines.
 
 Only added (`+`) lines trigger a finding; comments are stripped before
 counting. Inline bypass: `// test-guard: allow <reason>` (within +/-2 lines) or

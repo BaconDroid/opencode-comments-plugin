@@ -17,3 +17,10 @@ jobs:
       - run: bun run typecheck
       - run: bun test
       - run: bun run build
+      # Advisory only — NOT a required check. A stale or unreachable
+      # test-checker checkout must never block an unrelated PR.
+      - name: rule-id contract (advisory)
+        continue-on-error: true
+        run: |
+          git clone --depth 1 https://github.com/BaconDroid/test-checker.git ../test-checker
+          TC_REPO=../test-checker npm run check:rule-ids

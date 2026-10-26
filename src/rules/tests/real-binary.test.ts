@@ -53,6 +53,20 @@ const CASES: Case[] = [
     args: { content: "it('x', () => {\n  expect(1).toBe(1);\n});\n" },
   },
   {
+    // tc main 60e58e0 added allow-invalid; an invalid suppression marker must
+    // reach the user instead of being filtered as an unknown id.
+    rule: "allow-invalid",
+    tool: "edit",
+    filePath: "/work/tests/test_app.py",
+    base: "The file has been updated.",
+    args: {
+      oldString:
+        "def test_sums():\n    # test-checker: allow not-a-rule -- tracked upstream #12\n    assert add(1, 2) == 3\n",
+      newString:
+        "def test_sums():\n    # test-checker: allow not-a-rule -- tracked upstream #12\n    @pytest.mark.skip\n    assert add(1, 2) == 3\n",
+    },
+  },
+  {
     rule: "weakened-assertion",
     tool: "edit",
     filePath: "/work/tests/app.test.js",

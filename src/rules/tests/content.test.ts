@@ -443,8 +443,8 @@ test("the rule catalog exposes 18 ids in order with the documented defaults", ()
   expect(ADVISORY_RULES).toHaveLength(7)
 
   const checks = buildRuleChecks(false)
-  // 18 regex ids + 25 binary-only ids (6 ids are shared).
-  expect(Object.keys(checks)).toHaveLength(43)
+  // 18 regex ids + 33 binary ids - 6 shared ids.
+  expect(Object.keys(checks)).toHaveLength(45)
   expect(checks["forced-success"]).toBe("warn")
   expect(checks["mock-of-sut"]).toBe("warn")
   expect(checks["expected-from-sut"]).toBe("off")
