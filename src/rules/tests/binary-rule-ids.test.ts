@@ -149,6 +149,30 @@ test("every legacy config override reaches every alias target for off, warn and 
   }
 })
 
+test("the corrected empty-test and weakened-config mappings hit only their real signals", () => {
+  const schema = buildRuleChecks(false)
+
+  const empty = resolveRuleConfig(schema, {
+    envPrefix: "TEST_GUARD_",
+    options: { checks: { "empty-test": "off" } },
+    aliases: LEGACY_RULE_ALIASES,
+  })
+  expect(empty["gutted-test"]).toBe("off")
+  // empty-test never covered executable bodies that merely lack an assertion.
+  expect(empty["no-assertion"]).toBe("warn")
+
+  const weakened = resolveRuleConfig(schema, {
+    envPrefix: "TEST_GUARD_",
+    options: { checks: { "weakened-config": "off" } },
+    aliases: LEGACY_RULE_ALIASES,
+  })
+  expect(weakened["gate-weakened"]).toBe("off")
+  expect(weakened["harness-edited"]).toBe("off")
+  // No numeric tolerance or retry signal in the old regex rule.
+  expect(weakened["tolerance-broadened"]).toBe("warn")
+  expect(weakened["retry-added"]).toBe("warn")
+})
+
 test("an explicit current-id setting wins over a legacy alias", () => {
   const schema = buildRuleChecks(false)
   const explicit = resolveRuleConfig(schema, {

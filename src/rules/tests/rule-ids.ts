@@ -27,18 +27,18 @@ export const BINARY_RULE_IDS: readonly string[] = BINARY_RULE_ID_TABLE.rules
 // skip-focus-added -> skip-added, focus-added: the regex flagged `.skip` and `.only` together; the binary splits them.
 // tautological-assertion -> tautological-assertion, constant-assertion: the regex's always-true check also covered literal-vs-literal comparisons.
 // matcher-loosened -> weakened-assertion: a weaker matcher for the same assertion subject is the binary's diff-aware weakening rule.
-// empty-test -> no-assertion: a test body with no executable statement has no assertion to run.
+// empty-test -> gutted-test: the regex only flagged an empty/trivial body, which the binary reports as an emptied (gutted) test; it did not flag executable bodies that merely lack an assertion.
 // forced-success -> gate-weakened: forcing a command to pass weakens the test gate itself.
 // expected-from-sut -> expected-copied-from-actual: an expectation produced by the code under test copies the actual value.
-// weakened-config -> tolerance-broadened: lowered coverage/test thresholds broaden the tolerated failure surface.
+// weakened-config -> gate-weakened, harness-edited: the regex flagged gate bypasses (@ts-nocheck, --no-verify, ruff: noqa), coverage gates (fail_under=0 or lowered), and config files; it had no retry or numeric-tolerance pattern.
 export const LEGACY_RULE_ALIASES: Readonly<Record<string, readonly string[]>> = {
   "skip-focus-added": ["skip-added", "focus-added"],
   "tautological-assertion": ["tautological-assertion", "constant-assertion"],
   "matcher-loosened": ["weakened-assertion"],
-  "empty-test": ["no-assertion"],
+  "empty-test": ["gutted-test"],
   "forced-success": ["gate-weakened"],
   "expected-from-sut": ["expected-copied-from-actual"],
-  "weakened-config": ["tolerance-broadened"],
+  "weakened-config": ["gate-weakened", "harness-edited"],
 }
 
 export const DEFAULT_RULE_SEVERITY: Severity = "warn"

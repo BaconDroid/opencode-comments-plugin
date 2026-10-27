@@ -133,13 +133,21 @@ function excerptFromSource(change: ExtractedChange, line: number, fallback: stri
   return stripped.length > 0 ? stripped : fallback
 }
 
+// The test-checker's default gate is `medium`, so Low findings normally never
+// reach the plugin. Filter them again here: if the gate is ever lowered (or a
+// different binary emits Low), OpenCode must match Claude Code's default and
+// keep Low telemetry out of the agent's context.
+function isVisibleBinaryFinding(finding: TestCheckerFinding): boolean {
+  return (finding.confidence ?? "").trim().toLowerCase() !== "low"
+}
+
 function binaryToFindings(
   findings: TestCheckerFinding[],
   change: ExtractedChange,
   checks: Record<string, Severity>,
   sessionID: string,
 ): Finding[] {
-  return findings.map(finding => ({
+  return findings.filter(isVisibleBinaryFinding).map(finding => ({
     rule: finding.rule,
     filePath: change.filePath,
     line: finding.line,

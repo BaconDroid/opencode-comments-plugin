@@ -60,6 +60,23 @@ test("engine binary uses the binary findings when it succeeds", async () => {
   expect(result.findings?.some(finding => finding.rule === "skip-focus-added" && finding.severity === "warn")).toBe(true)
 })
 
+test("engine binary hides Low-confidence findings and keeps Medium/High", async () => {
+  const engine = createTestEngineAnalyzer(
+    () => engineConfig(),
+    async () => ({
+      kind: "findings",
+      findings: [
+        { file: "/work/a.test.ts", line: 2, rule: "weakened-assertion", message: "low telemetry", confidence: "low" },
+        { file: "/work/a.test.ts", line: 3, rule: "focus-added", message: "high signal", confidence: "high" },
+      ],
+    }),
+  )
+
+  const result = await engine.analyze(ctx(change("it.only('a', () => {\n  expect(1).toBe(1)\n})\n")))
+  expect(result.findings?.some(finding => finding.rule === "weakened-assertion")).toBe(false)
+  expect(result.findings?.some(finding => finding.rule === "focus-added")).toBe(true)
+})
+
 test("engine binary falls back to the regex rules when the binary is unavailable", async () => {
   const engine = createTestEngineAnalyzer(() => engineConfig(), async () => ({ kind: "fallback" }))
 

@@ -226,10 +226,15 @@ applies to every listed binary id unless that id is configured itself:
 | `skip-focus-added` | `skip-added`, `focus-added` | the regex flagged `.skip` and `.only` together; the binary splits them |
 | `tautological-assertion` | `tautological-assertion`, `constant-assertion` | the regex's always-true check also covered literal-vs-literal comparisons |
 | `matcher-loosened` | `weakened-assertion` | a weaker matcher for the same assertion subject is the binary's diff-aware weakening rule |
-| `empty-test` | `no-assertion` | a test body with no executable statement has no assertion to run |
+| `empty-test` | `gutted-test` | the regex only flagged an empty/trivial body, which the binary reports as an emptied test; it did not flag executable bodies that merely lack an assertion |
 | `forced-success` | `gate-weakened` | forcing a command to pass weakens the test gate itself |
 | `expected-from-sut` | `expected-copied-from-actual` | an expectation produced by the code under test copies the actual value |
-| `weakened-config` | `tolerance-broadened` | lowered coverage/test thresholds broaden the tolerated failure surface |
+| `weakened-config` | `gate-weakened`, `harness-edited` | the regex flagged gate bypasses (`@ts-nocheck`, `--no-verify`, `ruff: noqa`), coverage gates (`fail_under=0`/lowered), and config files; it had no retry or numeric-tolerance pattern |
+
+Findings are also gated by the binary's confidence: `low` is hidden by default,
+matching tc's default `medium` gate, so only `medium`/`high` findings reach the
+tool output (each is shown with its `(confidence: ...)`). The plugin re-applies
+that Low filter in case the binary's gate is lowered.
 
 The rule-id check is **advisory, not a required check**. CI runs it with
 `continue-on-error: true` after cloning tc main, so a stale checkout of the
@@ -271,7 +276,10 @@ all. All twelve are **legacy regex advisories**: they only run when the binary
 engine is unavailable (or `engine: "regex"` is forced). Most binary rules —
 `allow-invalid`, `config-edited`, `snapshot-regenerated`,
 `expected-copied-from-actual`, `harness-edited`, and others — have no regex
-fallback equivalent, so offline coverage is intentionally narrower.
+fallback equivalent, so offline coverage is intentionally narrower. The live
+hook only sends test-file changes to the binary, so the binary's
+harness/config-only ids (`config-edited`, `harness-edited`) do not surface
+through OpenCode today; they remain part of the contract for other consumers.
 
 | Regex id | Default | Detectable from an edit hook |
 |---|---|---|
