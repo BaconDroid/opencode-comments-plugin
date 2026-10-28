@@ -175,10 +175,12 @@ tests. It reuses the same tuple, under a sibling `test_guard` key:
 }
 ```
 
-Deterministic rules default to `warn`, advisory rules to `off`; `off` disables a
-rule. The test guard is advisory only: it never blocks and never rewrites the
-file. All internal guard errors are swallowed (fail-open), so the guard can never
-prevent the agent's action.
+Deterministic regex rules default to `warn`, advisory regex rules to `off`;
+every `test-checker` binary id defaults to `warn` because the binary already
+applies its own confidence gate. `off` disables a rule. The test guard is
+advisory only: it never blocks and never rewrites the file. All internal guard
+errors are swallowed (fail-open), so the guard can never prevent the agent's
+action.
 
 ### Detection engine
 
@@ -196,6 +198,52 @@ missing binary only degrades precision — never the guard's safety. Set
 deterministic regex engine. `TEST_CHECKER_VERSION` pins the binary version; the
 binary has no npm package, so an explicit version is the only offline source.
 
+The plugin resolves both binaries from its cache directory, **not from `PATH`**:
+
+- comment guard: `$XDG_CACHE_HOME/opencode-comments-plugin/bin/<version>/comment-checker`
+  (with `XDG_CACHE_HOME` unset, `~/.cache/...`)
+- test guard: `$XDG_CACHE_HOME/opencode-comments-plugin/test-checker/<version>/test-checker`
+
+This is deliberately different from the test-checker's own documented Claude
+Code/OpenCode hook command, which invokes `test-checker` by name and therefore
+resolves it from `PATH`; if that command is not on `PATH` the edit goes
+unchecked and the wrapper stays silent. The plugin never shells out by name, so
+a stale `PATH` cannot change which engine it uses.
+
+Rule ids are a generated contract with the binary. `src/rules/tests/binary-rule-ids.json`
+is rewritten from the test-checker README `## Rules` paragraph (33 ids at tc
+`60e58e0`) by `node scripts/generate-rule-ids.mjs`; point `TC_REPO` at a current
+checkout when the default `../test-checker` is stale or absent. Every binary id
+is enabled at `warn` because the binary has already applied its own confidence
+gate. `npm run check:rule-ids` regenerates in memory and exits non-zero on any
+diff, so a tc bump can be detected without rewriting the file.
+
+Older regex ids keep working through these aliases. An explicit legacy override
+applies to every listed binary id unless that id is configured itself:
+
+| legacy regex id | binary id(s) | why |
+|---|---|---|
+| `skip-focus-added` | `skip-added`, `focus-added` | the regex flagged `.skip` and `.only` together; the binary splits them |
+| `tautological-assertion` | `tautological-assertion`, `constant-assertion` | the regex's always-true check also covered literal-vs-literal comparisons |
+| `matcher-loosened` | `weakened-assertion` | a weaker matcher for the same assertion subject is the binary's diff-aware weakening rule |
+| `empty-test` | `gutted-test` | the regex only flagged an empty/trivial body, which the binary reports as an emptied test; it did not flag executable bodies that merely lack an assertion |
+| `forced-success` | `gate-weakened` | forcing a command to pass weakens the test gate itself |
+| `expected-from-sut` | `expected-copied-from-actual` | an expectation produced by the code under test copies the actual value |
+| `weakened-config` | `gate-weakened`, `harness-edited` | the regex flagged gate bypasses (`@ts-nocheck`, `--no-verify`, `ruff: noqa`), coverage gates (`fail_under=0`/lowered), and config files; it had no retry or numeric-tolerance pattern |
+
+Findings are also gated by the binary's confidence: `low` is hidden by default,
+matching tc's default `medium` gate, so only `medium`/`high` findings reach the
+tool output (each is shown with its `(confidence: ...)`). The plugin re-applies
+that Low filter in case the binary's gate is lowered.
+
+The rule-id check is **advisory, not a required check**. CI runs it with
+`continue-on-error: true` after cloning tc main, so a stale checkout of the
+test-checker repo cannot block an unrelated PR.
+
+The real-binary contract test is opt-in: set `TC_BINARY` to a local
+test-checker build, e.g.
+`TC_BINARY=/path/to/test-checker bun test src/rules/tests/real-binary.test.ts`.
+
 | Rule | Signal | Default |
 |---|---|---|
 | `protected-paths` | edit/delete of an existing test file (new files exempt) | warn |
@@ -209,7 +257,7 @@ binary has no npm package, so an explicit version is the only offline source.
 | `duplicate-test` | identical test bodies in the same file | warn |
 | `forced-success` | `\|\| true`, `exit 0`, `sys.exit(0)`, `process.exit(0)`, `continue-on-error: true`, `--passWithNoTests` | warn |
 | `mock-of-sut` | `vi`/`jest.mock` of the module under test, `spyOn` of an import from it, Python `patch` of it (JS/TS + Python only) | warn |
-| `over-mocking` | new mock identifiers (dummy/stub/mock/spy/fake) | off |
+| `over-mocking` | new mock identifiers (dummy/stub/mock/spy/fake) | warn (shared with the binary) |
 | `assertion-roulette` | several assertions with no message | off |
 | `redundant-assertion` | the same assertion repeated in one test | off |
 | `weakened-config` | `@ts-nocheck`, `--no-verify`, lowered `fail_under`/`cov-fail-under` | off |
@@ -219,6 +267,37 @@ binary has no npm package, so an explicit version is the only offline source.
 
 `mock-of-sut` is implemented only for JavaScript/TypeScript and Python: Go and
 Rust expose no reliable circular-mock idiom, so the rule never fires for them.
+
+#### Legacy regex-only ids
+
+Twelve regex ids are plugin-only (not shared with the binary): six map to a
+binary id through the alias table above, and six have no binary counterpart at
+all. All twelve are **legacy regex advisories**: they only run when the binary
+engine is unavailable (or `engine: "regex"` is forced). Most binary rules —
+`allow-invalid`, `config-edited`, `snapshot-regenerated`,
+`expected-copied-from-actual`, `harness-edited`, and others — have no regex
+fallback equivalent, so offline coverage is intentionally narrower. The live
+hook only sends test-file changes to the binary, so the binary's
+harness/config-only ids (`config-edited`, `harness-edited`) do not surface
+through OpenCode today; they remain part of the contract for other consumers.
+
+| Regex id | Default | Detectable from an edit hook |
+|---|---|---|
+| `protected-paths` | warn | yes — any edit/delete of an existing test file |
+| `skip-focus-added` | warn | yes — added `.skip`/`.only`/ignore lines |
+| `empty-test` | warn | only when the edit fragment contains the whole test |
+| `unknown-test` | warn | only when the edit fragment contains the whole test |
+| `matcher-loosened` | warn | yes — removed and added matcher lines are compared |
+| `forced-success` | warn | yes — added `\|\| true`/`exit 0`/`--passWithNoTests` lines |
+| `weakened-config` | off | yes — added config lines; threshold deltas need removed+added lines |
+| `assertion-roulette` | off | only when the edit fragment contains the whole test |
+| `redundant-assertion` | off | only when the edit fragment contains the whole test |
+| `tests-not-run` | off | yes — added command lines that exclude tests |
+| `expected-from-sut` | off | yes — added assertion lines |
+| `negative-control-unrelated` | off | yes — added overly broad negative-control lines |
+
+The six shared ids (`tautological-assertion`, `gutted-test`, `swallowed-error`,
+`duplicate-test`, `mock-of-sut`, `over-mocking`) exist in both engines.
 
 Only added (`+`) lines trigger a finding; comments are stripped before
 counting. Inline bypass: `// test-guard: allow <reason>` (within +/-2 lines) or
@@ -304,11 +383,16 @@ tampercheck Apache-2.0, pr-test-guard MIT and veredicto up to v0.3.3). Other
 languages are ignored by the test guard rather than matched with unvalidated
 rules.
 
-Known limits: the default `test-checker` binary is AST-grade (tree-sitter), but
+### Known limits
+
+The default `test-checker` binary is AST-grade (tree-sitter), but
 the regex fallback that runs when it is unavailable can misread a test
 declaration written inside a string or a regex literal — use the opt-in external
 parser adapter for AST-grade precision without the binary. Cross-file duplicate
 detection runs in the audit/CI paths, not the live per-file hook.
+
+`config-edited` is not detected in OpenCode because the plugin forwards only
+test files, so edits to `.test-checker.json` are protected only in Claude Code.
 
 ## Debug
 

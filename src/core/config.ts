@@ -120,6 +120,9 @@ export interface RuleConfigSources {
   envPrefix: string
   options?: Record<string, unknown>
   config?: Record<string, unknown>
+  // Legacy rule id -> current rule ids. An explicit override on a legacy id
+  // also applies to its current ids unless those were configured themselves.
+  aliases?: Readonly<Record<string, readonly string[]>>
 }
 
 // Resolves a map of rule id -> severity. Defaults come from the schema; each
@@ -131,16 +134,27 @@ export function resolveRuleConfig(
 ): Record<string, Severity> {
   const optionsChecks = asRecord(sources.options?.checks)
   const configChecks = asRecord(sources.config?.checks)
-  const resolved: Record<string, Severity> = {}
 
-  for (const [rule, fallback] of Object.entries(schema)) {
+  function explicitLevel(rule: string): Severity | undefined {
     const envKey = `${sources.envPrefix}CHECK_${rule.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`
-    const level =
+    return (
       asLevel(process.env[envKey]) ??
       asLevel(optionsChecks?.[rule]) ??
-      asLevel(configChecks?.[rule]) ??
-      fallback
-    resolved[rule] = level
+      asLevel(configChecks?.[rule])
+    )
+  }
+
+  const resolved: Record<string, Severity> = {}
+  for (const [rule, fallback] of Object.entries(schema)) {
+    resolved[rule] = explicitLevel(rule) ?? fallback
+  }
+
+  for (const [legacy, targets] of Object.entries(sources.aliases ?? {})) {
+    const level = explicitLevel(legacy)
+    if (level === undefined) continue
+    for (const target of targets) {
+      if (explicitLevel(target) === undefined) resolved[target] = level
+    }
   }
 
   return resolved

@@ -60,6 +60,23 @@ test("engine binary uses the binary findings when it succeeds", async () => {
   expect(result.findings?.some(finding => finding.rule === "skip-focus-added" && finding.severity === "warn")).toBe(true)
 })
 
+test("engine binary hides Low-confidence findings and keeps Medium/High", async () => {
+  const engine = createTestEngineAnalyzer(
+    () => engineConfig(),
+    async () => ({
+      kind: "findings",
+      findings: [
+        { file: "/work/a.test.ts", line: 2, rule: "weakened-assertion", message: "low telemetry", confidence: "low" },
+        { file: "/work/a.test.ts", line: 3, rule: "focus-added", message: "high signal", confidence: "high" },
+      ],
+    }),
+  )
+
+  const result = await engine.analyze(ctx(change("it.only('a', () => {\n  expect(1).toBe(1)\n})\n")))
+  expect(result.findings?.some(finding => finding.rule === "weakened-assertion")).toBe(false)
+  expect(result.findings?.some(finding => finding.rule === "focus-added")).toBe(true)
+})
+
 test("engine binary falls back to the regex rules when the binary is unavailable", async () => {
   const engine = createTestEngineAnalyzer(() => engineConfig(), async () => ({ kind: "fallback" }))
 
@@ -100,6 +117,25 @@ test("engine binary reports did-not-run and still falls back to the regex rules"
   const result = await engine.analyze(ctx(change("it.only('a', () => {\n  expect(1).toBe(1)\n})\n")))
   expect(result.didNotRun).toBe("exited with code 1")
   expect(result.findings?.some(finding => finding.rule === "skip-focus-added")).toBe(true)
+})
+
+test("did-not-run suppresses the fallback protected-paths finding for the same change", async () => {
+  const engine = createTestEngineAnalyzer(
+    () => engineConfig({ checks: { "protected-paths": "warn" } }),
+    async () => ({ kind: "did-not-run", reason: "binary not found" }),
+  )
+  const edited = extractChange({
+    filePath: "/work/a.test.ts",
+    oldText: "it('a', () => {\n  expect(1).toBe(1)\n})\n",
+    newText: "it('a', () => {\n  expect(2).toBe(2)\n})\n",
+    isNew: false,
+    isDelete: false,
+  })
+
+  const result = await engine.analyze(ctx(edited))
+
+  expect(result.didNotRun).toBe("binary not found")
+  expect(result.findings?.some(finding => finding.rule === "protected-paths")).toBe(false)
 })
 
 // --- review fixes ---
