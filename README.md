@@ -383,11 +383,16 @@ tampercheck Apache-2.0, pr-test-guard MIT and veredicto up to v0.3.3). Other
 languages are ignored by the test guard rather than matched with unvalidated
 rules.
 
-Known limits: the default `test-checker` binary is AST-grade (tree-sitter), but
+### Known limits
+
+The default `test-checker` binary is AST-grade (tree-sitter), but
 the regex fallback that runs when it is unavailable can misread a test
 declaration written inside a string or a regex literal — use the opt-in external
 parser adapter for AST-grade precision without the binary. Cross-file duplicate
 detection runs in the audit/CI paths, not the live per-file hook.
+
+`config-edited` is not detected in OpenCode because the plugin forwards only
+test files, so edits to `.test-checker.json` are protected only in Claude Code.
 
 ## Debug
 
