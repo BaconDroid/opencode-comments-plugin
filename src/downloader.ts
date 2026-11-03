@@ -8,7 +8,7 @@ import { COMMENT_CHECKER_BINARY_NAME } from "./constants"
 
 const debugLog = createDebugLog("comment-checker:downloader", process.env.COMMENT_CHECKER_DEBUG === "1")
 
-const REPO = "code-yeongyu/go-claude-code-comment-checker"
+const REPO = "BaconDroid/comment-checker"
 const LATEST_URL = `https://github.com/${REPO}/releases/latest`
 const LATEST_TTL_MS = 24 * 60 * 60 * 1000
 const LATEST_CACHE_FILE = "latest.json"
@@ -262,7 +262,7 @@ export async function ensureCommentCheckerBinary(versionOverride?: string): Prom
 // caches under a SEPARATE subdirectory so the comment guard's `cleanupStaleCache`
 // (which only walks `bin/`) can never remove it.
 
-const TEST_REPO = "BaconDroid/go-claude-code-test-checker"
+const TEST_REPO = "BaconDroid/test-checker"
 const TEST_LATEST_URL = `https://github.com/${TEST_REPO}/releases/latest`
 
 export function getTestCheckerCacheDir(): string {

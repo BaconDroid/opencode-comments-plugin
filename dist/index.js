@@ -32,7 +32,7 @@ function createDebugLog(prefix, enabled) {
 
 // src/downloader.ts
 var debugLog = createDebugLog("comment-checker:downloader", process.env.COMMENT_CHECKER_DEBUG === "1");
-var REPO = "code-yeongyu/go-claude-code-comment-checker";
+var REPO = "BaconDroid/comment-checker";
 var LATEST_URL = `https://github.com/${REPO}/releases/latest`;
 var LATEST_TTL_MS = 24 * 60 * 60 * 1000;
 var LATEST_CACHE_FILE = "latest.json";
@@ -232,7 +232,7 @@ async function ensureCommentCheckerBinary(versionOverride) {
   }
   return downloadCommentChecker(version);
 }
-var TEST_REPO = "BaconDroid/go-claude-code-test-checker";
+var TEST_REPO = "BaconDroid/test-checker";
 var TEST_LATEST_URL = `https://github.com/${TEST_REPO}/releases/latest`;
 function getTestCheckerCacheDir() {
   const xdgCache = process.env.XDG_CACHE_HOME;
