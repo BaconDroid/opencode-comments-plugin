@@ -38,6 +38,8 @@ Then read the plugin side:
 
 - Binary name: `test-checker`.
 - Invocation: `test-checker [--prompt <text>]`, JSON on stdin, with a timeout.
+  UPDATE: the plugin invokes the binary with NO arguments (no `--prompt`) -
+  `src/cli.ts` runs `runProcess([binaryPath], { stdin, timeoutMs })`.
 - Input JSON: reuse the plugin's `HookInput` shape:
   `{ session_id, tool_name, transcript_path, cwd, hook_event_name, tool_input: { file_path?, content?, old_string?, new_string?, edits? }, tool_response? }`.
   The binary MAY read the file at `cwd`/`file_path` on disk to obtain the full
@@ -46,7 +48,13 @@ Then read the plugin side:
   - `0` = no findings;
   - `2` = findings (also print structured JSON on stdout);
   - any other exit code = ignored (fail-open).
-- Output (stdout, on exit 2): `{"findings":[{"file","line","rule","message","confidence"}]}` with `confidence` in `high|medium|low`, so the plugin renders findings with its existing severity/budget pipeline. (The comment side appends raw; the test side keeps structured findings — the ARCHITECTURE is unified, the output contract stays per guard.)
+- Output (stdout, on exit 2): `{"findings":[{"file","line","rule","message","confidence"}]}` with `confidence` in `high|medium|low`, so the plugin renders findings with its existing severity/budget pipeline. (The comment side appends raw; the test side keeps structured findings - the ARCHITECTURE is unified, the output contract stays per guard.)
+  UPDATE (as built): the contract above was inverted during integration. The
+  shipped parser reads `<findings file="...">` / `<finding line-number=...
+  rule=... confidence=...>` XML blocks from **stderr** on exit 2
+  (`src/cli.ts`, `parseTestCheckerFindings`), falling back to the regex rules
+  when nothing parses; stdout JSON is never read. (A stale test name saying
+  "stdout JSON" is the only leftover of the original contract.)
 - Cross-platform releases: `darwin|linux|windows` x `arm64|amd64`. Asset naming:
   `test-checker_v<version>_<os>_<arch>.<tar.gz|zip>` (Windows = zip).
 - Version resolution: GitHub `releases/latest` redirect `Location` header, tag
@@ -68,11 +76,16 @@ Deterministic (default severity `warn`):
 - `duplicate-test` — identical test bodies in the same file.
 
 Advisory (default severity `off`):
-- `over-mocking` — new mock identifiers (`dummy`/`stub`/`mock`/`spy`/`fake`).
-- `assertion-roulette` — several assertions with no message.
-- `redundant-assertion` — the same assertion repeated in one test.
-- `weakened-config` — `|| true`, `--passWithNoTests`, `@ts-nocheck`.
-- `tests-not-run` — a test command that excludes/skips tests.
+- `over-mocking` - new mock identifiers (`dummy`/`stub`/`mock`/`spy`/`fake`).
+- `assertion-roulette` - several assertions with no message.
+- `redundant-assertion` - the same assertion repeated in one test.
+- `weakened-config` - `|| true`, `--passWithNoTests`, `@ts-nocheck`.
+- `tests-not-run` - a test command that excludes/skips tests.
+
+UPDATE: the shipped regex engine also carries `forced-success`,
+`mock-of-sut`, `expected-from-sut` and `negative-control-unrelated`
+(`src/rules/tests/content.ts`), so the shipped catalog is larger than this
+original list.
 
 Languages: Python, JS/TS, Rust, Go. Ignore other languages (no unvalidated rules).
 Anti-false-positive semantics: only added (`+`) lines are candidates; comments are
@@ -98,6 +111,9 @@ guard. The two guards end up sharing the same binary-engine architecture.
   (e.g. `TEST_CHECKER_VERSION`). Keep the comment-checker path BYTE-IDENTICAL.
 - Add a `TestBinaryAnalyzer` (`trigger: "after"`, via `src/core/analyzer.ts`)
   that runs `test-checker` over the change and returns `Finding[]`.
+  UPDATE: as built this analyzer is `createTestEngineAnalyzer`
+  (`src/rules/tests/analyzer.ts`), covering the binary engine plus the regex
+  fallback.
 - Make the binary the default engine. Config: `test_guard.engine` with values
   `"binary"` (default) and `"regex"`, plus env `TEST_GUARD_ENGINE`. When the
   binary is unavailable (offline, unsupported platform, download failure), fall
@@ -107,6 +123,8 @@ guard. The two guards end up sharing the same binary-engine architecture.
 - Keep budget, severity resolution, grouping, `BLOCK BYPASSED` and rendering in
   `dispatch.after`; the analyzer only produces findings (same split as the
   comment binary via `createCommentBinaryAnalyzer`).
+  UPDATE (#51): `BLOCK BYPASSED` was removed with blocking; the split itself
+  shipped as designed (dispatch owns budget/severity/rendering).
 - Because the default engine changes, the test guard's observable output may
   change when the binary is present. Update the test-guard tests accordingly,
   but keep the regex fallback tests (they still cover the offline path) and add
@@ -117,9 +135,12 @@ guard. The two guards end up sharing the same binary-engine architecture.
 ## 7. Hard constraints (still non-negotiable)
 
 - Comment-guard observable output byte-identical (the comment tests are the contract). Only the TEST guard's engine may change.
+  UPDATE: the byte-identical constraint was later lifted by #52 (dedup default)
+  and #69 (did-not-run warning); the raw append itself is still preserved.
 - Never `throw` in `tool.execute.after`; append only.
 - Fail-open everywhere; the LLM judge stays advisory and disabled by default.
 - `warn` by default, `block` opt-in; no aggregate/coverage gate.
+  UPDATE (#51): `block` was deleted - severity is `off|warn` only.
 - Java stays removed.
 - Config lives in the plugin tuple; env > options > config-hook precedence.
 - Zero new npm dependency (the engine is a downloaded binary).

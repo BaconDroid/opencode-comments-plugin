@@ -18,6 +18,9 @@ comment guard or the test guard.
   `["opencode-comments-plugin", { comment_checker: {...}, test_guard: {...} }]`.
 - Hooks: `config`, `event` (`session.idle`), `permission.ask`,
   `tool.execute.before`, `tool.execute.after`, plus the custom `tool` map.
+  UPDATE (#51): `permission.ask` was removed from this plugin (no blocking
+  path); the shipped hooks are `config`, `event`, `tool.execute.before/after`
+  and the custom `tool` map.
 
 ## What to build
 
@@ -46,6 +49,7 @@ output, stop and report; do not weaken tests.
 6. Audit/CI consume the registry where it reduces duplication.
 
 Slices 4-5 are optional and require explicit approval before starting.
+UPDATE: both were approved and landed - #42 and #50.
 
 ## Per-slice rules
 
@@ -64,11 +68,14 @@ Slices 4-5 are optional and require explicit approval before starting.
 ## Hard constraints
 
 - Comment guard output byte-identical; the comment tests are the contract.
+  UPDATE: intentionally lifted by #52 (dedup default) and #69 (did-not-run
+  warning).
 - Never `throw` in `tool.execute.after`; append only (test marker / comment
   raw).
 - Config in the tuple; merge config-hook keys, never overwrite.
 - Zero new runtime dependency; cite origin (tool + license) of any ported motif.
 - `warn` by default, `block` opt-in; no aggregate/coverage gate.
+  UPDATE (#51): `block` was deleted - severity is `off|warn` only.
 - Fail-open everywhere; the LLM judge is advisory and disabled by default.
 - Java stays removed.
 

@@ -1,6 +1,8 @@
 # AI Test Guard - Build Plan
 
-Status: design frozen, not yet implemented.
+Status: design frozen, not yet implemented. UPDATE: superseded - the test guard
+shipped (PR #6 `ffd3dd1`, evolved through PR #70); this file is kept as the
+original design record.
 Scope: add a "test guard" to `opencode-comments-plugin`, reusing the existing
 comment-guard infrastructure, and improve the comment guard in return.
 
@@ -14,6 +16,9 @@ Companion file: `docs/plans/ai-test-guard-prompt.md` (execution prompt).
   per-session budget, tool-output feedback, apply_patch handling, external
   binary runner.
 - All content rules default to `warn`; `block` is opt-in per rule only.
+  UPDATE (#51): the `block` severity was deleted; severity is `off|warn` only
+  (`src/core/config.ts`), and `"block"` now fails `guard validate-config`
+  (`src/core/schema.ts`).
 - Fail-open: any internal guard error is swallowed and logged; it must never
   prevent the agent's action (quality guard, not a security guard).
 - Keep the comment guard behavior unchanged; `bun test` and
@@ -119,10 +124,14 @@ The plugin must coexist in the same host with `oh-my-opencode-slim`
 - Distinct package name / plugin id. Do not use `plugin` or `plugins` wrapper
   directory names (duplicate-id hard fail on v2 scan).
 - Always append to `output.output` with an idempotent marker; never replace it.
+  UPDATE: only the test guard uses the marker; the comment guard keeps a raw
+  append with no marker (unification decision 1, `src/core/feedback.ts`).
 - Never `throw` in `tool.execute.after`.
 - `tool.execute.before`: throw only when a rule explicitly configured as
   `block` matches. Tolerate normalized args (`filePath` / `path` /
   `file_path`; `patchText` / `patch`).
+  UPDATE (#51): `block` was deleted; there is no throw/permission path anymore
+  (severity is `off|warn`, the guard is advisory-only).
 - Config lives in the plugin tuple only. Never write to
   `oh-my-opencode-slim.json`. If a `config` hook is added, merge keys, do not
   overwrite (slim already sets `agent`, `mcp`, `default_agent`).
@@ -131,6 +140,8 @@ The plugin must coexist in the same host with `oh-my-opencode-slim`
 - v1 target. A v2 host would need a separate `setup(ctx)` (out of scope).
 - Add a smoke test loading both plugins and asserting tool output is not
   clobbered and warnings are not duplicated.
+  UPDATE: the shipped coexistence test fakes the other plugin's output instead
+  of loading it (`src/core/dispatch.test.ts`).
 
 ## 4. Architecture
 
@@ -153,6 +164,14 @@ src/
   rules/tests/      deterministic rules + patterns.ts (per-language regexes).
 ```
 
+UPDATE: the tree is the original sketch; the shipped `core/` also gained
+`analyzer`, `schema`, `ci`, `bypass`, `judge`, `mutation`, `parser-adapter`,
+`pending`, `idle-advisory`, `advisory-queue`, `result-pipeline`, `triggers`
+(`blocking.ts` existed between #6 and #51, then was deleted). API drift:
+`diff.ts` exposes `extractChange(raw)` plus `extractToolChange(tool, args,
+preimage)`, not `extractChange(tool, args, preimage)`; `budget.ts` lost
+`single-flight` (#35) and both guards now share `GuardBudget`.
+
 Rule factories are wrapped in a `safeCreateHook` equivalent (try/catch -> null)
 so a broken rule never kills the plugin.
 
@@ -160,6 +179,8 @@ so a broken rule never kills the plugin.
 
 All content rules default to `warn`. `protected-paths` is `warn` by default and
 `block` only when configured.
+UPDATE (#51): `block` no longer exists - severity is `off|warn` only and
+`"block"` fails `guard validate-config`.
 
 | id | deterministic signal | scope | default |
 |---|---|---|---|
@@ -178,6 +199,14 @@ All content rules default to `warn`. `protected-paths` is `warn` by default and
 | `weakened-config` | `|| true`, `--passWithNoTests`, `exit 0` near a test cmd, `continue-on-error: true`, `fail_under` lowered, `@ts-nocheck`, `# ruff: noqa` | delta | off |
 | `tests-not-run` | a test command is skipped on a required leg / all tests skipped | advisory | off |
 
+UPDATE: catalog drift since this plan - `net-assertion-loss` was removed in #20
+(`d5a802a`), so it is neither a rule nor a valid `checks` key today; the shipped
+regex engine also gained `forced-success`, `mock-of-sut`, `redundant-assertion`,
+`expected-from-sut` and `negative-control-unrelated`; `duplicate-test` checks
+identical bodies *in the same file* in the live hook (cross-file only in
+audit/CI); `over-mocking` defaults to `warn` because every test-checker binary
+id is enabled at `warn` (`src/rules/tests/index.ts`).
+
 Do not ship an aggregate "test smell count" gate (proven low precision). Do not
 gate on coverage. Do not use the OG/REF bug-validating category (needs an
 oracle/reference).
@@ -190,15 +219,23 @@ oracle/reference).
 - Net-delta semantics (`removed - added`), threshold >= 2 for assertion loss.
 - Cross-file move detection (a test re-added under the same title elsewhere
   cancels a `deleted-tests`).
+  UPDATE: never built - no `deleted-tests` rule id exists in `src/`; the shipped
+  equivalent cancels `gutted-test` on a moved test in `core/ci.ts`.
 - Exclude conditional skips (`skipif`, `skipIf/Unless`, `skip(...)` with args).
 - Subtract vacuous/trivial bodies so "replaced by vacuous" is not counted as
   coverage.
+  UPDATE: never built - no vacuity-subtraction logic exists in `src/`; only
+  `PLACEHOLDER_PATTERN` rejection (`src/rules/tests/patterns.ts`) is implemented.
 - Normalize expected values before diffing assertions (flag only skeleton
   edits with changed literals).
 - Anchor command patterns to a real test runner.
 - Downgrade ambiguous rules; never escalate them.
+  UPDATE (#51): severity is `off|warn` only - there is no higher severity to
+  escalate to; `block` was deleted along with the blocking/permission path.
 - Inline justification: `// test-guard: allow <reason>` (within +/-2 lines) and
   file-level `// test-guard-disable-file`. Log every bypass for the summary.
+  UPDATE: shipped (#29/#62); bypasses are surfaced in a footer via the shared
+  result pipeline - the `BLOCK BYPASSED` severity line was removed with #51.
 
 ## 7. Configuration
 
@@ -234,9 +271,16 @@ oracle/reference).
 
 Env: `TEST_GUARD_*` with the same precedence as `COMMENT_CHECKER_*`.
 
+UPDATE: the example is the original sketch - `"net-assertion-loss"` is no
+longer a rule (removed in #20, an unknown key would be ignored by
+`resolveRuleConfig`), and the schema now also accepts `engine`, `tools`,
+`append_prompt`, `judge` and `parser` (`src/core/schema.ts`).
+
 Add a JSON schema for the tuple options plus a `guard validate-config` path.
 `test_command` is auto-detected (package.json `scripts.test`, `pytest.ini`,
 `go.mod`, `Cargo.toml`, `pom.xml`) and overridable.
+UPDATE: the shipped detector also reads `pyproject.toml`, `build.gradle` and
+`build.gradle.kts` (`src/core/test-command.ts`).
 
 ## 8. Audit command (agent-executable)
 
@@ -287,14 +331,21 @@ Guardrails: read-only tool; report first, agent edits after; fail-open
 - Test-command detection/override (see section 7); never run destructive
   commands.
 - Baseline-green gate before any test removal/adjustment.
+  UPDATE: never built - the guard never runs the detected test command
+  (`src/core/test-command.ts` header: "The guard never runs the detected
+  command; it only reports it in audit output").
 - Secret/privacy: never log file content; log rule id + truncated excerpt;
   respect `.gitignore` and secret-file patterns.
+  UPDATE: not strictly true in debug mode - with `COMMENT_CHECKER_DEBUG=1` the
+  CLI logs the first 200 chars of the tool payload (`src/cli.ts`).
 - Performance caps: max file count, per-file timeout, bounded concurrency,
   exclude `node_modules`/vendored directories.
 - CI parity: expose the same engine as `opencode-comments-plugin guard check
   --diff` reusing `core/`, for pre-merge use.
 - Language matrix documented: Python, JS/TS, Rust, Go (from prior art); Java is
   experimental/unvalidated.
+  UPDATE: Java is not supported at all - there is no Java in `src/core/diff.ts`
+  (consistent with section 12 below, not with this line's original wording).
 - Bypass audit trail: list every `allow` / `disable-file` in the session
   summary.
 - Coexistence smoke test with `oh-my-opencode-slim`.
@@ -306,14 +357,21 @@ Guardrails: read-only tool; report first, agent edits after; fail-open
    Accept: `bun test` + `bun run typecheck` green; comment output identical.
 2. `protected-paths` (+ `core/glob.ts`). Accept: warns on existing test edit,
    exempts new files, `block` opt-in throws.
+   UPDATE (#51): no `block`/throw - severity is `off|warn` only.
 3. Deterministic content rules (`warn`): `skip-focus-added`,
    `tautological-assertion`, `empty-test`, `unknown-test`,
    `net-assertion-loss`, `matcher-loosened`, `swallowed-error`.
    Accept: each rule has positive + negative + anti-FP tests.
+   UPDATE: delivered except `net-assertion-loss`, removed in #20.
 4. Comment guard: pre-image read on `write` so only net-new comments are
    reported; reuse `hasNewContentOnly` + dedup.
+   UPDATE: the helper was built as `hasNewCommentLines`
+   (`src/rules/comments/index.ts`) - `hasNewContentOnly` never existed in this
+   repo; the dedup window was added later (#35) with a 30 s default (#52).
 5. `block` opt-in + `apply_patch` `type:"delete"` (test deletion) + bypass
    markers.
+   UPDATE (#51): the `block` opt-in half was deleted (severity is `off|warn`
+   only); the bypass markers and `type:"delete"` handling shipped.
 6. Advisory rules (`off`): `over-mocking`, `assertion-roulette`,
    `weakened-config`.
 7. `guard_audit` tool + `/guard-audit`.
@@ -322,6 +380,9 @@ Guardrails: read-only tool; report first, agent edits after; fail-open
 
 Acceptance for the whole plan: `bun test`, `bun run typecheck`, `bun run build`
 green; coexistence smoke test green; comment guard unchanged.
+UPDATE: all green as of #70; the "comment guard unchanged" clause was
+intentionally superseded later by #52 (dedup default) and #69 (did-not-run
+warning).
 
 ## 11. Verified vs assumed
 
@@ -332,11 +393,16 @@ verdicts on rule selection; slim compatibility findings; sub-agent bypass and
 
 Assumed: `net-assertion-loss` threshold; precision of our adapted regexes;
 home-grown Java rules; stability of experimental hooks.
+UPDATE: `net-assertion-loss` was removed in #20 and home-grown Java rules were
+never shipped (Java stays unsupported); both assumptions are moot.
 
 ## 12. Known limits
 
 - `block` is not airtight (sub-agents may bypass `tool.execute.before`, #5894).
+  UPDATE (#51): moot - `block` and the blocking/permission path were removed
+  entirely; the guard never blocks.
 - No deterministic detection of subtly wrong assertions or of an expected value
   aligned to the output under test (prior art reports 0/20).
 - Java unsupported by prior art; home rules unvalidated.
 - `net-assertion-loss` threshold is a heuristic, not empirical.
+  UPDATE: the rule was removed in #20 (`d5a802a`).

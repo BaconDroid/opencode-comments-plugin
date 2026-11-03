@@ -1,6 +1,8 @@
 # Analyzer Registry - Design and Plan
 
-Status: design proposed, not implemented.
+Status: design proposed, not implemented. UPDATE: superseded - implemented in
+PRs #41 (registry, `7a2a76b`), #42 (comment binary, `d114964`), #43 (audit/CI)
+and #50 (append helper, `63e0915`); this file is kept as the design record.
 Scope: unify the orchestration of every detector (deterministic rules, the
 comment binary, the opt-in external/model analyzers) behind one analyzer
 registry and one result pipeline, without changing the observable output of the
@@ -60,6 +62,8 @@ do not weaken tests to proceed.
 
 - `core/dispatch.ts`: `createTestGuard` owns `before`/`after`/`permission` and
   calls `runTestRules`; renders structured findings via `core/feedback`.
+  UPDATE: the `permission` hook was removed in #51 (advisory-only guard, no
+  blocking path); dispatch now consumes the shared test-engine analyzer.
 - `rules/comments/index.ts`: `createCommentGuard` owns its `before`/`after`,
   the binary call (`runCommentChecker`), the raw append, the budget and the
   bypass.
@@ -71,7 +75,11 @@ do not weaken tests to proceed.
   and `createAdvisoryTool`.
 - `index.ts`: the `session.idle` handler iterates a literal array
   `[mutation, judge, parser, commentJudge]`; tools are registered literally.
+  UPDATE: superseded by this plan's implementation - `index.ts` now runs the
+  registered idle analyzers through `AnalyzerRegistry.run("idle", ...)`.
 - `audit.ts` and `core/ci.ts` re-implement their own loops over files.
+  UPDATE: superseded by #43 - both now share the rule analyzer
+  (`createRuleAnalyzer` + `runAnalyzer`).
 
 ## 5. Design
 
@@ -104,6 +112,10 @@ interface Analyzer {
 }
 ```
 
+UPDATE (as built): `AnalyzerContext` has no `directory` field, and
+`AnalyzerResult` gained `didNotRun?: string` (the did-not-run warning, #69)
+alongside the fields above (`src/core/analyzer.ts`).
+
 ### 5.2 Registry
 
 ```ts
@@ -120,6 +132,8 @@ class AnalyzerRegistry {
 - `RuleAnalyzer`: wraps `runTestRules` for the test guard
   (`trigger: "after"`). Dispatch keeps ownership of budget, severity, grouping
   and `BLOCK BYPASSED`; the analyzer only produces findings.
+  UPDATE: `BLOCK BYPASSED` was removed with blocking in #51; as built,
+  dispatch registers `createTestEngineAnalyzer` (binary + regex) instead.
 - `CommentBinaryAnalyzer`: wraps `runCommentChecker` and returns `{ raw }`
   (`trigger: "after"`). The comment guard keeps its `before`, budget, bypass and
   raw append.
@@ -160,6 +174,10 @@ One renderer that takes `AnalyzerResult[]` and appends to `output.output`:
 
 Slices 4-5 are optional and must be explicitly approved before starting, because
 they touch the comment guard's observable output contract.
+UPDATE: both slices were approved and landed - #42 (comment binary through the
+registry) and #50 (shared append helper); slice 6 landed as #43, but `audit.ts`
+and `core/ci.ts` use the sync `runAnalyzer` + `createRuleAnalyzer`, not the
+registry itself.
 
 ## 7. Step-by-step execution rules
 
@@ -182,11 +200,14 @@ they touch the comment guard's observable output contract.
 
 - Comment guard observable output byte-identical (the original comment tests are
   the contract).
+  UPDATE: intentionally lifted by #52 (dedup default 0 -> 30 s) and extended by
+  #69 (did-not-run warning); the raw append itself is still preserved.
 - Never `throw` in `tool.execute.after`; append only, with the idempotent marker
   for the test guard and raw append for the comment guard.
 - Config in the plugin tuple; merge config-hook keys, never overwrite.
 - Zero new runtime dependency; cite origin (tool + license) of any ported motif.
 - `warn` by default, `block` opt-in; never gate on an aggregate or on coverage.
+  UPDATE (#51): `block` was deleted - severity is `off|warn` only.
 - Fail-open everywhere; the LLM judge is advisory and disabled by default.
 - Java stays removed.
 
@@ -199,6 +220,10 @@ guard non-regression suite. State any gap that could not be verified.
 ## 10. Open decisions
 
 - Whether to attempt slices 4-5 (comment guard through the pipeline) at all.
+  UPDATE: resolved - both landed (#42, #50).
 - Whether on-demand tools should be registry-driven or stay explicit.
+  UPDATE: stayed explicit (`src/index.ts` registers the tools directly).
 - Whether `audit.ts` / `core/ci.ts` should read the registry or keep their
   current loops.
+  UPDATE: they share the sync `runAnalyzer` + `createRuleAnalyzer` (#43), not
+  the async registry.

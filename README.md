@@ -76,6 +76,7 @@ Available options (all under `comment_checker`):
 | `paths` | string[] or CSV string | unset | Only check files matching these globs. Unset = every file. |
 | `timeout_ms` | number | `5000` | How long to wait for the CLI before ignoring it. |
 | `append_prompt` | string | unset | Opt-in text appended after the warning, keeping the default (or `custom_prompt`) message intact. |
+| `judge` | object | `{"enabled": false}` | Comment relevance judge: `enabled`, `model` (default `opencode/big-pickle`), `timeout_ms` (default `30000`). See [Comment relevance judge](#comment-relevance-judge-opt-in). |
 
 Keep the default CLI warning and add your own line to it, for example:
 
@@ -108,8 +109,8 @@ Every option can also be set (and overridden) through the environment, which alw
 
 - Runs on the tools in `tools` (`write`, `edit`, and `apply_patch` by default).
 - If the CLI detects comments, it appends the warning message to the tool output, so the model that called the tool reads it on its next turn. Nothing is blocked and the file is never rewritten.
-- Only comments introduced by the change are candidates: for `edit` and `apply_patch` the plugin passes the old and the new snippet, so a comment that was already on the changed lines is not reported; for `write` the whole new content is checked, because the hook cannot see the previous content (rewriting a file keeps flagging the comments it contains).
-- The `comment-checker` binary is resolved from the latest GitHub release (checked at most once a day), cached under `~/.cache/opencode-comments-plugin/bin/<version>/`, and downloaded on demand. If the network is unavailable it falls back to the cached or installed version.
+- Only comments introduced by the change are candidates: for `edit` and `apply_patch` the plugin passes the old and the new snippet, so a comment that was already on the changed lines is not reported; for `write` the plugin reads the previous on-disk content first and, when that previous content exists, skips the check when no comment line was added - rewriting a file does not re-flag the comments it already contained. When new comment lines are added, the whole new content is checked.
+- The `comment-checker` version is resolved from the latest GitHub release (checked at most once a day); offline it falls back to the previously cached release tag or the installed npm package's version. The binary for that version is downloaded on demand into `~/.cache/opencode-comments-plugin/bin/<version>/` only when neither the installed `@code-yeongyu/comment-checker` npm package (version match) nor the cache already has it - the exact order is listed under [Detection engine](#detection-engine).
 - Inline bypass: `// comment-guard: allow <reason>` within +/-2 lines of the added comments suppresses the file's warning; file-level `// comment-guard-disable-file` suppresses it outright. A suppressed or warned file with markers reports them under a "Comment guard bypass recorded" footer.
 
 ## Detection
@@ -164,7 +165,7 @@ tests. It reuses the same tuple, under a sibling `test_guard` key:
       "test_guard": {
         "enabled": true,
         "engine": "binary",
-        "test_patterns": ["**/*.test.*", "**/*_test.*", "**/test_*.py", "**/tests/**"],
+        "test_patterns": ["**/*.test.*", "**/*_test.*", "**/test_*.py", "**/tests/**", "**/__tests__/**", "**/*.spec.*"],
         "checks": { "protected-paths": "warn", "skip-focus-added": "warn" },
         "mutation": { "enabled": false, "command": "npx stryker run --reporters json", "timeout_ms": 120000 },
         "judge": { "enabled": false, "model": "opencode/big-pickle", "timeout_ms": 30000 },
@@ -198,11 +199,16 @@ missing binary only degrades precision — never the guard's safety. Set
 deterministic regex engine. `TEST_CHECKER_VERSION` pins the binary version; the
 binary has no npm package, so an explicit version is the only offline source.
 
-The plugin resolves both binaries from its cache directory, **not from `PATH`**:
+The plugin never spawns a binary by name from `PATH`; each binary is resolved to an absolute path in this order:
 
-- comment guard: `$XDG_CACHE_HOME/opencode-comments-plugin/bin/<version>/comment-checker`
-  (with `XDG_CACHE_HOME` unset, `~/.cache/...`)
-- test guard: `$XDG_CACHE_HOME/opencode-comments-plugin/test-checker/<version>/test-checker`
+- comment guard: the bundled binary inside the installed npm package
+  `@code-yeongyu/comment-checker` when its version matches the resolved release
+  version, otherwise the cache at
+  `$XDG_CACHE_HOME/opencode-comments-plugin/bin/<version>/comment-checker`
+  (with `XDG_CACHE_HOME` unset, `~/.cache/...`), downloading on demand
+- test guard: the cache only, at
+  `$XDG_CACHE_HOME/opencode-comments-plugin/test-checker/<version>/test-checker`
+  (the binary has no npm package), downloading on demand
 
 This is deliberately different from the test-checker's own documented Claude
 Code/OpenCode hook command, which invokes `test-checker` by name and therefore
@@ -272,8 +278,11 @@ Rust expose no reliable circular-mock idiom, so the rule never fires for them.
 
 Twelve regex ids are plugin-only (not shared with the binary): six map to a
 binary id through the alias table above, and six have no binary counterpart at
-all. All twelve are **legacy regex advisories**: they only run when the binary
-engine is unavailable (or `engine: "regex"` is forced). Most binary rules —
+all. All twelve are **legacy regex advisories**. In the live hook they run when
+the binary engine is unavailable or `engine: "regex"` is forced, and also for
+changes the binary engine does not handle - deletions and changes with empty
+new text - even when `engine: "binary"`. The audit and `guard check` paths always
+run the regex analyzer, whatever `engine` says. Most binary rules -
 `allow-invalid`, `config-edited`, `snapshot-regenerated`,
 `expected-copied-from-actual`, `harness-edited`, and others — have no regex
 fallback equivalent, so offline coverage is intentionally narrower. The live
@@ -369,8 +378,16 @@ auto-detected from `package.json`, `pytest.ini`/`pyproject.toml`, `go.mod`,
 ```bash
 opencode-comments-plugin guard check --diff [--base <rev>] [--scope tests|comments|both] [--json] [--include-advisory]
 opencode-comments-plugin guard validate-config [config.json]
-opencode-comments-plugin guard audit [--scope comments|tests|both] [--paths a,b] [--json]
+opencode-comments-plugin guard audit [--scope comments|tests|both] [--paths a,b] [--json] [--include-advisory]
 ```
+
+`guard validate-config` reads the tuple options object - the same object passed
+as the plugin's second tuple element (`{ "comment_checker": {...},
+"test_guard": {...} }`), not a full opencode config (a config containing
+`plugin` and other top-level keys would validate vacuously).
+
+`--include-advisory` includes advisory-severity rules in `check` and `audit`
+output (they are hidden by default).
 
 `guard check` exits non-zero when the diff trips a rule, so it can gate a PR.
 `--scope` defaults to `tests`; `comments` runs the comment-checker binary over
