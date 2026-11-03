@@ -50,7 +50,7 @@ Then point your OpenCode config at the built file:
 
 ## Configuration
 
-Options are passed as the second element of the plugin tuple. opencode calls the plugin with that object:
+Options are passed as the second element of the plugin tuple; the plugin reads them from its setup context (`ctx.options`):
 
 ```json
 {
@@ -60,7 +60,7 @@ Options are passed as the second element of the plugin tuple. opencode calls the
 }
 ```
 
-Why the tuple and not a top-level `comment_checker` key: opencode validates its config against a fixed schema, so unknown top-level keys are dropped before plugins see them. The tuple is the supported per-plugin channel; a top-level `comment_checker` block is still read if a future opencode version forwards it.
+Why the tuple and not a top-level `comment_checker` key: opencode validates its config against a fixed schema, so unknown top-level keys are dropped before plugins see them. The tuple is the supported per-plugin channel and the only one this plugin reads.
 
 A full `custom_prompt` example (the plugin's warning rewritten in simple English) is in [`examples/custom-prompt.json`](examples/custom-prompt.json), with the prompt itself explained in [`docs/comment-guidelines.md`](docs/comment-guidelines.md).
 
@@ -325,7 +325,7 @@ Env vars mirror the comment guard: `TEST_GUARD_ENABLED`,
 `TEST_GUARD_JUDGE_ENABLED`, `TEST_GUARD_JUDGE_MODEL`,
 `TEST_GUARD_JUDGE_TIMEOUT_MS`, `TEST_GUARD_PARSER_ENABLED`,
 `TEST_GUARD_PARSER_COMMAND`, `TEST_GUARD_PARSER_TIMEOUT_MS`, and
-`TEST_GUARD_CHECK_<RULE>` (env > tuple options > config hook).
+`TEST_GUARD_CHECK_<RULE>` (env > tuple options).
 `TEST_CHECKER_VERSION` pins the installed `test-checker` binary version.
 
 ### Mutation (opt-in, phase 2)

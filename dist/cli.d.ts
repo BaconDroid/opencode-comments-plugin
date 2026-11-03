@@ -1,4 +1,4 @@
-import type { CheckResult, HookInput, TestCheckerFinding } from "./types";
+import type { CheckResult, HookInput, TestCheckerFinding, TestCheckerResult } from "./types";
 export declare function commentHookInput(options: {
     sessionID: string;
     toolName: string;
@@ -22,4 +22,4 @@ export interface RunTestOptions {
     timeoutMs?: number;
 }
 export declare function parseTestCheckerFindings(stderr: string, fallbackFile?: string): TestCheckerFinding[] | null;
-export declare function runTestChecker(input: HookInput, options?: RunTestOptions): Promise<TestCheckerFinding[] | null>;
+export declare function runTestChecker(input: HookInput, options?: RunTestOptions): Promise<TestCheckerResult>;

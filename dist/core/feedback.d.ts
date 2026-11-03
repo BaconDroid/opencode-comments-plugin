@@ -7,6 +7,7 @@ export interface Finding {
     message: string;
     severity: Severity;
     excerpt: string;
+    confidence?: string;
 }
 export interface FeedbackOptions {
     customPrompt?: string;
@@ -19,6 +20,7 @@ export declare function renderFeedback(findings: Finding[], options?: FeedbackOp
 export declare function appendGuardMessage(output: {
     output: string;
 }, message: string, marker?: string): void;
+export declare function didNotRunMessage(tool: string, reason: string): string;
 export declare function appendFeedback(output: {
     output: string;
 }, message: string): void;

@@ -1,4 +1,9 @@
 // @bun
+// src/index.ts
+import { tool as tool3 } from "@opencode-ai/plugin";
+import { Plugin } from "@opencode/plugin";
+import { isAbsolute as isAbsolute3, join as join6 } from "path";
+
 // src/constants.ts
 var COMMENT_CHECKER_EVENT = "PostToolUse";
 var APPLY_PATCH_TOOL_NAME = "apply_patch";
@@ -517,15 +522,22 @@ function startBackgroundInit() {
     debugLog2("background init error:", err);
   });
 }
+function firstLine(text) {
+  return text.trim().split(`
+`)[0]?.trim() ?? "";
+}
+function didNotRunComment(reason) {
+  return { hasComments: false, message: "", didNotRun: { reason } };
+}
 async function runCommentChecker(input, options = {}) {
   const binaryPath = options.cliPath ?? resolvedCliPath ?? getCommentCheckerPathSync();
   if (!binaryPath) {
     debugLog2("comment-checker binary not found");
-    return { hasComments: false, message: "" };
+    return didNotRunComment("binary not found");
   }
   if (!existsSync2(binaryPath)) {
     debugLog2("comment-checker binary does not exist:", binaryPath);
-    return { hasComments: false, message: "" };
+    return didNotRunComment(`binary not found at ${binaryPath}`);
   }
   const jsonInput = JSON.stringify(input);
   debugLog2("running comment-checker with input:", jsonInput.substring(0, 200));
@@ -536,7 +548,7 @@ async function runCommentChecker(input, options = {}) {
   const outcome = await runProcess(args, { stdin: jsonInput, timeoutMs: options.timeoutMs });
   if (outcome === "timeout") {
     debugLog2("comment-checker abandoned after timeout or stream failure");
-    return { hasComments: false, message: "" };
+    return didNotRunComment("timed out or could not be spawned");
   }
   const { stdout, stderr, exitCode } = outcome;
   debugLog2("exit code:", exitCode, "stdout length:", stdout.length, "stderr length:", stderr.length);
@@ -547,7 +559,8 @@ async function runCommentChecker(input, options = {}) {
     return { hasComments: true, message: stderr };
   }
   debugLog2("unexpected exit code:", exitCode, "stderr:", stderr);
-  return { hasComments: false, message: "" };
+  const detail = firstLine(stderr);
+  return didNotRunComment(`exited with code ${exitCode}${detail ? `: ${detail}` : ""}`);
 }
 function findTestCheckerPathSync() {
   const version = getPreferredTestCheckerVersionSync();
@@ -642,11 +655,13 @@ function parseTestCheckerFindings(stderr, fallbackFile) {
         continue;
       const lineValue = Number(attributes["line-number"]);
       const message = finding[3] !== undefined ? decodeXml(finding[3]).trim() : "";
+      const confidence = attributes.confidence;
       findings.push({
         file,
         line: Number.isFinite(lineValue) ? lineValue : 0,
         rule,
-        message
+        message,
+        ...confidence ? { confidence } : {}
       });
     }
   }
@@ -654,30 +669,36 @@ function parseTestCheckerFindings(stderr, fallbackFile) {
 }
 async function runTestChecker(input, options = {}) {
   const binaryPath = options.cliPath ?? resolvedTestCliPath ?? getTestCheckerPathSync();
-  if (!binaryPath || !existsSync2(binaryPath)) {
+  if (!binaryPath) {
     debugLog2("test-checker binary not found");
-    return null;
+    return { kind: "did-not-run", reason: "binary not found" };
+  }
+  if (!existsSync2(binaryPath)) {
+    debugLog2("test-checker binary does not exist:", binaryPath);
+    return { kind: "did-not-run", reason: `binary not found at ${binaryPath}` };
   }
   const jsonInput = JSON.stringify(input);
   debugLog2("running test-checker with input:", jsonInput.substring(0, 200));
   const outcome = await runProcess([binaryPath], { stdin: jsonInput, timeoutMs: options.timeoutMs });
   if (outcome === "timeout") {
     debugLog2("test-checker abandoned after timeout or stream failure");
-    return null;
+    return { kind: "did-not-run", reason: "timed out or could not be spawned" };
   }
   const { stdout, stderr, exitCode } = outcome;
   debugLog2("test-checker exit code:", exitCode, "stdout length:", stdout.length, "stderr length:", stderr.length);
   if (exitCode === 0)
-    return [];
+    return { kind: "findings", findings: [] };
   if (exitCode !== 2) {
     debugLog2("unexpected test-checker exit code:", exitCode, "stderr:", stderr);
-    return null;
+    const detail = firstLine(stderr);
+    return { kind: "did-not-run", reason: `exited with code ${exitCode}${detail ? `: ${detail}` : ""}` };
   }
   const findings = parseTestCheckerFindings(stderr, input.tool_input.file_path);
   if (findings === null) {
     debugLog2("no parseable <finding> in test-checker stderr; falling back");
+    return { kind: "fallback" };
   }
-  return findings;
+  return { kind: "findings", findings };
 }
 
 // src/core/config.ts
@@ -748,11 +769,22 @@ function resolveOption(coerce, envKey, key, inputs) {
 function resolveRuleConfig(schema, sources) {
   const optionsChecks = asRecord(sources.options?.checks);
   const configChecks = asRecord(sources.config?.checks);
+  function explicitLevel(rule) {
+    const envKey = `${sources.envPrefix}CHECK_${rule.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
+    return asLevel(process.env[envKey]) ?? asLevel(optionsChecks?.[rule]) ?? asLevel(configChecks?.[rule]);
+  }
   const resolved = {};
   for (const [rule, fallback] of Object.entries(schema)) {
-    const envKey = `${sources.envPrefix}CHECK_${rule.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
-    const level = asLevel(process.env[envKey]) ?? asLevel(optionsChecks?.[rule]) ?? asLevel(configChecks?.[rule]) ?? fallback;
-    resolved[rule] = level;
+    resolved[rule] = explicitLevel(rule) ?? fallback;
+  }
+  for (const [legacy, targets] of Object.entries(sources.aliases ?? {})) {
+    const level = explicitLevel(legacy);
+    if (level === undefined)
+      continue;
+    for (const target of targets) {
+      if (explicitLevel(target) === undefined)
+        resolved[target] = level;
+    }
   }
   return resolved;
 }
@@ -1181,7 +1213,8 @@ function truncateExcerpt(excerpt, max) {
 function formatFindings(findings, maxExcerpt = 80) {
   return findings.map((finding) => {
     const location = `${finding.filePath}:${finding.line}`;
-    return `- [${finding.severity}] ${finding.rule} (${location}): ${finding.message}
+    const confidence = finding.confidence ? ` (confidence: ${finding.confidence})` : "";
+    return `- [${finding.severity}] ${finding.rule} (${location}): ${finding.message}${confidence}
   > ${truncateExcerpt(finding.excerpt, maxExcerpt)}`;
   }).join(`
 `);
@@ -1207,6 +1240,10 @@ ${marker}
 ${message}` : `
 
 ${message}`;
+}
+function didNotRunMessage(tool, reason) {
+  return `${tool} did not run \u2014 nothing checked this write.
+${reason}`;
 }
 function appendFeedback(output, message) {
   appendGuardMessage(output, message, TEST_GUARD_MARKER);
@@ -2303,6 +2340,78 @@ var ADVISORY_RULES = [
   expectedFromSUTRule,
   negativeControlUnrelatedRule
 ];
+// src/rules/tests/binary-rule-ids.json
+var binary_rule_ids_default = {
+  source: "BaconDroid/test-checker",
+  ref: "60e58e0bee091490ef194a5995d1964938839ab8",
+  rules: [
+    "skip-added",
+    "focus-added",
+    "assertion-removed",
+    "test-removed",
+    "gutted-test",
+    "no-assertion",
+    "tautological-assertion",
+    "constant-assertion",
+    "weakened-assertion",
+    "swallowed-error",
+    "incomplete-assertion",
+    "unawaited-assertion",
+    "broad-exception",
+    "mock-of-sut",
+    "over-mocking",
+    "duplicate-test",
+    "expected-copied-from-actual",
+    "snapshot-regenerated",
+    "tolerance-broadened",
+    "conditional-assertion",
+    "retry-added",
+    "agent-memo-test",
+    "allow-added",
+    "allow-invalid",
+    "config-edited",
+    "gate-weakened",
+    "commented-out-test",
+    "source-grep-test",
+    "test-volume",
+    "harness-edited",
+    "near-duplicate-test",
+    "echo-test",
+    "mirror-implementation-test"
+  ]
+};
+
+// src/rules/tests/rule-ids.ts
+var BINARY_RULE_ID_TABLE = binary_rule_ids_default;
+var BINARY_RULE_IDS = BINARY_RULE_ID_TABLE.rules;
+var LEGACY_RULE_ALIASES = {
+  "skip-focus-added": ["skip-added", "focus-added"],
+  "tautological-assertion": ["tautological-assertion", "constant-assertion"],
+  "matcher-loosened": ["weakened-assertion"],
+  "empty-test": ["gutted-test"],
+  "forced-success": ["gate-weakened"],
+  "expected-from-sut": ["expected-copied-from-actual"],
+  "weakened-config": ["gate-weakened", "harness-edited"]
+};
+var DEFAULT_RULE_SEVERITY = "warn";
+var KNOWN_RULE_IDS = new Set([
+  ...BINARY_RULE_IDS,
+  ...Object.keys(LEGACY_RULE_ALIASES),
+  ...Object.values(LEGACY_RULE_ALIASES).flat()
+]);
+function resolveRuleSeverity(checks, ruleId) {
+  const exact = checks[ruleId];
+  if (exact !== undefined)
+    return { severity: exact, known: true };
+  for (const [legacy, targets] of Object.entries(LEGACY_RULE_ALIASES)) {
+    if (!targets.includes(ruleId))
+      continue;
+    const aliased = checks[legacy];
+    if (aliased !== undefined)
+      return { severity: aliased, known: true };
+  }
+  return { severity: DEFAULT_RULE_SEVERITY, known: KNOWN_RULE_IDS.has(ruleId) };
+}
 
 // src/rules/tests/index.ts
 var ALL_TEST_RULES = [...DETERMINISTIC_RULES, ...ADVISORY_RULES];
@@ -2312,6 +2421,8 @@ function buildRuleChecks(includeAdvisory) {
     checks[rule.id] = "warn";
   for (const rule of ADVISORY_RULES)
     checks[rule.id] = includeAdvisory ? "warn" : "off";
+  for (const id of BINARY_RULE_IDS)
+    checks[id] = "warn";
   return checks;
 }
 function runTestRules(ctx) {
@@ -2337,6 +2448,19 @@ function runTestRules(ctx) {
 }
 
 // src/rules/tests/analyzer.ts
+var debugLog3 = createDebugLog("test-guard", process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1");
+var unknownRuleWarned = new Set;
+function severityFor(checks, ruleId, sessionID) {
+  const resolution = resolveRuleSeverity(checks, ruleId);
+  if (!resolution.known) {
+    const key = `${sessionID}\x00${ruleId}`;
+    if (!unknownRuleWarned.has(key)) {
+      unknownRuleWarned.add(key);
+      debugLog3(`unknown test-checker rule id "${ruleId}" \u2014 enabled at warn`);
+    }
+  }
+  return resolution.severity;
+}
 function createRuleAnalyzer(getConfig) {
   return {
     id: "test-rules",
@@ -2357,17 +2481,20 @@ function createRuleAnalyzer(getConfig) {
           maxWarningsPerFile: 0
         }
       });
-      return { findings: toFindings(result.findings, change.filePath, config.checks), bypasses: result.bypasses };
+      return {
+        findings: toFindings(result.findings, change.filePath, config.checks, ctx.sessionID),
+        bypasses: result.bypasses
+      };
     }
   };
 }
-function toFindings(findings, filePath, checks) {
+function toFindings(findings, filePath, checks, sessionID) {
   return findings.map((finding) => ({
     rule: finding.rule,
     filePath,
     line: finding.line,
     message: finding.message,
-    severity: checks[finding.rule] ?? "off",
+    severity: severityFor(checks, finding.rule, sessionID),
     excerpt: finding.excerpt
   }));
 }
@@ -2402,14 +2529,18 @@ function excerptFromSource(change, line, fallback) {
   const stripped = stripComments(lines[line - 1] ?? "", change.language).replace(/\s+/g, " ").trim();
   return stripped.length > 0 ? stripped : fallback;
 }
-function binaryToFindings(findings, change, checks) {
-  return findings.map((finding) => ({
+function isVisibleBinaryFinding(finding) {
+  return (finding.confidence ?? "").trim().toLowerCase() !== "low";
+}
+function binaryToFindings(findings, change, checks, sessionID) {
+  return findings.filter(isVisibleBinaryFinding).map((finding) => ({
     rule: finding.rule,
     filePath: change.filePath,
     line: finding.line,
     message: finding.message,
-    severity: checks[finding.rule] ?? "off",
-    excerpt: excerptFromSource(change, finding.line, finding.message)
+    severity: severityFor(checks, finding.rule, sessionID),
+    excerpt: excerptFromSource(change, finding.line, finding.message),
+    ...finding.confidence ? { confidence: finding.confidence } : {}
   }));
 }
 function createTestEngineAnalyzer(getConfig, run = runTestChecker) {
@@ -2426,16 +2557,24 @@ function createTestEngineAnalyzer(getConfig, run = runTestChecker) {
       const isTestFile = config.isTestFile ?? isTestPath(change.filePath, config.testPatterns);
       const useBinary = (config.engine ?? "binary") === "binary" && isTestFile && !change.isDelete && change.newText.trim().length > 0;
       if (useBinary) {
-        let binaryFindings = null;
+        let outcome = null;
         try {
-          binaryFindings = await run(buildTestCheckerInput(change, ctx));
+          outcome = await run(buildTestCheckerInput(change, ctx));
         } catch {
-          binaryFindings = null;
+          outcome = null;
         }
-        if (binaryFindings !== null) {
+        if (outcome?.kind === "findings") {
           return {
-            findings: binaryToFindings(binaryFindings, change, config.checks),
+            findings: binaryToFindings(outcome.findings, change, config.checks, ctx.sessionID),
             bypasses: collectBypasses2(change)
+          };
+        }
+        if (outcome?.kind === "did-not-run") {
+          const fallback = rules.analyze(ctx);
+          return {
+            ...fallback,
+            findings: (fallback.findings ?? []).filter((finding) => finding.rule !== "protected-paths"),
+            didNotRun: outcome.reason
           };
         }
       }
@@ -2445,7 +2584,8 @@ function createTestEngineAnalyzer(getConfig, run = runTestChecker) {
 }
 
 // src/core/dispatch.ts
-var debugLog3 = createDebugLog("test-guard", process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1");
+var debugLog4 = createDebugLog("test-guard", process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1");
+var unknownRuleWarned2 = new Set;
 var DEFAULT_TEST_GUARD = {
   enabled: true,
   testPatterns: [],
@@ -2453,11 +2593,12 @@ var DEFAULT_TEST_GUARD = {
   maxWarningsPerFile: 0,
   engine: "binary"
 };
-function createTestGuard(getResolved) {
+function createTestGuard(getResolved, deps = {}) {
   const budget = new GuardBudget;
   const pending = new PendingCallStore;
   const registry = new AnalyzerRegistry;
-  registry.register(createTestEngineAnalyzer(getResolved));
+  registry.register(createTestEngineAnalyzer(getResolved, deps.runTestChecker));
+  const didNotRunWarned = new Set;
   function resolve() {
     try {
       return getResolved();
@@ -2482,7 +2623,7 @@ function createTestGuard(getResolved) {
       }
       pending.set(input.callID, { args, preimage });
     } catch (err) {
-      debugLog3("before failed (fail-open):", err);
+      debugLog4("before failed (fail-open):", err);
     }
   }
   async function after(input, output) {
@@ -2513,6 +2654,7 @@ function createTestGuard(getResolved) {
         budget.setDedupWindowMs(resolved.dedupWindowMs ?? DEFAULT_DEDUP_WINDOW_MS);
         const findings = [];
         const bypassNotes = [];
+        let didNotRun;
         for (const change of changes) {
           const results = await registry.run("after", {
             tool: input.tool,
@@ -2526,9 +2668,11 @@ function createTestGuard(getResolved) {
               changeFindings.push(...result.findings);
             if (result.bypasses)
               changeBypasses.push(...result.bypasses);
+            if (result.didNotRun !== undefined)
+              didNotRun ??= result.didNotRun;
           }
           for (const bypass of changeBypasses) {
-            debugLog3("bypass", change.filePath, bypass);
+            debugLog4("bypass", change.filePath, bypass);
             bypassNotes.push(formatBypassNote(change.filePath, bypass));
           }
           const grouped = new Map;
@@ -2538,15 +2682,26 @@ function createTestGuard(getResolved) {
             grouped.set(finding.rule, list);
           }
           for (const [rule, ruleFindings] of grouped) {
-            const level = resolved.checks[rule] ?? "off";
-            if (level === "off")
+            const resolution = resolveRuleSeverity(resolved.checks, rule);
+            if (!resolution.known) {
+              const key = `${input.sessionID}\x00${rule}`;
+              if (!unknownRuleWarned2.has(key)) {
+                unknownRuleWarned2.add(key);
+                debugLog4(`unknown test-checker rule id "${rule}" \u2014 enabled at warn`);
+              }
+            }
+            if (resolution.severity === "off")
               continue;
             if (!budget.shouldEmit(input.sessionID, rule, change.filePath))
               continue;
             budget.record(input.sessionID, rule, change.filePath);
             for (const finding of ruleFindings)
-              findings.push(finding);
+              findings.push({ ...finding, severity: resolution.severity });
           }
+        }
+        if (didNotRun !== undefined && !didNotRunWarned.has(input.sessionID)) {
+          didNotRunWarned.add(input.sessionID);
+          parts.push(didNotRunMessage("test-checker", didNotRun));
         }
         let message = renderAnalyzerResults([{ findings }], {
           customPrompt: resolved.customPrompt,
@@ -2567,7 +2722,7 @@ ${footer}` : footer;
 
 `));
     } catch (err) {
-      debugLog3("after failed (fail-open):", err);
+      debugLog4("after failed (fail-open):", err);
     }
   }
   return { before, after };
@@ -3144,8 +3299,7 @@ function createMutationAdapter(options) {
 }
 
 // src/rules/comments/index.ts
-import { existsSync as existsSync5 } from "fs";
-var debugLog4 = createDebugLog("comment-guard", process.env.COMMENT_CHECKER_DEBUG === "1");
+var debugLog5 = createDebugLog("comment-guard", process.env.COMMENT_CHECKER_DEBUG === "1");
 var MATCHERS2 = bypassMatchers("comment-guard");
 function bypassState(newText, oldText, language) {
   const bypass = applyBypass(newText, MATCHERS2);
@@ -3171,34 +3325,45 @@ var COMMENT_RULE = "comment";
 function isCheckedPath(filePath, paths) {
   return matchPathFilter(paths, filePath);
 }
-function createCommentBinaryAnalyzer(getConfig) {
+function createCommentBinaryAnalyzer(getConfig, run = runCommentChecker, resolvePath = getCommentCheckerPath) {
   return {
     id: "comment-binary",
     trigger: "after",
     isEnabled: () => getConfig().enabled,
     analyze: async (ctx) => {
       const config = getConfig();
-      const cliPath = await getCommentCheckerPath();
-      if (!cliPath || !existsSync5(cliPath)) {
-        debugLog4("CLI not available, skipping comment check");
-        return {};
-      }
+      const cliPath = await resolvePath();
+      if (!cliPath)
+        debugLog5("comment-checker path not resolved; the engine will report did-not-run");
       const hookInput = commentHookInput({
         sessionID: ctx.sessionID,
         toolName: ctx.tool,
         cwd: process.cwd(),
         toolInput: ctx.args ?? {}
       });
-      const result = await runCommentChecker(hookInput, { prompt: config.customPrompt, timeoutMs: config.timeoutMs });
+      const result = await run(hookInput, {
+        cliPath: cliPath ?? undefined,
+        prompt: config.customPrompt,
+        timeoutMs: config.timeoutMs
+      });
+      if (result.didNotRun)
+        return { didNotRun: result.didNotRun.reason };
       return result.hasComments && result.message ? { raw: result.message } : {};
     }
   };
 }
-function createCommentGuard(getConfig) {
+function createCommentGuard(getConfig, deps = {}) {
   const pendingCalls = new PendingCallStore;
   const budget = new GuardBudget;
   const registry = new AnalyzerRegistry;
-  registry.register(createCommentBinaryAnalyzer(getConfig));
+  registry.register(createCommentBinaryAnalyzer(getConfig, deps.runCheck, deps.resolvePath));
+  const didNotRunWarned = new Set;
+  function warnDidNotRun(sessionID, output, reason) {
+    if (didNotRunWarned.has(sessionID))
+      return;
+    didNotRunWarned.add(sessionID);
+    appendGuardMessage(output, didNotRunMessage("comment-checker", reason));
+  }
   function hasNewCommentLines(preimage, content, filePath) {
     const language = detectLanguage(filePath);
     const { added } = diffLines(preimage, content);
@@ -3210,7 +3375,7 @@ function createCommentGuard(getConfig) {
       const filePath = toolInput.file_path ?? "";
       const bypass = bypassState(change.newText, change.oldText, detectLanguage(filePath));
       if (bypass.suppress) {
-        debugLog4("comment guard bypassed for", filePath);
+        debugLog5("comment guard bypassed for", filePath);
         if (bypass.notes.length > 0)
           appendGuardMessage(output, commentBypassFooter(filePath, bypass.notes));
         return;
@@ -3218,7 +3383,7 @@ function createCommentGuard(getConfig) {
       budget.setMaxWarningsPerFile(maxWarningsPerFile);
       budget.setDedupWindowMs(dedupWindowMs);
       if (!budget.shouldEmit(sessionID, COMMENT_RULE, filePath)) {
-        debugLog4("warning budget spent for", filePath);
+        debugLog5("warning budget spent for", filePath);
         return;
       }
       const results = await registry.run("after", {
@@ -3226,6 +3391,9 @@ function createCommentGuard(getConfig) {
         sessionID,
         args: toolInput
       });
+      const didNotRun = results.find((result) => result.didNotRun !== undefined)?.didNotRun;
+      if (didNotRun !== undefined)
+        warnDidNotRun(sessionID, output, didNotRun);
       const message = renderAnalyzerResults(results, { appendPrompt });
       if (message.length > 0) {
         budget.record(sessionID, COMMENT_RULE, filePath);
@@ -3234,17 +3402,17 @@ function createCommentGuard(getConfig) {
           appendGuardMessage(output, commentBypassFooter(filePath, bypass.notes));
       }
     } catch (err) {
-      debugLog4("comment check failed:", err);
+      debugLog5("comment check failed:", err);
     }
   }
   async function checkApplyPatch(sessionID, output) {
     if (output.output.toLowerCase().startsWith("error")) {
-      debugLog4("skipping due to tool failure in output");
+      debugLog5("skipping due to tool failure in output");
       return;
     }
     for (const change of extractPatchChanges(output.metadata)) {
       if (change.isDelete || change.newText.length === 0) {
-        debugLog4("no file path or no added lines in patch entry for apply_patch");
+        debugLog5("no file path or no added lines in patch entry for apply_patch");
         continue;
       }
       if (!isCheckedPath(change.filePath, getConfig().paths))
@@ -3268,11 +3436,11 @@ function createCommentGuard(getConfig) {
       pendingCalls.prune();
       const filePath = firstString(output.args, "filePath", "file_path", "path");
       if (!filePath) {
-        debugLog4("no filePath found for tool:", toolLower);
+        debugLog5("no filePath found for tool:", toolLower);
         return;
       }
       if (!isCheckedPath(filePath, getConfig().paths)) {
-        debugLog4("path not in comment_checker.paths; skipping:", filePath);
+        debugLog5("path not in comment_checker.paths; skipping:", filePath);
         return;
       }
       let preimage;
@@ -3281,7 +3449,7 @@ function createCommentGuard(getConfig) {
       }
       pendingCalls.set(input.callID, { args: output.args, preimage });
     } catch (err) {
-      debugLog4("before failed (fail-open):", err);
+      debugLog5("before failed (fail-open):", err);
     }
   }
   async function after(input, output) {
@@ -3303,7 +3471,7 @@ function createCommentGuard(getConfig) {
       budget.touch(input.sessionID);
       const isToolFailure = output.output.toLowerCase().startsWith("error");
       if (isToolFailure) {
-        debugLog4("skipping due to tool failure in output");
+        debugLog5("skipping due to tool failure in output");
         return;
       }
       const change = extractToolChange(toolLower, pendingCall.args, pendingCall.preimage);
@@ -3311,7 +3479,7 @@ function createCommentGuard(getConfig) {
         return;
       const filePath = firstString(pendingCall.args, "filePath", "file_path", "path") ?? "";
       if (toolLower === "write" && pendingCall.preimage !== undefined && !hasNewCommentLines(change.oldText, change.newText, filePath)) {
-        debugLog4("no new comment lines in write; skipping");
+        debugLog5("no new comment lines in write; skipping");
         return;
       }
       await reportComments(input.sessionID, toolLower.charAt(0).toUpperCase() + toolLower.slice(1), {
@@ -3322,7 +3490,7 @@ function createCommentGuard(getConfig) {
         edits: pendingCall.args.edits
       }, output, { oldText: change.oldText, newText: change.newText });
     } catch (err) {
-      debugLog4("after failed (fail-open):", err);
+      debugLog5("after failed (fail-open):", err);
     }
   }
   return { before, after };
@@ -3686,6 +3854,103 @@ var GUARD_AUDIT_COMMAND = {
 
 // src/index.ts
 var DEFAULT_TEST_CHECKS = buildRuleChecks(false);
+var V2_TOOL_ALIASES = {
+  patch: "apply_patch",
+  shell: "bash",
+  subagent: "task"
+};
+function canonicalToolName(name) {
+  return V2_TOOL_ALIASES[name.toLowerCase()] ?? name;
+}
+function canonicalToolList(value) {
+  if (typeof value === "string") {
+    return value.split(",").map((entry) => canonicalToolName(entry.trim())).filter((entry) => entry.length > 0).join(",");
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => typeof entry === "string" ? canonicalToolName(entry) : entry);
+  }
+  return value;
+}
+function canonicalizeOptions(options) {
+  if (!options || typeof options !== "object" || Array.isArray(options))
+    return options;
+  const source = options;
+  const normalized = { ...source };
+  if ("tools" in normalized)
+    normalized.tools = canonicalToolList(normalized.tools);
+  for (const key of ["comment_checker", "test_guard"]) {
+    const nested = normalized[key];
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      const record = nested;
+      if ("tools" in record)
+        normalized[key] = { ...record, tools: canonicalToolList(record.tools) };
+    }
+  }
+  return normalized;
+}
+var PATCH_STATUS_TO_TYPE = {
+  added: "add",
+  deleted: "delete",
+  modified: "update"
+};
+function canonicalPatchMetadata(metadata, directory) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata))
+    return metadata;
+  const record = metadata;
+  const files = record.files;
+  if (!Array.isArray(files))
+    return metadata;
+  return {
+    ...record,
+    files: files.map((file) => {
+      if (!file || typeof file !== "object" || Array.isArray(file))
+        return file;
+      const entry = file;
+      const status = typeof entry.status === "string" ? entry.status : undefined;
+      const path = typeof entry.file === "string" ? entry.file : undefined;
+      if (status === undefined && path === undefined)
+        return entry;
+      const mapped = { ...entry };
+      if (typeof mapped.type !== "string" && status !== undefined)
+        mapped.type = PATCH_STATUS_TO_TYPE[status];
+      if (typeof mapped.filePath !== "string" && path !== undefined) {
+        mapped.filePath = isAbsolute3(path) ? path : join6(directory, path);
+      }
+      return mapped;
+    })
+  };
+}
+function resultText(result) {
+  const content = result.content;
+  if (typeof content === "string")
+    return content;
+  if (Array.isArray(content)) {
+    let text = "";
+    for (const part of content) {
+      if (!part || typeof part !== "object")
+        continue;
+      const typed = part;
+      if (typed.type === "text" && typeof typed.text === "string")
+        text += typed.text;
+    }
+    return text;
+  }
+  return typeof result.output === "string" ? result.output : "";
+}
+function rewriteContent(content, before, after) {
+  if (after === before)
+    return content;
+  if (typeof content === "string")
+    return after;
+  if (!Array.isArray(content))
+    return after;
+  if (!after.startsWith(before))
+    return [{ type: "text", text: after }];
+  const delta = after.slice(before.length);
+  if (delta.length === 0)
+    return content;
+  return [...content, { type: "text", text: delta }];
+}
 var pluginOptions;
 var projectDirectory = process.cwd();
 var resolvedCommentConfig = {
@@ -3758,26 +4023,12 @@ function resolveTestGuardConfiguration(config) {
   resolvedTestGuard.checks = resolveRuleConfig(DEFAULT_TEST_CHECKS, {
     envPrefix: "TEST_GUARD_",
     options,
-    config: fromConfig
+    config: fromConfig,
+    aliases: LEGACY_RULE_ALIASES
   });
 }
-function registerAuditCommand(config) {
-  if (!config || typeof config !== "object" || Array.isArray(config))
-    return;
-  const record = config;
-  const commands = record.command;
-  if (commands && typeof commands === "object" && !Array.isArray(commands)) {
-    const map = commands;
-    if (!map["guard-audit"])
-      map["guard-audit"] = { ...GUARD_AUDIT_COMMAND };
-    return;
-  }
-  if (commands === undefined) {
-    record.command = { "guard-audit": { ...GUARD_AUDIT_COMMAND } };
-  }
-}
-var CommentCheckerPlugin = async (input, options) => {
-  pluginOptions = options;
+async function createHooks(input, options) {
+  pluginOptions = canonicalizeOptions(options);
   if (input && typeof input === "object" && "directory" in input && typeof input.directory === "string") {
     projectDirectory = input.directory;
   }
@@ -3815,11 +4066,6 @@ var CommentCheckerPlugin = async (input, options) => {
   analyzers.register(createIdleAnalyzer("comment-judge", commentJudge));
   const advisories = new AdvisoryQueue;
   return {
-    config: async (config) => {
-      resolveConfiguration(config);
-      resolveTestGuardConfiguration(config);
-      registerAuditCommand(config);
-    },
     tool: {
       guard_audit: auditTool,
       guard_judge: judgeTool,
@@ -3846,9 +4092,107 @@ var CommentCheckerPlugin = async (input, options) => {
       appendAdvisories(output, advisories.consume());
     }
   };
-};
+}
+var CommentCheckerPlugin = Plugin.define({
+  id: "opencode-comments-plugin",
+  async setup(ctx) {
+    const client = {
+      session: {
+        create: async () => ({ data: { id: "opencode-comments-plugin-judge" } }),
+        prompt: async (request) => {
+          const body = request?.body ?? {};
+          const system = typeof body.system === "string" ? body.system : "";
+          const parts = Array.isArray(body.parts) ? body.parts : [];
+          const user = parts.filter((part) => part && part.type === "text" && typeof part.text === "string").map((part) => part.text).join(`
+`);
+          const prompt = system.length > 0 ? `${system}
+
+${user}` : user;
+          const configured = body.model;
+          const model = configured && typeof configured === "object" && typeof configured.modelID === "string" ? { providerID: String(configured.providerID), id: configured.modelID } : undefined;
+          const response = await ctx.generate.text(model === undefined ? { prompt } : { prompt, model });
+          return { data: { parts: [{ type: "text", text: response?.text ?? "" }] } };
+        },
+        delete: async () => ({})
+      }
+    };
+    const hooks = await createHooks({ directory: ctx.location.directory, client }, ctx.options);
+    await ctx.tool.hook("execute.before", (event) => hooks["tool.execute.before"]?.({ tool: canonicalToolName(event.tool), sessionID: event.sessionID, callID: event.id }, { args: event.input ?? {} }));
+    await ctx.tool.hook("execute.after", async (event) => {
+      const input = { tool: canonicalToolName(event.tool), sessionID: event.sessionID, callID: event.id };
+      if (event.status === "error") {
+        const failure = `Error: ${event.error.message}`;
+        const output = { title: "", output: failure, metadata: {} };
+        await hooks["tool.execute.after"]?.(input, output);
+        const delta = output.output.slice(failure.length);
+        if (delta.length > 0) {
+          try {
+            event.error.message += delta;
+          } catch {}
+        }
+        return;
+      }
+      const result = event.result;
+      const before = resultText(result);
+      const output = {
+        title: "",
+        output: before,
+        metadata: canonicalPatchMetadata(result.metadata ?? {}, ctx.location.directory)
+      };
+      await hooks["tool.execute.after"]?.(input, output);
+      if (output.output !== before) {
+        event.result = { ...result, content: rewriteContent(result.content, before, output.output) };
+      }
+    });
+    await ctx.tool.transform((editor) => {
+      for (const [name, definition] of Object.entries(hooks.tool ?? {})) {
+        editor.add({
+          name,
+          description: definition.description,
+          input: tool3.schema.toJSONSchema(tool3.schema.object(definition.args)),
+          execute: async (args) => ({ content: await definition.execute(args) })
+        });
+      }
+    });
+    const controller = new AbortController;
+    (async () => {
+      try {
+        for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+          if (event.type !== "session.idle")
+            continue;
+          const sessionID = event.data?.sessionID ?? "";
+          try {
+            await hooks.event?.({ event: { type: event.type, properties: { sessionID } } });
+          } catch (error) {
+            console.error("[opencode-comments-plugin] idle advisory failed:", error);
+          }
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.error("[opencode-comments-plugin] event subscription failed:", error);
+        }
+      }
+    })();
+    const listed = await ctx.command.list();
+    const commands = Array.isArray(listed) ? listed : listed.data ?? [];
+    const taken = commands.some((command) => command?.name === "guard-audit");
+    if (!taken) {
+      await ctx.command.transform((editor) => {
+        editor.add({
+          name: "guard-audit",
+          description: GUARD_AUDIT_COMMAND.description,
+          execute: async ({ sessionID, prompt, delivery }) => {
+            await ctx.session.prompt({ ...prompt, sessionID, text: GUARD_AUDIT_COMMAND.template, delivery });
+          }
+        });
+      });
+    }
+    return () => controller.abort();
+  }
+});
 var src_default = CommentCheckerPlugin;
 export {
   CommentCheckerPlugin,
+  createHooks,
   src_default as default
 };
