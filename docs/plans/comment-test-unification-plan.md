@@ -1,6 +1,8 @@
 # Comment/test guard unification - plan and decisions
 
-Status: decisions frozen, implementation in progress.
+Status: decisions frozen, implementation in progress. UPDATE: no longer in
+progress - all six slices landed via squash-merged PRs #26-#31 (see section 7);
+this file is kept as a historical record.
 Scope: bring the comment guard and the test guard closer together on their
 shared `src/core/*` engine, without changing the observable behavior of the
 comment guard except where explicitly decided here.
@@ -24,16 +26,16 @@ test guard).
 |---|---|---|---|---|---|---|
 | config precedence `env > tuple > config` | yes (`COMMENT_CHECKER_*`) | yes (`TEST_GUARD_*`) | shared (`core/config`) | - | - | - |
 | JSON schema + `guard validate-config` | yes (`validateCommentChecker`) | yes | shared | already done | - | - |
-| global `enabled` | absent | yes | divergent | low value, not done | low | low |
+| global `enabled` | absent | yes | divergent | low value, not done - UPDATE: superseded by #37, `comment_checker.enabled` exists (README option table) | low | low |
 | per-rule severity `checks` | absent (binary always warns) | yes | divergent | not applicable | - | - |
 | trigger-tool filter | yes (`triggerTools`) | absent | divergent | add `test_guard.tools` | low | low |
 | pre-image read on `write` | yes (inline) | yes (inline) | duplicated | share a `core` helper | low | low |
-| net-new-only | `hasNewCommentLines` | `extractToolChange` | divergent | share `addedLinesOf` | low | low |
+| net-new-only | `hasNewCommentLines` | `extractToolChange` | divergent | share `addedLinesOf` - UPDATE: no `addedLinesOf` symbol was built; sharing happened via the shared `extractToolChange`/`changeTextsFromTool` helpers in `core/diff` (#46) | low | low |
 | `apply_patch` extraction | `splitPatch`/`toPatchEntries` | `extractPatchChanges` | divergent (same `core/diff`) | unify on `extractPatchChanges` | low | low |
-| budget max warnings/file | `warningCounts` | `GuardBudget` | duplicated | not unified (would change behavior) | medium | medium |
-| dedup window (30 s) | absent | yes | divergent | not added to comment (behavior) | medium | low |
+| budget max warnings/file | `warningCounts` | `GuardBudget` | duplicated | not unified (would change behavior) - UPDATE: superseded by #35, both guards share `GuardBudget` | medium | medium |
+| dedup window (30 s) | absent | yes | divergent | not added to comment (behavior) - UPDATE: superseded by #35 (dedup added to the comment guard, default 0) then #52 (default unified to 30 s for both) | medium | low |
 | pending-call TTL cleanup | yes | absent | divergent | add cleanup to the test guard | low | low |
-| feedback rendering | raw append | `renderFeedback` + `Finding` | divergent | not unified for the comment guard | medium | medium |
+| feedback rendering | raw append | `renderFeedback` + `Finding` | divergent | not unified for the comment guard - UPDATE: superseded by #42/#50, comment feedback now renders through the shared `renderAnalyzerResults` pipeline (message content still raw) | medium | medium |
 | idempotent marker | absent (kept) | yes | divergent | keep as-is (decision) | - | - |
 | rule registry | absent (binary) | `TestRule[]` | divergent | not applicable to a binary | - | - |
 | bypass markers | absent | `test-guard: allow` | divergent | add `comment-guard: allow` | low | medium |
@@ -46,6 +48,9 @@ test guard).
 
 1. **Comment marker**: keep the raw append. The 35 original tests are the
    contract; the observable output of the comment guard is unchanged.
+   UPDATE: the byte-identical constraint was intentionally lifted later - #52
+   changed the dedup default (0 -> 30 s), #69 added a did-not-run warning, and
+   the bypass footer (decision 4) also changed the output.
 2. **`test_guard.tools`**: add a configurable trigger-tool filter, mirroring
    `comment_checker.tools`. Default `write,edit,apply_patch`.
 3. **Comment idle analyzer**: add an opt-in comment relevance LLM judge, reusing
@@ -72,15 +77,25 @@ typecheck` + `bun run build`, then PR and squash merge.
 - Shared budget for the comment guard: the comment guard has no dedup window and
   its `max_warnings_per_file` semantics differ; unifying on `GuardBudget` would
   change observable output, which the decisions above do not authorize.
+  UPDATE: superseded by #35 - both guards now share `GuardBudget`, and #52
+  unified the dedup default (30 s) across them.
 - Shared feedback/`Finding` pipeline for the comment guard: same reason (raw
   append kept on purpose).
+  UPDATE: superseded by #42/#50 - the comment guard now renders through the
+  shared `renderAnalyzerResults` pipeline while keeping its raw message content
+  and marker-less append.
 - Unifying the rule registry: the comment guard delegates to an external binary,
   so there is no regex rule registry to merge.
 
 ## 6. Residual limits
 
 - Regex rules without AST (test guard); AST only through the opt-in parser.
+  UPDATE: superseded by #64 - the default engine is now the AST-grade
+  `test-checker` binary (`test_guard.engine: "binary"`), with the regex rules as
+  the offline fallback.
 - `block` is not airtight (sub-agents may bypass `tool.execute.before`).
+  UPDATE: superseded by #51 - the `block` severity and the blocking/permission
+  path were removed; severity is `off|warn` only and the guard never blocks.
 - Opt-in analyzers are per-session cooldown, fail-open, disabled by default.
 - The comment relevance judge, when enabled, sends the added comment lines to
   the configured model (the test judge sends the test diff).
@@ -93,6 +108,8 @@ All slices landed via squash-merged PRs:
 1. `test_guard.tools` configurable filter (#26).
 2. Test-guard pending-call TTL cleanup + drop dead `mutationEnabled` (#27).
 3. Shared `readPreimage` in `core/diff` (#28).
+   UPDATE: renamed to `readFileIfExists` in #58 (same body, still shared by
+   both guards).
 4. Comment `comment-guard: allow` / `comment-guard-disable-file` bypass (#29).
 5. Opt-in comment relevance judge + `guard_comment_judge` (#30).
 6. Comment guard reuses `extractPatchChanges` (#31).
