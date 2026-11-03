@@ -4,7 +4,7 @@ Stop the comment slop.
 
 OpenCode plugin that guards comments and tests: it warns when new comments or
 docstrings are added (wrapping the `comment-checker` CLI from
-`go-claude-code-comment-checker`) and ships a deterministic test guard that
+`BaconDroid/comment-checker`) and ships a deterministic test guard that
 discourages weakened tests. Both surface their findings in tool output.
 
 ## Origin and independence
@@ -187,7 +187,7 @@ action.
 The test guard detects through the downloaded `test-checker` binary by default
 (`test_guard.engine: "binary"`), mirroring how the comment guard uses the
 `comment-checker` binary. The binary is resolved from the latest GitHub release of
-`BaconDroid/go-claude-code-test-checker` (checked at most once a day), cached
+`BaconDroid/test-checker` (checked at most once a day), cached
 under `~/.cache/opencode-comments-plugin/test-checker/<version>/`, and downloaded
 on demand. It is AST-grade (tree-sitter) for Python, JS/TS, Rust and Go.
 

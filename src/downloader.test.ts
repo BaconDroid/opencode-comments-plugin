@@ -125,7 +125,7 @@ test("requests the versioned test-checker asset for this platform", async () => 
 
   expect(await downloadTestChecker()).toBe(null)
   expect(requested).toBe(
-    `https://github.com/BaconDroid/go-claude-code-test-checker/releases/download/v9.9.9/test-checker_v9.9.9_${platform[0]}_${platform[1]}.${ext}`,
+    `https://github.com/BaconDroid/test-checker/releases/download/v9.9.9/test-checker_v9.9.9_${platform[0]}_${platform[1]}.${ext}`,
   )
   delete process.env.TEST_CHECKER_VERSION
 })
@@ -169,7 +169,7 @@ test("resolves and caches the latest test-checker release from the redirect", as
     new Response(null, {
       status: 302,
       headers: {
-        location: "https://github.com/BaconDroid/go-claude-code-test-checker/releases/tag/v4.5.6",
+        location: "https://github.com/BaconDroid/test-checker/releases/tag/v4.5.6",
       },
     })) as unknown as typeof fetch
 
