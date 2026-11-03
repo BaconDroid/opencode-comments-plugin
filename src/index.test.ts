@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { APPLY_PATCH_TOOL_NAME } from "./constants"
-import { CommentCheckerPlugin } from "./index"
+import { CommentCheckerPlugin, createHooks } from "./index"
 import { TEST_GUARD_MARKER } from "./core/feedback"
 import { getCommentCheckerVersion } from "./downloader"
 import type { HookInput } from "./types"
@@ -67,7 +67,6 @@ type BeforeInput = { tool: string; sessionID: string; callID: string }
 type AfterOutput = { title: string; output: string; metadata: unknown }
 
 interface CommentCheckerHooks {
-  config?: (config: unknown) => Promise<void>
   event?: (input: { event: { type: string } }) => Promise<void>
   tool?: Record<string, unknown>
   "tool.execute.before": (input: BeforeInput, output: { args: Record<string, unknown> }) => Promise<void>
@@ -81,13 +80,107 @@ interface Invocation {
 
 const TOOL_AFTER_INPUT = { tool: "write", sessionID: "session-1", callID: "call-1" }
 
-const pluginFactory = CommentCheckerPlugin as unknown as (
+const pluginFactory = createHooks as unknown as (
   input: unknown,
   options?: unknown,
 ) => Promise<CommentCheckerHooks>
 
 async function newSession(options?: unknown): Promise<CommentCheckerHooks> {
   return await pluginFactory({}, options)
+}
+
+// --- V2 host harness --------------------------------------------------------
+//
+// Runs the real `setup` against a stand-in host context so the V2 adapters
+// (event shapes, tool names, patch metadata, command registration) are covered
+// without a running opencode server.
+
+function createHost(options?: unknown, existingCommands: { name: string; description?: string }[] = []) {
+  const hooks: Record<string, (event: any) => any> = {}
+  const tools: any[] = []
+  const commands: any[] = []
+  const prompts: any[] = []
+  const idles: string[] = []
+  let wake: (() => void) | undefined
+  let subscribeCalls = 0
+
+  const ctx = {
+    location: { directory: process.cwd() },
+    options: options ?? {},
+    generate: { text: async () => ({ text: "" }) },
+    session: {
+      prompt: async (input: any) => {
+        prompts.push(input)
+        return {}
+      },
+    },
+    tool: {
+      hook: async (name: string, callback: (event: any) => any) => {
+        hooks[name] = callback
+        return { dispose: async () => {} }
+      },
+      transform: async (callback: (editor: any) => void) => {
+        callback({
+          add: (definition: any) => tools.push(definition),
+          list: () => [],
+          get: () => undefined,
+          namespace: () => {},
+          update: () => {},
+          remove: () => {},
+        })
+        return { dispose: async () => {} }
+      },
+    },
+    command: {
+      list: async () => existingCommands,
+      transform: async (callback: (editor: any) => void) => {
+        callback({ add: (definition: any) => commands.push(definition) })
+        return { dispose: async () => {} }
+      },
+    },
+    event: {
+      subscribe: (subscribeOptions?: { signal?: AbortSignal }) => {
+        subscribeCalls += 1
+        const signal = subscribeOptions?.signal
+        return (async function* () {
+          while (!signal?.aborted) {
+            if (idles.length === 0) {
+              await new Promise<void>(resolve => {
+                wake = resolve
+                signal?.addEventListener("abort", () => resolve(), { once: true })
+              })
+              continue
+            }
+            yield { type: "session.idle", data: { sessionID: idles.shift() } }
+          }
+        })()
+      },
+    },
+  }
+
+  return {
+    ctx,
+    existingCommands,
+    tools,
+    commands,
+    prompts,
+    before: (event: any) => hooks["execute.before"]!(event),
+    after: (event: any) => hooks["execute.after"]!(event),
+    subscribeCalls: () => subscribeCalls,
+    pushIdle: (sessionID: string) => {
+      idles.push(sessionID)
+      wake?.()
+    },
+  }
+}
+
+async function newV2Session(
+  options?: unknown,
+  existingCommands?: { name: string; description?: string }[],
+): Promise<{ cleanup: (() => void) | void } & ReturnType<typeof createHost>> {
+  const host = createHost(options, existingCommands)
+  const cleanup = await (CommentCheckerPlugin as any).setup(host.ctx)
+  return { ...host, cleanup }
 }
 
 async function cliInvocations(): Promise<Invocation[]> {
@@ -206,9 +299,8 @@ test("ignores tools that do not write files", async () => {
   expect(await cliInvocations()).toHaveLength(0)
 })
 
-test("forwards the custom prompt from the comment_checker config", async () => {
-  const hooks = await newSession()
-  await hooks.config?.({ comment_checker: { custom_prompt: "DETECTED:\n{{comments}}\nFix it." } })
+test("forwards the custom prompt from the comment_checker options", async () => {
+  const hooks = await newSession({ comment_checker: { custom_prompt: "DETECTED:\n{{comments}}\nFix it." } })
   const output = writeOutput("Wrote file successfully.")
 
   await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// explain\n"))
@@ -218,9 +310,8 @@ test("forwards the custom prompt from the comment_checker config", async () => {
   expect(calls[0]!.args).toContain("--prompt")
   expect(calls[0]!.args).toContain("DETECTED:\n{{comments}}\nFix it.")
 })
-test("runs without a prompt when the config has none", async () => {
-  const hooks = await newSession()
-  await hooks.config?.({})
+test("runs without a prompt when the options have none", async () => {
+  const hooks = await newSession({})
   const output = writeOutput("Wrote file successfully.")
 
   await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// explain\n"))
@@ -231,8 +322,7 @@ test("runs without a prompt when the config has none", async () => {
 })
 
 test("stops warning about a file once max_warnings_per_file is reached", async () => {
-  const hooks = await newSession()
-  await hooks.config?.({ comment_checker: { max_warnings_per_file: 2, dedup_window_ms: 0 } })
+  const hooks = await newSession({ comment_checker: { max_warnings_per_file: 2, dedup_window_ms: 0 } })
   const session = "session-capped"
 
   for (let i = 0; i < 3; i++) {
@@ -255,8 +345,6 @@ test("stops warning about a file once max_warnings_per_file is reached", async (
   expect(otherSession.output).toContain("COMMENT/DOCSTRING DETECTED")
 
   expect((await cliInvocations()).length).toBe(4)
-
-  await hooks.config?.({})
 })
 
 test("reads max_warnings_per_file from the environment when the config cannot carry it", async () => {
@@ -283,8 +371,7 @@ test("reads max_warnings_per_file from the environment when the config cannot ca
 })
 
 test("warns without a limit when max_warnings_per_file is not configured", async () => {
-  const hooks = await newSession()
-  await hooks.config?.({ comment_checker: { dedup_window_ms: 0 } })
+  const hooks = await newSession({ comment_checker: { dedup_window_ms: 0 } })
 
   for (let i = 0; i < 4; i++) {
     const output = writeOutput("Wrote file successfully.")
@@ -638,20 +725,135 @@ test("registers the guard tools", async () => {
   expect(hooks.tool!.guard_comment_judge).toBeDefined()
 })
 
-test("registers the /guard-audit command without overwriting existing commands", async () => {
-  const hooks = await newSession()
-  const config: Record<string, unknown> = { command: { build: { template: "build it" } } }
-  await hooks.config?.(config)
-  const commands = config.command as Record<string, unknown>
-  expect(commands["guard-audit"]).toBeDefined()
-  expect(commands.build).toEqual({ template: "build it" })
+test("default export is a v2 plugin definition", () => {
+  const definition = CommentCheckerPlugin as unknown as { id?: string; setup?: unknown }
+  expect(definition.id).toBe("opencode-comments-plugin")
+  expect(typeof definition.setup).toBe("function")
 })
 
-test("adds the command map when the config has none", async () => {
-  const hooks = await newSession()
-  const config: Record<string, unknown> = {}
-  await hooks.config?.(config)
-  expect((config.command as Record<string, unknown>)["guard-audit"]).toBeDefined()
+test("registers the guard tools on the v2 tool domain", async () => {
+  const host = await newV2Session()
+  expect(host.tools.map(tool => tool.name)).toEqual([
+    "guard_audit",
+    "guard_judge",
+    "guard_parse",
+    "guard_comment_judge",
+  ])
+  for (const tool of host.tools) {
+    expect(tool.input).toMatchObject({ type: "object" })
+    expect(typeof tool.execute).toBe("function")
+  }
+
+  const judge = host.tools.find(tool => tool.name === "guard_judge")!
+  await expect(judge.execute({})).resolves.toMatchObject({ content: expect.stringContaining("disabled") })
+  host.cleanup?.()
+})
+
+test("registers the /guard-audit command without overwriting existing commands", async () => {
+  const host = await newV2Session(undefined, [{ name: "build", description: "build it" }])
+  expect(host.commands.map(command => command.name)).toEqual(["guard-audit"])
+  expect(host.existingCommands).toEqual([{ name: "build", description: "build it" }])
+  host.cleanup?.()
+})
+
+test("leaves an existing /guard-audit command alone", async () => {
+  const host = await newV2Session(undefined, [{ name: "guard-audit", description: "mine" }])
+  expect(host.commands).toHaveLength(0)
+  host.cleanup?.()
+})
+
+test("the /guard-audit command prompts the session with the audit template", async () => {
+  const host = await newV2Session()
+  const command = host.commands.find(entry => entry.name === "guard-audit")!
+  await command.execute({ sessionID: "session-audit", prompt: { text: "ignored" }, delivery: "steer" })
+
+  expect(host.prompts).toHaveLength(1)
+  expect(host.prompts[0]).toMatchObject({ sessionID: "session-audit", delivery: "steer" })
+  expect(host.prompts[0].text).toContain("guard_audit")
+  host.cleanup?.()
+})
+
+test("v2 execute.after appends the warning to result.content", async () => {
+  const host = await newV2Session()
+  const event: any = {
+    tool: "write",
+    sessionID: "session-v2",
+    agent: "build",
+    messageID: "message-v2",
+    id: "v2-write-1",
+    input: { path: "/tmp/v2-file.ts", content: "// explain\n" },
+    status: "completed",
+    result: { content: [{ type: "text", text: "Wrote file successfully." }], metadata: undefined },
+  }
+
+  await host.before(event)
+  await host.after(event)
+
+  expect(event.result.content).toEqual([
+    { type: "text", text: "Wrote file successfully." },
+    { type: "text", text: "\n\nCOMMENT/DOCSTRING DETECTED" },
+  ])
+  const calls = await cliInvocations()
+  expect(calls).toHaveLength(1)
+  expect(calls[0]!.input.tool_input.file_path).toBe("/tmp/v2-file.ts")
+  host.cleanup?.()
+})
+
+test("v2 execute.after maps the patch tool name and file metadata to the guard contract", async () => {
+  const host = await newV2Session({ comment_checker: { tools: ["apply_patch"] } })
+  const event: any = {
+    tool: "patch",
+    sessionID: "session-patch",
+    agent: "build",
+    messageID: "message-patch",
+    id: "v2-patch-1",
+    input: { patchText: "*** Begin Patch\n*** End Patch\n" },
+    status: "completed",
+    result: {
+      content: [{ type: "text", text: "Success. Updated the following files:\nM src/a.ts" }],
+      metadata: {
+        files: [
+          {
+            file: "src/a.ts",
+            status: "modified",
+            patch: "@@ -1 +1 @@\n-// old\n+// added by patch\n",
+            additions: 1,
+            deletions: 1,
+          },
+        ],
+      },
+    },
+  }
+
+  await host.before(event)
+  await host.after(event)
+
+  expect(event.result.content).toContainEqual({ type: "text", text: "\n\nCOMMENT/DOCSTRING DETECTED" })
+  const calls = await cliInvocations()
+  expect(calls).toHaveLength(1)
+  expect(calls[0]!.input.tool_input.file_path.endsWith("src/a.ts")).toBe(true)
+  expect(calls[0]!.input.tool_name).toBe("apply_patch")
+  host.cleanup?.()
+})
+
+test("v2 session.idle events reach the idle analyzers without touching a later result", async () => {
+  const host = await newV2Session({ comment_checker: { tools: ["none"] } })
+  expect(host.subscribeCalls()).toBe(1)
+  host.pushIdle("session-idle")
+
+  const event: any = {
+    tool: "bash",
+    sessionID: "session-idle",
+    agent: "build",
+    messageID: "message-idle",
+    id: "v2-idle-1",
+    input: { command: "true" },
+    status: "completed",
+    result: { content: [{ type: "text", text: "bash output" }], metadata: undefined },
+  }
+  await host.after(event)
+  expect(event.result.content).toEqual([{ type: "text", text: "bash output" }])
+  host.cleanup?.()
 })
 
 test("test guard warns on a focused test without clobbering the output", async () => {

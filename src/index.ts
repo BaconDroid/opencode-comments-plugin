@@ -1,4 +1,6 @@
-import type { Plugin } from "@opencode-ai/plugin"
+import { tool } from "@opencode-ai/plugin"
+import { Plugin } from "@opencode/plugin"
+import { isAbsolute, join } from "node:path"
 import { DEFAULT_CLI_TIMEOUT_MS, DEFAULT_DEDUP_WINDOW_MS, DEFAULT_TRIGGER_TOOLS } from "./constants"
 import { startBackgroundInit, startTestCheckerBackgroundInit } from "./cli"
 import {
@@ -29,9 +31,143 @@ import { buildRuleChecks } from "./rules/tests"
 import { LEGACY_RULE_ALIASES } from "./rules/tests/rule-ids"
 import { detectTestCommand } from "./core/test-command"
 import { createGuardAuditTool, GUARD_AUDIT_COMMAND } from "./audit"
+import type { ToolExecuteInput, ToolExecuteOutput } from "./types"
 
 // Single source of truth: deterministic rules warn, advisory rules are off.
 const DEFAULT_TEST_CHECKS = buildRuleChecks(false)
+
+// --- V2 host adapters -------------------------------------------------------
+//
+// The guards are written against the V1 hook contract (see `CommentCheckerHooks`)
+// and their tests pin that shape. `setup` is the only place that knows about the
+// V2 host event shapes; these helpers keep that translation in one spot.
+
+/** Arguments the factory needs from the host: the project directory and, for the
+ * opt-in judge, a client that can run one model prompt. */
+export interface PluginHooksInput {
+  directory?: string
+  client?: unknown
+}
+
+/** One custom tool as `tool({ description, args, execute })` builds it. */
+export interface GuardTool {
+  description: string
+  args: Parameters<typeof tool.schema.object>[0]
+  execute: (args: any, context?: any) => Promise<string>
+}
+
+/** The hook surface both guards are written against; unchanged from V1. */
+export interface CommentCheckerHooks {
+  tool?: Record<string, GuardTool>
+  event?: (input: { event: { type: string; properties?: { sessionID?: string } } }) => Promise<void>
+  "tool.execute.before"?: (input: ToolExecuteInput, output: { args: Record<string, unknown> }) => Promise<void>
+  "tool.execute.after"?: (input: ToolExecuteInput, output: ToolExecuteOutput) => Promise<void>
+}
+
+// V2 renamed three built-in tools. The guards, `DEFAULT_TRIGGER_TOOLS` and the
+// documented `tools` option all use the V1 names, so both sides are canonicalised.
+const V2_TOOL_ALIASES: Record<string, string> = {
+  patch: "apply_patch",
+  shell: "bash",
+  subagent: "task",
+}
+
+function canonicalToolName(name: string): string {
+  return V2_TOOL_ALIASES[name.toLowerCase()] ?? name
+}
+
+function canonicalToolList(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map(entry => canonicalToolName(entry.trim()))
+      .filter(entry => entry.length > 0)
+      .join(",")
+  }
+  if (Array.isArray(value)) {
+    return value.map(entry => (typeof entry === "string" ? canonicalToolName(entry) : entry))
+  }
+  return value
+}
+
+/** Accept either spelling of the `tools` option so one config works on both hosts. */
+function canonicalizeOptions(options: unknown): unknown {
+  if (!options || typeof options !== "object" || Array.isArray(options)) return options
+  const source = options as Record<string, unknown>
+  const normalized: Record<string, unknown> = { ...source }
+  if ("tools" in normalized) normalized.tools = canonicalToolList(normalized.tools)
+  for (const key of ["comment_checker", "test_guard"]) {
+    const nested = normalized[key]
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      const record = nested as Record<string, unknown>
+      if ("tools" in record) normalized[key] = { ...record, tools: canonicalToolList(record.tools) }
+    }
+  }
+  return normalized
+}
+
+const PATCH_STATUS_TO_TYPE: Record<string, string> = {
+  added: "add",
+  deleted: "delete",
+  modified: "update",
+}
+
+// V2's patch tool reports `metadata.files[]` as `{ file, status, ... }`; the
+// guards read the V1 `{ type, filePath, movePath, ... }` shape. Normalising at
+// the host boundary keeps `src/core/diff.ts` on a single contract.
+function canonicalPatchMetadata(metadata: unknown, directory: string): unknown {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return metadata
+  const record = metadata as Record<string, unknown>
+  const files = record.files
+  if (!Array.isArray(files)) return metadata
+  return {
+    ...record,
+    files: files.map(file => {
+      if (!file || typeof file !== "object" || Array.isArray(file)) return file
+      const entry = file as Record<string, unknown>
+      const status = typeof entry.status === "string" ? entry.status : undefined
+      const path = typeof entry.file === "string" ? entry.file : undefined
+      if (status === undefined && path === undefined) return entry
+      const mapped: Record<string, unknown> = { ...entry }
+      if (typeof mapped.type !== "string" && status !== undefined) mapped.type = PATCH_STATUS_TO_TYPE[status]
+      if (typeof mapped.filePath !== "string" && path !== undefined) {
+        mapped.filePath = isAbsolute(path) ? path : join(directory, path)
+      }
+      return mapped
+    }),
+  }
+}
+
+// The model-visible body of a V2 tool result (`result.content`) is the V1
+// `output.output` display string the guards append to. The host normalises it to
+// a content array before `execute.after` fires; a bare string is tolerated too.
+function resultText(result: { content?: unknown; output?: unknown }): string {
+  const content = result.content
+  if (typeof content === "string") return content
+  if (Array.isArray(content)) {
+    let text = ""
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue
+      const typed = part as { type?: unknown; text?: unknown }
+      if (typed.type === "text" && typeof typed.text === "string") text += typed.text
+    }
+    return text
+  }
+  return typeof result.output === "string" ? result.output : ""
+}
+
+// The guards only append, so the write-back is the appended delta as its own
+// text part (or the full text when an append cannot be proven). Host objects are
+// never mutated in place.
+function rewriteContent(content: unknown, before: string, after: string): unknown {
+  if (after === before) return content
+  if (typeof content === "string") return after
+  if (!Array.isArray(content)) return after
+  if (!after.startsWith(before)) return [{ type: "text", text: after }]
+  const delta = after.slice(before.length)
+  if (delta.length === 0) return content
+  return [...content, { type: "text", text: delta }]
+}
 
 let pluginOptions: unknown
 let projectDirectory = process.cwd()
@@ -154,22 +290,8 @@ function resolveTestGuardConfiguration(config?: unknown): void {
   })
 }
 
-function registerAuditCommand(config: unknown): void {
-  if (!config || typeof config !== "object" || Array.isArray(config)) return
-  const record = config as Record<string, unknown>
-  const commands = record.command
-  if (commands && typeof commands === "object" && !Array.isArray(commands)) {
-    const map = commands as Record<string, unknown>
-    if (!map["guard-audit"]) map["guard-audit"] = { ...GUARD_AUDIT_COMMAND }
-    return
-  }
-  if (commands === undefined) {
-    record.command = { "guard-audit": { ...GUARD_AUDIT_COMMAND } }
-  }
-}
-
-export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => {
-  pluginOptions = options
+export async function createHooks(input: PluginHooksInput, options?: unknown): Promise<CommentCheckerHooks> {
+  pluginOptions = canonicalizeOptions(options)
   if (input && typeof input === "object" && "directory" in input && typeof input.directory === "string") {
     projectDirectory = input.directory
   }
@@ -210,11 +332,6 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
   const advisories = new AdvisoryQueue()
 
   return {
-    config: async (config: unknown) => {
-      resolveConfiguration(config)
-      resolveTestGuardConfiguration(config)
-      registerAuditCommand(config)
-    },
     tool: {
       guard_audit: auditTool,
       guard_judge: judgeTool,
@@ -241,4 +358,135 @@ export const CommentCheckerPlugin: Plugin = async (input, options?: unknown) => 
   }
 }
 
+// OpenCode V2 entrypoint. `setup` is the only adapter between the V2 host event
+// shapes and the V1 hook contract the guards are written against.
+export const CommentCheckerPlugin = Plugin.define({
+  id: "opencode-comments-plugin",
+  async setup(ctx) {
+    // V1 handed the judge runner the SDK client. V2 exposes a stateless,
+    // tool-free generation, which is exactly what the judge asked for (tools
+    // disabled, explicit model), so no throwaway session is created: `create`
+    // only mints the token the runner threads through create -> prompt -> delete.
+    const client = {
+      session: {
+        create: async () => ({ data: { id: "opencode-comments-plugin-judge" } }),
+        prompt: async (request: { body?: Record<string, any> }) => {
+          const body = request?.body ?? {}
+          const system = typeof body.system === "string" ? body.system : ""
+          const parts = Array.isArray(body.parts) ? body.parts : []
+          const user = parts
+            .filter((part: any) => part && part.type === "text" && typeof part.text === "string")
+            .map((part: any) => part.text as string)
+            .join("\n")
+          const prompt = system.length > 0 ? `${system}\n\n${user}` : user
+          const configured = body.model
+          const model =
+            configured && typeof configured === "object" && typeof configured.modelID === "string"
+              ? { providerID: String(configured.providerID), id: configured.modelID }
+              : undefined
+          const response = await ctx.generate.text(model === undefined ? { prompt } : { prompt, model })
+          return { data: { parts: [{ type: "text", text: response?.text ?? "" }] } }
+        },
+        delete: async () => ({}),
+      },
+    }
+
+    const hooks = await createHooks({ directory: ctx.location.directory, client }, ctx.options)
+
+    await ctx.tool.hook("execute.before", event =>
+      hooks["tool.execute.before"]?.(
+        { tool: canonicalToolName(event.tool), sessionID: event.sessionID, callID: event.id },
+        { args: (event.input ?? {}) as Record<string, unknown> },
+      ),
+    )
+
+    await ctx.tool.hook("execute.after", async event => {
+      const input = { tool: canonicalToolName(event.tool), sessionID: event.sessionID, callID: event.id }
+
+      if (event.status === "error") {
+        // V2 reports a failure as a tagged error with no result to append to.
+        // Synthesise the V1 error text so the guards still skip the check (and
+        // their per-call bookkeeping runs), then keep any advisory visible.
+        const failure = `Error: ${event.error.message}`
+        const output: ToolExecuteOutput = { title: "", output: failure, metadata: {} }
+        await hooks["tool.execute.after"]?.(input, output)
+        const delta = output.output.slice(failure.length)
+        if (delta.length > 0) {
+          try {
+            ;(event.error as { message: string }).message += delta
+          } catch {
+            // A frozen host error loses an idle advisory; never fail the hook.
+          }
+        }
+        return
+      }
+
+      const result = event.result
+      const before = resultText(result)
+      const output: ToolExecuteOutput = {
+        title: "",
+        output: before,
+        metadata: canonicalPatchMetadata(result.metadata ?? {}, ctx.location.directory),
+      }
+      await hooks["tool.execute.after"]?.(input, output)
+      if (output.output !== before) {
+        event.result = { ...result, content: rewriteContent(result.content, before, output.output) as typeof result.content }
+      }
+    })
+
+    await ctx.tool.transform(editor => {
+      for (const [name, definition] of Object.entries(hooks.tool ?? {})) {
+        editor.add({
+          name,
+          description: definition.description,
+          input: tool.schema.toJSONSchema(tool.schema.object(definition.args)) as any,
+          execute: async (args: any) => ({ content: await definition.execute(args) }),
+        })
+      }
+    })
+
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+          if (event.type !== "session.idle") continue
+          const sessionID = (event as { data?: { sessionID?: string } }).data?.sessionID ?? ""
+          try {
+            await hooks.event?.({ event: { type: event.type, properties: { sessionID } } })
+          } catch (error) {
+            console.error("[opencode-comments-plugin] idle advisory failed:", error)
+          }
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.error("[opencode-comments-plugin] event subscription failed:", error)
+        }
+      }
+    })()
+
+    // V1 registered `/guard-audit` by mutating the config in the `config` hook.
+    // V2 has no config hook; commands are registered on the command domain, and
+    // an existing command of the same name is left alone.
+    const listed = await ctx.command.list()
+    const commands: unknown[] = Array.isArray(listed)
+      ? listed
+      : ((listed as { data?: unknown }).data as unknown[]) ?? []
+    const taken = commands.some((command: any) => command?.name === "guard-audit")
+    if (!taken) {
+      await ctx.command.transform(editor => {
+        editor.add({
+          name: "guard-audit",
+          description: GUARD_AUDIT_COMMAND.description,
+          execute: async ({ sessionID, prompt, delivery }) => {
+            await ctx.session.prompt({ ...prompt, sessionID, text: GUARD_AUDIT_COMMAND.template, delivery })
+          },
+        })
+      })
+    }
+
+    return () => controller.abort()
+  },
+})
+
 export default CommentCheckerPlugin
+

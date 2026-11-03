@@ -2,7 +2,7 @@ import type { Bypass } from "./bypass";
 import type { ExtractedChange } from "./diff";
 import type { Finding } from "./feedback";
 import type { RunTestOptions } from "../cli";
-import type { HookInput, TestCheckerFinding } from "../types";
+import type { HookInput, TestCheckerResult } from "../types";
 export type AnalyzerTrigger = "after" | "idle" | "on-demand";
 export interface AnalyzerContext {
     tool: string;
@@ -14,6 +14,7 @@ export interface AnalyzerResult {
     findings?: Finding[];
     raw?: string;
     bypasses?: Bypass[];
+    didNotRun?: string;
     note?: string;
 }
 export interface Analyzer {
@@ -35,4 +36,4 @@ export declare class AnalyzerRegistry {
     forTrigger(trigger: AnalyzerTrigger): Analyzer[];
     run(trigger: AnalyzerTrigger, ctx: AnalyzerContext): Promise<AnalyzerResult[]>;
 }
-export type TestCheckerRunner = (input: HookInput, options?: RunTestOptions) => Promise<TestCheckerFinding[] | null>;
+export type TestCheckerRunner = (input: HookInput, options?: RunTestOptions) => Promise<TestCheckerResult>;

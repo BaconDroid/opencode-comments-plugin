@@ -1,12 +1,13 @@
 // Config resolution shared by the comment guard and the test guard.
 //
 // opencode validates its config against a fixed schema and drops unknown
-// top-level keys, so `comment_checker` / `test_guard` never reach the config
-// hook. Plugin options are therefore passed as the second element of the
+// top-level keys, so `comment_checker` / `test_guard` never reach the plugin as
+// config. Plugin options are therefore passed as the second element of the
 // plugin tuple:
 //   "plugin": [["opencode-comments-plugin", { "comment_checker": {...}, "test_guard": {...} }]]
 //
-// Precedence for every option: environment > tuple options > config hook.
+// Precedence for every option: environment > tuple options > a config object
+// when one is supplied.
 
 export type Severity = "off" | "warn"
 

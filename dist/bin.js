@@ -357,15 +357,22 @@ async function getCommentCheckerPath() {
 function getCommentCheckerPathSync() {
   return resolvedCliPath ?? findCommentCheckerPathSync();
 }
+function firstLine(text) {
+  return text.trim().split(`
+`)[0]?.trim() ?? "";
+}
+function didNotRunComment(reason) {
+  return { hasComments: false, message: "", didNotRun: { reason } };
+}
 async function runCommentChecker(input, options = {}) {
   const binaryPath = options.cliPath ?? resolvedCliPath ?? getCommentCheckerPathSync();
   if (!binaryPath) {
     debugLog2("comment-checker binary not found");
-    return { hasComments: false, message: "" };
+    return didNotRunComment("binary not found");
   }
   if (!existsSync2(binaryPath)) {
     debugLog2("comment-checker binary does not exist:", binaryPath);
-    return { hasComments: false, message: "" };
+    return didNotRunComment(`binary not found at ${binaryPath}`);
   }
   const jsonInput = JSON.stringify(input);
   debugLog2("running comment-checker with input:", jsonInput.substring(0, 200));
@@ -376,7 +383,7 @@ async function runCommentChecker(input, options = {}) {
   const outcome = await runProcess(args, { stdin: jsonInput, timeoutMs: options.timeoutMs });
   if (outcome === "timeout") {
     debugLog2("comment-checker abandoned after timeout or stream failure");
-    return { hasComments: false, message: "" };
+    return didNotRunComment("timed out or could not be spawned");
   }
   const { stdout, stderr, exitCode } = outcome;
   debugLog2("exit code:", exitCode, "stdout length:", stdout.length, "stderr length:", stderr.length);
@@ -387,7 +394,8 @@ async function runCommentChecker(input, options = {}) {
     return { hasComments: true, message: stderr };
   }
   debugLog2("unexpected exit code:", exitCode, "stderr:", stderr);
-  return { hasComments: false, message: "" };
+  const detail = firstLine(stderr);
+  return didNotRunComment(`exited with code ${exitCode}${detail ? `: ${detail}` : ""}`);
 }
 
 // src/core/analyzer.ts
@@ -602,7 +610,8 @@ function truncateExcerpt(excerpt, max) {
 function formatFindings(findings, maxExcerpt = 80) {
   return findings.map((finding) => {
     const location = `${finding.filePath}:${finding.line}`;
-    return `- [${finding.severity}] ${finding.rule} (${location}): ${finding.message}
+    const confidence = finding.confidence ? ` (confidence: ${finding.confidence})` : "";
+    return `- [${finding.severity}] ${finding.rule} (${location}): ${finding.message}${confidence}
   > ${truncateExcerpt(finding.excerpt, maxExcerpt)}`;
   }).join(`
 `);
@@ -1624,6 +1633,78 @@ var ADVISORY_RULES = [
   expectedFromSUTRule,
   negativeControlUnrelatedRule
 ];
+// src/rules/tests/binary-rule-ids.json
+var binary_rule_ids_default = {
+  source: "BaconDroid/test-checker",
+  ref: "60e58e0bee091490ef194a5995d1964938839ab8",
+  rules: [
+    "skip-added",
+    "focus-added",
+    "assertion-removed",
+    "test-removed",
+    "gutted-test",
+    "no-assertion",
+    "tautological-assertion",
+    "constant-assertion",
+    "weakened-assertion",
+    "swallowed-error",
+    "incomplete-assertion",
+    "unawaited-assertion",
+    "broad-exception",
+    "mock-of-sut",
+    "over-mocking",
+    "duplicate-test",
+    "expected-copied-from-actual",
+    "snapshot-regenerated",
+    "tolerance-broadened",
+    "conditional-assertion",
+    "retry-added",
+    "agent-memo-test",
+    "allow-added",
+    "allow-invalid",
+    "config-edited",
+    "gate-weakened",
+    "commented-out-test",
+    "source-grep-test",
+    "test-volume",
+    "harness-edited",
+    "near-duplicate-test",
+    "echo-test",
+    "mirror-implementation-test"
+  ]
+};
+
+// src/rules/tests/rule-ids.ts
+var BINARY_RULE_ID_TABLE = binary_rule_ids_default;
+var BINARY_RULE_IDS = BINARY_RULE_ID_TABLE.rules;
+var LEGACY_RULE_ALIASES = {
+  "skip-focus-added": ["skip-added", "focus-added"],
+  "tautological-assertion": ["tautological-assertion", "constant-assertion"],
+  "matcher-loosened": ["weakened-assertion"],
+  "empty-test": ["gutted-test"],
+  "forced-success": ["gate-weakened"],
+  "expected-from-sut": ["expected-copied-from-actual"],
+  "weakened-config": ["gate-weakened", "harness-edited"]
+};
+var DEFAULT_RULE_SEVERITY = "warn";
+var KNOWN_RULE_IDS = new Set([
+  ...BINARY_RULE_IDS,
+  ...Object.keys(LEGACY_RULE_ALIASES),
+  ...Object.values(LEGACY_RULE_ALIASES).flat()
+]);
+function resolveRuleSeverity(checks, ruleId) {
+  const exact = checks[ruleId];
+  if (exact !== undefined)
+    return { severity: exact, known: true };
+  for (const [legacy, targets] of Object.entries(LEGACY_RULE_ALIASES)) {
+    if (!targets.includes(ruleId))
+      continue;
+    const aliased = checks[legacy];
+    if (aliased !== undefined)
+      return { severity: aliased, known: true };
+  }
+  return { severity: DEFAULT_RULE_SEVERITY, known: KNOWN_RULE_IDS.has(ruleId) };
+}
 
 // src/rules/tests/index.ts
 var ALL_TEST_RULES = [...DETERMINISTIC_RULES, ...ADVISORY_RULES];
@@ -1633,6 +1714,8 @@ function buildRuleChecks(includeAdvisory) {
     checks[rule.id] = "warn";
   for (const rule of ADVISORY_RULES)
     checks[rule.id] = includeAdvisory ? "warn" : "off";
+  for (const id of BINARY_RULE_IDS)
+    checks[id] = "warn";
   return checks;
 }
 function runTestRules(ctx) {
@@ -1658,6 +1741,19 @@ function runTestRules(ctx) {
 }
 
 // src/rules/tests/analyzer.ts
+var debugLog3 = createDebugLog("test-guard", process.env.TEST_GUARD_DEBUG === "1" || process.env.COMMENT_CHECKER_DEBUG === "1");
+var unknownRuleWarned = new Set;
+function severityFor(checks, ruleId, sessionID) {
+  const resolution = resolveRuleSeverity(checks, ruleId);
+  if (!resolution.known) {
+    const key = `${sessionID}\x00${ruleId}`;
+    if (!unknownRuleWarned.has(key)) {
+      unknownRuleWarned.add(key);
+      debugLog3(`unknown test-checker rule id "${ruleId}" \u2014 enabled at warn`);
+    }
+  }
+  return resolution.severity;
+}
 function createRuleAnalyzer(getConfig) {
   return {
     id: "test-rules",
@@ -1678,17 +1774,20 @@ function createRuleAnalyzer(getConfig) {
           maxWarningsPerFile: 0
         }
       });
-      return { findings: toFindings(result.findings, change.filePath, config.checks), bypasses: result.bypasses };
+      return {
+        findings: toFindings(result.findings, change.filePath, config.checks, ctx.sessionID),
+        bypasses: result.bypasses
+      };
     }
   };
 }
-function toFindings(findings, filePath, checks) {
+function toFindings(findings, filePath, checks, sessionID) {
   return findings.map((finding) => ({
     rule: finding.rule,
     filePath,
     line: finding.line,
     message: finding.message,
-    severity: checks[finding.rule] ?? "off",
+    severity: severityFor(checks, finding.rule, sessionID),
     excerpt: finding.excerpt
   }));
 }

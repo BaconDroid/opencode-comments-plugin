@@ -36,10 +36,23 @@ export interface HookInput {
 export interface CheckResult {
     hasComments: boolean;
     message: string;
+    didNotRun?: {
+        reason: string;
+    };
 }
 export interface TestCheckerFinding {
     file: string;
     line: number;
     rule: string;
     message: string;
+    confidence?: string;
 }
+export type TestCheckerResult = {
+    kind: "findings";
+    findings: TestCheckerFinding[];
+} | {
+    kind: "fallback";
+} | {
+    kind: "did-not-run";
+    reason: string;
+};

@@ -1,3 +1,4 @@
+import { type TestCheckerRunner } from "./analyzer";
 import type { GuardBaseConfig, Severity, TestEngine } from "./config";
 import type { ToolGuard } from "../types";
 export interface ResolvedTestGuard extends GuardBaseConfig {
@@ -7,4 +8,7 @@ export interface ResolvedTestGuard extends GuardBaseConfig {
     engine?: TestEngine;
 }
 export type TestGuard = ToolGuard;
-export declare function createTestGuard(getResolved: () => ResolvedTestGuard): TestGuard;
+export interface TestGuardDeps {
+    runTestChecker?: TestCheckerRunner;
+}
+export declare function createTestGuard(getResolved: () => ResolvedTestGuard, deps?: TestGuardDeps): TestGuard;

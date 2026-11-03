@@ -30,6 +30,7 @@ export interface RuleConfigSources {
     envPrefix: string;
     options?: Record<string, unknown>;
     config?: Record<string, unknown>;
+    aliases?: Readonly<Record<string, readonly string[]>>;
 }
 export declare function resolveRuleConfig(schema: Record<string, Severity>, sources: RuleConfigSources): Record<string, Severity>;
 export declare function asRecord(value: unknown): Record<string, unknown> | undefined;
