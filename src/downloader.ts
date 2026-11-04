@@ -2,9 +2,8 @@ import { spawn } from "bun"
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { homedir } from "node:os"
-import { createRequire } from "node:module"
 import { createDebugLog } from "./core/debug"
-import { COMMENT_CHECKER_BINARY_NAME } from "./constants"
+import { COMMENT_CHECKER_BINARY_NAME, COMMENT_CHECKER_FALLBACK_VERSION } from "./constants"
 
 const debugLog = createDebugLog("comment-checker:downloader", process.env.COMMENT_CHECKER_DEBUG === "1")
 
@@ -37,17 +36,6 @@ export function getCachedBinaryPath(version?: string | null): string | null {
   if (!version) return null
   const binaryPath = join(getCacheDir(), version, COMMENT_CHECKER_BINARY_NAME)
   return existsSync(binaryPath) ? binaryPath : null
-}
-
-export function getCommentCheckerVersion(): string | null {
-  try {
-    const require = createRequire(import.meta.url)
-    const pkg = require("@code-yeongyu/comment-checker/package.json")
-    const version = pkg?.version
-    return typeof version === "string" && version.length > 0 ? version : null
-  } catch {
-    return null
-  }
 }
 
 export function parseLatestTag(location: string | null): string | null {
@@ -87,11 +75,11 @@ function writeLatestCache(version: string): void {
   }
 }
 
-export function getPreferredCommentCheckerVersionSync(): string | null {
-  return readLatestCache()?.version ?? getCommentCheckerVersion()
+export function getPreferredCommentCheckerVersionSync(): string {
+  return readLatestCache()?.version ?? COMMENT_CHECKER_FALLBACK_VERSION
 }
 
-export async function getLatestCommentCheckerVersion(): Promise<string | null> {
+export async function getLatestCommentCheckerVersion(): Promise<string> {
   const cached = readLatestCache()
   if (cached && Date.now() - cached.checkedAt < LATEST_TTL_MS) {
     return cached.version
@@ -111,7 +99,7 @@ export async function getLatestCommentCheckerVersion(): Promise<string | null> {
   }
 
   if (cached) return cached.version
-  return getCommentCheckerVersion()
+  return COMMENT_CHECKER_FALLBACK_VERSION
 }
 
 export function cleanupStaleCache(version: string): void {
@@ -175,12 +163,7 @@ export async function downloadCommentChecker(versionOverride?: string): Promise<
     return null
   }
 
-  const version = versionOverride ?? getCommentCheckerVersion()
-  if (!version) {
-    debugLog("Cannot resolve a comment-checker version; refusing to download a stale binary")
-    return null
-  }
-
+  const version = versionOverride ?? COMMENT_CHECKER_FALLBACK_VERSION
   const cacheDir = join(getCacheDir(), version)
   const binaryName = COMMENT_CHECKER_BINARY_NAME
   const binaryPath = join(cacheDir, binaryName)
@@ -243,7 +226,6 @@ export async function downloadCommentChecker(versionOverride?: string): Promise<
 
 export async function ensureCommentCheckerBinary(versionOverride?: string): Promise<string | null> {
   const version = versionOverride ?? (await getLatestCommentCheckerVersion())
-  if (!version) return null
 
   const cachedPath = getCachedBinaryPath(version)
   if (cachedPath) {

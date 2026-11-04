@@ -1,9 +1,8 @@
 export declare function getCacheDir(): string;
 export declare function getCachedBinaryPath(version?: string | null): string | null;
-export declare function getCommentCheckerVersion(): string | null;
 export declare function parseLatestTag(location: string | null): string | null;
-export declare function getPreferredCommentCheckerVersionSync(): string | null;
-export declare function getLatestCommentCheckerVersion(): Promise<string | null>;
+export declare function getPreferredCommentCheckerVersionSync(): string;
+export declare function getLatestCommentCheckerVersion(): Promise<string>;
 export declare function cleanupStaleCache(version: string): void;
 export declare function downloadCommentChecker(versionOverride?: string): Promise<string | null>;
 export declare function ensureCommentCheckerBinary(versionOverride?: string): Promise<string | null>;

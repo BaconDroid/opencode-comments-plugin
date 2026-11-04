@@ -6,13 +6,13 @@ import {
   cleanupStaleCache,
   downloadTestChecker,
   getCachedTestCheckerPath,
-  getCommentCheckerVersion,
   getLatestCommentCheckerVersion,
   getLatestTestCheckerVersion,
   getTestCheckerCacheDir,
   getTestCheckerVersion,
   parseLatestTag,
 } from "./downloader"
+import { COMMENT_CHECKER_FALLBACK_VERSION } from "./constants"
 
 const originalFetch = globalThis.fetch
 const originalXdg = process.env.XDG_CACHE_HOME
@@ -44,8 +44,8 @@ afterAll(() => {
 })
 
 test("parses the version out of a release redirect", () => {
-  expect(parseLatestTag("https://github.com/code-yeongyu/go-claude-code-comment-checker/releases/tag/v0.8.2")).toBe("0.8.2")
-  expect(parseLatestTag("https://github.com/code-yeongyu/go-claude-code-comment-checker/releases/tag/v1.2.3")).toBe("1.2.3")
+  expect(parseLatestTag("https://github.com/BaconDroid/comment-checker/releases/tag/v0.8.2")).toBe("0.8.2")
+  expect(parseLatestTag("https://github.com/BaconDroid/comment-checker/releases/tag/v1.2.3")).toBe("1.2.3")
   expect(parseLatestTag(null)).toBe(null)
   expect(parseLatestTag("https://example.com/not-a-release")).toBe(null)
 })
@@ -67,7 +67,7 @@ test("resolves and caches the latest release from the redirect", async () => {
     new Response(null, {
       status: 302,
       headers: {
-        location: "https://github.com/code-yeongyu/go-claude-code-comment-checker/releases/tag/v7.7.7",
+        location: "https://github.com/BaconDroid/comment-checker/releases/tag/v7.7.7",
       },
     })) as unknown as typeof fetch
 
@@ -77,12 +77,12 @@ test("resolves and caches the latest release from the redirect", async () => {
   expect(cached.version).toBe("7.7.7")
 })
 
-test("falls back to the installed version when the network fails and nothing is cached", async () => {
+test("falls back to the built-in version when the network fails and nothing is cached", async () => {
   globalThis.fetch = (async () => {
     throw new Error("offline")
   }) as unknown as typeof fetch
 
-  expect(await getLatestCommentCheckerVersion()).toBe(getCommentCheckerVersion())
+  expect(await getLatestCommentCheckerVersion()).toBe(COMMENT_CHECKER_FALLBACK_VERSION)
 })
 
 // --- test-checker resolution ---

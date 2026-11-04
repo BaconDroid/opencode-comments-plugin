@@ -110,7 +110,7 @@ Every option can also be set (and overridden) through the environment, which alw
 - Runs on the tools in `tools` (`write`, `edit`, and `apply_patch` by default).
 - If the CLI detects comments, it appends the warning message to the tool output, so the model that called the tool reads it on its next turn. Nothing is blocked and the file is never rewritten.
 - Only comments introduced by the change are candidates: for `edit` and `apply_patch` the plugin passes the old and the new snippet, so a comment that was already on the changed lines is not reported; for `write` the plugin reads the previous on-disk content first and, when that previous content exists, skips the check when no comment line was added - rewriting a file does not re-flag the comments it already contained. When new comment lines are added, the whole new content is checked.
-- The `comment-checker` version is resolved from the latest GitHub release (checked at most once a day); offline it falls back to the previously cached release tag or the installed npm package's version. The binary for that version is downloaded on demand into `~/.cache/opencode-comments-plugin/bin/<version>/` only when neither the installed `@code-yeongyu/comment-checker` npm package (version match) nor the cache already has it - the exact order is listed under [Detection engine](#detection-engine).
+- The `comment-checker` version is resolved from the latest GitHub release (checked at most once a day); offline it falls back to the previously cached release tag or the built-in fallback version. The binary for that version is downloaded on demand into `~/.cache/opencode-comments-plugin/bin/<version>/` when the cache does not already have it - the exact order is listed under [Detection engine](#detection-engine).
 - Inline bypass: `// comment-guard: allow <reason>` within +/-2 lines of the added comments suppresses the file's warning; file-level `// comment-guard-disable-file` suppresses it outright. A suppressed or warned file with markers reports them under a "Comment guard bypass recorded" footer.
 
 ## Detection
@@ -201,9 +201,7 @@ binary has no npm package, so an explicit version is the only offline source.
 
 The plugin never spawns a binary by name from `PATH`; each binary is resolved to an absolute path in this order:
 
-- comment guard: the bundled binary inside the installed npm package
-  `@code-yeongyu/comment-checker` when its version matches the resolved release
-  version, otherwise the cache at
+- comment guard: the cache at
   `$XDG_CACHE_HOME/opencode-comments-plugin/bin/<version>/comment-checker`
   (with `XDG_CACHE_HOME` unset, `~/.cache/...`), downloading on demand
 - test guard: the cache only, at

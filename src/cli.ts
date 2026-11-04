@@ -1,5 +1,3 @@
-import { createRequire } from "node:module"
-import { dirname, join } from "node:path"
 import { existsSync } from "node:fs"
 import {
   cleanupStaleCache,
@@ -8,7 +6,6 @@ import {
   ensureTestCheckerBinary,
   getCachedBinaryPath,
   getCachedTestCheckerPath,
-  getCommentCheckerVersion,
   getLatestCommentCheckerVersion,
   getLatestTestCheckerVersion,
   getPreferredCommentCheckerVersionSync,
@@ -16,7 +13,7 @@ import {
 } from "./downloader"
 import { runProcess } from "./core/runner"
 import { createDebugLog } from "./core/debug"
-import { COMMENT_CHECKER_BINARY_NAME, COMMENT_CHECKER_EVENT } from "./constants"
+import { COMMENT_CHECKER_EVENT } from "./constants"
 import type { CheckResult, HookInput, TestCheckerFinding, TestCheckerResult } from "./types"
 
 const debugLog = createDebugLog("comment-checker:cli", process.env.COMMENT_CHECKER_DEBUG === "1")
@@ -40,29 +37,7 @@ export function commentHookInput(options: {
 }
 
 function findCommentCheckerPathSync(): string | null {
-  const binaryName = COMMENT_CHECKER_BINARY_NAME
-
   const version = getPreferredCommentCheckerVersionSync()
-  if (!version) {
-    debugLog("cannot resolve comment-checker version; comment checking disabled")
-    return null
-  }
-
-  if (getCommentCheckerVersion() === version) {
-    try {
-      const require = createRequire(import.meta.url)
-      const cliPkgPath = require.resolve("@code-yeongyu/comment-checker/package.json")
-      const cliDir = dirname(cliPkgPath)
-      const binaryPath = join(cliDir, "bin", binaryName)
-
-      if (existsSync(binaryPath)) {
-        debugLog("found binary in main package:", binaryPath)
-        return binaryPath
-      }
-    } catch {
-      debugLog("main package not installed")
-    }
-  }
 
   const cachedPath = getCachedBinaryPath(version)
   if (cachedPath) {
@@ -89,10 +64,6 @@ export async function getCommentCheckerPath(): Promise<string | null> {
 
   initPromise = (async () => {
     const version = await getLatestCommentCheckerVersion()
-    if (!version) {
-      debugLog("cannot resolve a comment-checker version; comment checking disabled")
-      return null
-    }
 
     const syncPath = findCommentCheckerPathSync()
     if (syncPath && existsSync(syncPath)) {
