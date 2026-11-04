@@ -27,7 +27,7 @@
 			"import": "./dist/index.js"
 		}
 	},
-	"files": ["dist"],
+	"files": ["dist", "index.js"],
 	"scripts": {
 		"build": "bun build src/index.ts --outdir dist --target bun --format esm --external @opencode-ai/plugin --external @opencode/plugin && bun build src/bin.ts --outdir dist --target bun --format esm --external @opencode-ai/plugin --external @opencode/plugin && tsc --emitDeclarationOnly",
 		"test": "bun test",
