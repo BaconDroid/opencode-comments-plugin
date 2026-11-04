@@ -2,7 +2,7 @@
 // src/index.ts
 import { tool as tool3 } from "@opencode-ai/plugin";
 import { Plugin } from "@opencode/plugin";
-import { isAbsolute as isAbsolute3, join as join6 } from "path";
+import { isAbsolute as isAbsolute3, join as join5 } from "path";
 
 // src/constants.ts
 var COMMENT_CHECKER_EVENT = "PostToolUse";
@@ -11,10 +11,9 @@ var DEFAULT_TRIGGER_TOOLS = ["write", "edit", "apply_patch"];
 var DEFAULT_CLI_TIMEOUT_MS = 5000;
 var DEFAULT_DEDUP_WINDOW_MS = 30000;
 var COMMENT_CHECKER_BINARY_NAME = process.platform === "win32" ? "comment-checker.exe" : "comment-checker";
+var COMMENT_CHECKER_FALLBACK_VERSION = "0.8.0";
 
 // src/cli.ts
-import { createRequire as createRequire2 } from "module";
-import { dirname, join as join2 } from "path";
 import { existsSync as existsSync2 } from "fs";
 
 // src/downloader.ts
@@ -22,7 +21,6 @@ var {spawn } = globalThis.Bun;
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { createRequire } from "module";
 
 // src/core/debug.ts
 function createDebugLog(prefix, enabled) {
@@ -59,16 +57,6 @@ function getCachedBinaryPath(version) {
   const binaryPath = join(getCacheDir(), version, COMMENT_CHECKER_BINARY_NAME);
   return existsSync(binaryPath) ? binaryPath : null;
 }
-function getCommentCheckerVersion() {
-  try {
-    const require2 = createRequire(import.meta.url);
-    const pkg = require2("@code-yeongyu/comment-checker/package.json");
-    const version = pkg?.version;
-    return typeof version === "string" && version.length > 0 ? version : null;
-  } catch {
-    return null;
-  }
-}
 function parseLatestTag(location) {
   if (!location)
     return null;
@@ -100,7 +88,7 @@ function writeLatestCache(version) {
   }
 }
 function getPreferredCommentCheckerVersionSync() {
-  return readLatestCache()?.version ?? getCommentCheckerVersion();
+  return readLatestCache()?.version ?? COMMENT_CHECKER_FALLBACK_VERSION;
 }
 async function getLatestCommentCheckerVersion() {
   const cached = readLatestCache();
@@ -121,7 +109,7 @@ async function getLatestCommentCheckerVersion() {
   }
   if (cached)
     return cached.version;
-  return getCommentCheckerVersion();
+  return COMMENT_CHECKER_FALLBACK_VERSION;
 }
 function cleanupStaleCache(version) {
   let entries;
@@ -174,11 +162,7 @@ async function downloadCommentChecker(versionOverride) {
     debugLog("Unsupported platform:", platformKey);
     return null;
   }
-  const version = versionOverride ?? getCommentCheckerVersion();
-  if (!version) {
-    debugLog("Cannot resolve a comment-checker version; refusing to download a stale binary");
-    return null;
-  }
+  const version = versionOverride ?? COMMENT_CHECKER_FALLBACK_VERSION;
   const cacheDir = join(getCacheDir(), version);
   const binaryName = COMMENT_CHECKER_BINARY_NAME;
   const binaryPath = join(cacheDir, binaryName);
@@ -227,8 +211,6 @@ async function downloadCommentChecker(versionOverride) {
 }
 async function ensureCommentCheckerBinary(versionOverride) {
   const version = versionOverride ?? await getLatestCommentCheckerVersion();
-  if (!version)
-    return null;
   const cachedPath = getCachedBinaryPath(version);
   if (cachedPath) {
     debugLog("Using cached binary:", cachedPath);
@@ -447,26 +429,7 @@ function commentHookInput(options) {
   };
 }
 function findCommentCheckerPathSync() {
-  const binaryName = COMMENT_CHECKER_BINARY_NAME;
   const version = getPreferredCommentCheckerVersionSync();
-  if (!version) {
-    debugLog2("cannot resolve comment-checker version; comment checking disabled");
-    return null;
-  }
-  if (getCommentCheckerVersion() === version) {
-    try {
-      const require2 = createRequire2(import.meta.url);
-      const cliPkgPath = require2.resolve("@code-yeongyu/comment-checker/package.json");
-      const cliDir = dirname(cliPkgPath);
-      const binaryPath = join2(cliDir, "bin", binaryName);
-      if (existsSync2(binaryPath)) {
-        debugLog2("found binary in main package:", binaryPath);
-        return binaryPath;
-      }
-    } catch {
-      debugLog2("main package not installed");
-    }
-  }
   const cachedPath = getCachedBinaryPath(version);
   if (cachedPath) {
     debugLog2("found binary in cache:", cachedPath);
@@ -487,10 +450,6 @@ async function getCommentCheckerPath() {
   }
   initPromise = (async () => {
     const version = await getLatestCommentCheckerVersion();
-    if (!version) {
-      debugLog2("cannot resolve a comment-checker version; comment checking disabled");
-      return null;
-    }
     const syncPath = findCommentCheckerPathSync();
     if (syncPath && existsSync2(syncPath)) {
       resolvedCliPath = syncPath;
@@ -2814,7 +2773,7 @@ function createAdvisoryTool(description, controller) {
 
 // src/core/ci.ts
 import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
-import { isAbsolute, join as join3, relative } from "path";
+import { isAbsolute, join as join2, relative } from "path";
 function run(args, cwd) {
   const result = Bun.spawnSync(args, { cwd, stdout: "pipe", stderr: "ignore" });
   return { stdout: result.stdout.toString(), exitCode: result.exitCode };
@@ -2854,7 +2813,7 @@ function changedTestChanges(directory, base, testPatterns) {
 function diffChanges(directory, base) {
   const changes = [];
   for (const relativePath of changedFiles(directory, base)) {
-    const absolute = isAbsolute(relativePath) ? relativePath : join3(directory, relativePath);
+    const absolute = isAbsolute(relativePath) ? relativePath : join2(directory, relativePath);
     const newText = readWorktree(absolute);
     if (newText === undefined)
       continue;
@@ -3497,7 +3456,7 @@ function createCommentGuard(getConfig, deps = {}) {
 }
 
 // src/core/test-command.ts
-import { join as join4 } from "path";
+import { join as join3 } from "path";
 var CANDIDATES = [
   { file: "pytest.ini", command: "pytest" },
   { file: "pyproject.toml", contains: "[tool.pytest", command: "pytest" },
@@ -3508,7 +3467,7 @@ var CANDIDATES = [
   { file: "build.gradle.kts", command: "gradle test" }
 ];
 function detectTestCommand(directory) {
-  const packageJson = readFileIfExists(join4(directory, "package.json"));
+  const packageJson = readFileIfExists(join3(directory, "package.json"));
   if (packageJson) {
     try {
       const parsed = JSON.parse(packageJson);
@@ -3519,7 +3478,7 @@ function detectTestCommand(directory) {
     } catch {}
   }
   for (const candidate of CANDIDATES) {
-    const content = readFileIfExists(join4(directory, candidate.file));
+    const content = readFileIfExists(join3(directory, candidate.file));
     if (content === undefined)
       continue;
     if (candidate.contains && !content.includes(candidate.contains))
@@ -3532,7 +3491,7 @@ function detectTestCommand(directory) {
 // src/audit.ts
 import { tool as tool2 } from "@opencode-ai/plugin";
 import { readFileSync as readFileSync4, readdirSync as readdirSync2, statSync } from "fs";
-import { isAbsolute as isAbsolute2, join as join5, relative as relative2 } from "path";
+import { isAbsolute as isAbsolute2, join as join4, relative as relative2 } from "path";
 var EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "build", "vendor", ".cache", "coverage"]);
 var SECRET_PATTERNS = [/(?:^|\/)\.env(?:\.|$)/, /\.pem$/, /\.key$/, /(?:^|\/)id_(?:rsa|ed25519)$/, /\.p12$/];
 var MAX_FILES = 500;
@@ -3553,7 +3512,7 @@ function walk(dir, out, limit) {
       return;
     if (entry.startsWith(".") && entry !== ".env.example")
       continue;
-    const full = join5(dir, entry);
+    const full = join4(dir, entry);
     let stat;
     try {
       stat = statSync(full);
@@ -3573,7 +3532,7 @@ function listRepositoryFiles(directory, paths) {
   const collected = [];
   if (paths && paths.length > 0) {
     for (const entry of paths) {
-      const abs = isAbsolute2(entry) ? entry : join5(directory, entry);
+      const abs = isAbsolute2(entry) ? entry : join4(directory, entry);
       try {
         const stat = statSync(abs);
         if (stat.isDirectory())
@@ -3588,7 +3547,7 @@ function listRepositoryFiles(directory, paths) {
     const result = Bun.spawnSync(["git", "ls-files"], { cwd: directory, stdout: "pipe", stderr: "ignore" });
     if (result.exitCode === 0) {
       return result.stdout.toString().split(`
-`).filter((line) => line.trim().length > 0).map((line) => join5(directory, line)).slice(0, MAX_FILES);
+`).filter((line) => line.trim().length > 0).map((line) => join4(directory, line)).slice(0, MAX_FILES);
     }
   } catch {}
   walk(directory, collected, MAX_FILES);
@@ -3914,7 +3873,7 @@ function canonicalPatchMetadata(metadata, directory) {
       if (typeof mapped.type !== "string" && status !== undefined)
         mapped.type = PATCH_STATUS_TO_TYPE[status];
       if (typeof mapped.filePath !== "string" && path !== undefined) {
-        mapped.filePath = isAbsolute3(path) ? path : join6(directory, path);
+        mapped.filePath = isAbsolute3(path) ? path : join5(directory, path);
       }
       return mapped;
     })

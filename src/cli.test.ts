@@ -3,7 +3,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { runCommentChecker, runTestChecker, parseTestCheckerFindings } from "./cli"
-import { ensureCommentCheckerBinary, getCachedBinaryPath, getCommentCheckerVersion } from "./downloader"
+import { COMMENT_CHECKER_FALLBACK_VERSION } from "./constants"
+import { ensureCommentCheckerBinary, getCachedBinaryPath } from "./downloader"
 import type { HookInput } from "./types"
 
 let dir: string
@@ -143,8 +144,7 @@ test("reports a non-executable binary as did not run", async () => {
 
 test("caches the binary per comment-checker version and drops the stale versions", async () => {
   process.env.XDG_CACHE_HOME = dir
-  const version = getCommentCheckerVersion()
-  expect(version).toBeTruthy()
+  const version = COMMENT_CHECKER_FALLBACK_VERSION
 
   const binaryName = process.platform === "win32" ? "comment-checker.exe" : "comment-checker"
   const cacheRoot = join(dir, "opencode-comments-plugin", "bin")

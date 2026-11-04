@@ -36,7 +36,6 @@
 		"check:rule-ids": "node scripts/generate-rule-ids.mjs --check"
 	},
 	"dependencies": {
-		"@code-yeongyu/comment-checker": "^0.8.2",
 		"@opencode-ai/plugin": "^1.0.162",
 		"@opencode/plugin": "2.0.30"
 	},

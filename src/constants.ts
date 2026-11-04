@@ -11,3 +11,5 @@ export const DEFAULT_CLI_TIMEOUT_MS = 5_000
 export const DEFAULT_DEDUP_WINDOW_MS = 30_000
 
 export const COMMENT_CHECKER_BINARY_NAME = process.platform === "win32" ? "comment-checker.exe" : "comment-checker"
+
+export const COMMENT_CHECKER_FALLBACK_VERSION = "0.8.0"

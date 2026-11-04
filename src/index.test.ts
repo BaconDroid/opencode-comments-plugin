@@ -2,17 +2,15 @@ import { test, expect, beforeEach } from "bun:test"
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { APPLY_PATCH_TOOL_NAME } from "./constants"
+import { APPLY_PATCH_TOOL_NAME, COMMENT_CHECKER_FALLBACK_VERSION } from "./constants"
 import { CommentCheckerPlugin, createHooks } from "./index"
 import { TEST_GUARD_MARKER } from "./core/feedback"
-import { getCommentCheckerVersion } from "./downloader"
 import type { HookInput } from "./types"
 
 const cacheRoot = mkdtempSync(join(tmpdir(), "comment-checker-hook-"))
 process.env.XDG_CACHE_HOME = cacheRoot
 
-const version = getCommentCheckerVersion()
-if (!version) throw new Error("@code-yeongyu/comment-checker is not installed")
+const version = COMMENT_CHECKER_FALLBACK_VERSION
 
 const modePath = join(cacheRoot, "mode")
 const logPath = join(cacheRoot, "log")

@@ -4,3 +4,4 @@ export declare const DEFAULT_TRIGGER_TOOLS: string[];
 export declare const DEFAULT_CLI_TIMEOUT_MS = 5000;
 export declare const DEFAULT_DEDUP_WINDOW_MS = 30000;
 export declare const COMMENT_CHECKER_BINARY_NAME: string;
+export declare const COMMENT_CHECKER_FALLBACK_VERSION = "0.8.0";
