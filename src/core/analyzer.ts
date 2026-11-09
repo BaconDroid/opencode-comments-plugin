@@ -2,8 +2,7 @@
 // and how their results are produced. It only orchestrates; each detector keeps
 // its own policy (budget, severity, rendering).
 //
-// Design: docs/plans/analyzer-registry-plan.md. Fail-open: an analyzer error is
-// swallowed and never propagates.
+// Fail-open: an analyzer error is swallowed and never propagates.
 
 import type { Bypass } from "./bypass"
 import type { ExtractedChange } from "./diff"
