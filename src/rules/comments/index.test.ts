@@ -22,6 +22,7 @@ function config(overrides: Partial<ResolvedCommentConfig> = {}): ResolvedComment
     triggerTools: new Set(["write"]),
     paths: [],
     timeoutMs: 200,
+    keywordAcquit: "proven-only",
     ...overrides,
   }
 }

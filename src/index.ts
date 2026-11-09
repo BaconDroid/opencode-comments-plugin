@@ -7,6 +7,7 @@ import {
   asBoolean,
   asCount,
   asEngine,
+  asKeywordAcquit,
   asPatterns,
   asRecord,
   asString,
@@ -180,6 +181,7 @@ const resolvedCommentConfig: ResolvedCommentConfig = {
   triggerTools: new Set(DEFAULT_TRIGGER_TOOLS),
   paths: [],
   timeoutMs: DEFAULT_CLI_TIMEOUT_MS,
+  keywordAcquit: "proven-only",
 }
 
 function asOptionalBoolean(value: unknown): boolean | undefined {
@@ -244,6 +246,8 @@ function resolveConfiguration(config?: unknown): void {
   resolvedCommentConfig.paths = resolveOption(asPatterns, "COMMENT_CHECKER_PATHS", "paths", inputs) ?? []
   resolvedCommentConfig.timeoutMs =
     resolveOption(value => asCount(value, 1), "COMMENT_CHECKER_TIMEOUT_MS", "timeout_ms", inputs) ?? DEFAULT_CLI_TIMEOUT_MS
+  resolvedCommentConfig.keywordAcquit =
+    resolveOption(asKeywordAcquit, "COMMENT_CHECKER_KEYWORD_ACQUIT", "keyword_acquit", inputs) ?? "proven-only"
 
   resolveJudge(resolvedCommentJudge, "COMMENT_CHECKER_JUDGE", subConfigInputs(options, fromConfig, "judge"))
 }

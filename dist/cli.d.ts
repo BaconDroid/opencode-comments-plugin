@@ -1,3 +1,4 @@
+import type { KeywordAcquit } from "./core/config";
 import type { CheckResult, HookInput, TestCheckerFinding, TestCheckerResult } from "./types";
 export declare function commentHookInput(options: {
     sessionID: string;
@@ -12,6 +13,7 @@ export interface RunOptions {
     cliPath?: string;
     prompt?: string;
     timeoutMs?: number;
+    keywordAcquit?: KeywordAcquit;
     expectedVersion?: string;
 }
 export declare function runCommentChecker(input: HookInput, options?: RunOptions): Promise<CheckResult>;

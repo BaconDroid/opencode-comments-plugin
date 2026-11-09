@@ -33,6 +33,15 @@ test("accepts comment_checker.paths and rejects a bad value", () => {
   expect(validateTupleOptions({ comment_checker: { paths: 3 } }).valid).toBe(false)
 })
 
+test("accepts the comment_checker.keyword_acquit values and rejects an unknown one", () => {
+  expect(validateTupleOptions({ comment_checker: { keyword_acquit: "proven-only" } }).valid).toBe(true)
+  expect(validateTupleOptions({ comment_checker: { keyword_acquit: "never" } }).valid).toBe(true)
+  expect(validateTupleOptions({ comment_checker: { keyword_acquit: "NEVER" } }).valid).toBe(true)
+  const result = validateTupleOptions({ comment_checker: { keyword_acquit: "always" } })
+  expect(result.valid).toBe(false)
+  expect(result.errors.join()).toContain("keyword_acquit")
+})
+
 test("accepts a valid comment_checker judge block", () => {
   expect(
     validateTupleOptions({ comment_checker: { judge: { enabled: true, model: "anthropic/claude-3", timeout_ms: 30000 } } }).valid,

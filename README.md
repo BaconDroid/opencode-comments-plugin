@@ -74,6 +74,7 @@ Available options (all under `comment_checker`):
 | `dedup_window_ms` | number | `30000` | Suppress a repeat warning about the same file within this window. `0` = no dedup. |
 | `tools` | string[] or CSV string | `["write","edit","apply_patch"]` | Which tools trigger the check. |
 | `paths` | string[] or CSV string | unset | Only check files matching these globs. Unset = every file. |
+| `keyword_acquit` | `"proven-only"` or `"never"` | `"proven-only"` | How a prose keyword may acquit a comment: `proven-only` lets the CLI decide, `never` leaves only its structural classes. |
 | `timeout_ms` | number | `5000` | How long to wait for the CLI before ignoring it. |
 | `append_prompt` | string | unset | Opt-in text appended after the warning, keeping the default (or `custom_prompt`) message intact. |
 | `judge` | object | `{"enabled": false}` | Comment relevance judge: `enabled`, `model` (default `opencode/big-pickle`), `timeout_ms` (default `30000`). See [Comment relevance judge](#comment-relevance-judge-opt-in). |
@@ -102,6 +103,7 @@ Every option can also be set (and overridden) through the environment, which alw
 | `COMMENT_CHECKER_DEDUP_WINDOW_MS` | `dedup_window_ms` |
 | `COMMENT_CHECKER_TOOLS` | `tools` (comma separated) |
 | `COMMENT_CHECKER_PATHS` | `paths` (comma separated) |
+| `COMMENT_CHECKER_KEYWORD_ACQUIT` | `keyword_acquit` |
 | `COMMENT_CHECKER_TIMEOUT_MS` | `timeout_ms` |
 | `COMMENT_CHECKER_APPEND_PROMPT` | `append_prompt` |
 

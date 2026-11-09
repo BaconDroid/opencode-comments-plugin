@@ -6,6 +6,7 @@ export type RunOutcome = {
 export interface RunnerOptions {
     timeoutMs?: number;
     stdin?: string;
+    env?: Record<string, string>;
 }
 export declare function runShellCommand(command: string, options?: RunnerOptions): Promise<RunOutcome>;
 export declare function runProcess(args: string[], options?: RunnerOptions): Promise<RunOutcome>;

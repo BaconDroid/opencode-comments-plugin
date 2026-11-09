@@ -7,7 +7,7 @@ import { commentHookInput, getCommentCheckerPath, runCommentChecker, type RunOpt
 import { AnalyzerRegistry, type Analyzer } from "../../core/analyzer"
 import { GuardBudget } from "../../core/budget"
 import { applyBypass, bypassMatchers, type Bypass } from "../../core/bypass"
-import type { GuardBaseConfig } from "../../core/config"
+import type { GuardBaseConfig, KeywordAcquit } from "../../core/config"
 import { createDebugLog } from "../../core/debug"
 import { detectLanguage, diffLines, extractPatchChanges, extractToolChange, firstString, isCommentLine, readFileIfExists, readString } from "../../core/diff"
 import { appendGuardMessage, didNotRunMessage } from "../../core/feedback"
@@ -57,6 +57,7 @@ export interface ResolvedCommentConfig extends GuardBaseConfig {
   triggerTools: Set<string>
   paths: string[]
   timeoutMs: number
+  keywordAcquit: KeywordAcquit
 }
 
 const COMMENT_RULE = "comment"
@@ -97,6 +98,7 @@ export function createCommentBinaryAnalyzer(
         cliPath: cliPath ?? undefined,
         prompt: config.customPrompt,
         timeoutMs: config.timeoutMs,
+        keywordAcquit: config.keywordAcquit,
       })
       if (result.didNotRun) return { didNotRun: result.didNotRun.reason }
       return result.hasComments && result.message ? { raw: result.message } : {}

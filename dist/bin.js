@@ -394,7 +394,12 @@ var {spawn: spawn2 } = globalThis.Bun;
 async function runProcess(args, options = {}) {
   const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_CLI_TIMEOUT_MS;
   try {
-    const proc = spawn2(args, { stdin: options.stdin === undefined ? "ignore" : "pipe", stdout: "pipe", stderr: "pipe" });
+    const proc = spawn2(args, {
+      stdin: options.stdin === undefined ? "ignore" : "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      ...options.env ? { env: { ...process.env, ...options.env } } : {}
+    });
     if (options.stdin !== undefined && proc.stdin) {
       proc.stdin.write(options.stdin);
       proc.stdin.end();
@@ -532,7 +537,8 @@ async function runCommentChecker(input, options = {}) {
   if (options.prompt && options.prompt.trim().length > 0) {
     args.push("--prompt", options.prompt);
   }
-  const outcome = await runProcess(args, { stdin: jsonInput, timeoutMs: options.timeoutMs });
+  const env = options.keywordAcquit ? { COMMENT_CHECKER_KEYWORD_ACQUIT: options.keywordAcquit } : undefined;
+  const outcome = await runProcess(args, { stdin: jsonInput, timeoutMs: options.timeoutMs, env });
   if (outcome === "timeout") {
     debugLog2("comment-checker abandoned after timeout or stream failure");
     return didNotRunComment("timed out or could not be spawned");
@@ -1847,7 +1853,7 @@ var ADVISORY_RULES = [
 // src/rules/tests/binary-rule-ids.json
 var binary_rule_ids_default = {
   source: "BaconDroid/test-checker",
-  ref: "e024462be2901c555bbeec7cd304e6801152c0e4",
+  ref: "485e1490c53d20fe4fa2577b95ac8764fe3b6285",
   rules: [
     "skip-added",
     "focus-added",
@@ -2169,6 +2175,14 @@ function asEngine(value) {
     return normalized;
   return;
 }
+function asKeywordAcquit(value) {
+  if (typeof value !== "string")
+    return;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "proven-only" || normalized === "never")
+    return normalized;
+  return;
+}
 function asString(value) {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
@@ -2245,13 +2259,16 @@ function validateCommentChecker(record, path, errors) {
   if (record.paths !== undefined && asPatterns(record.paths) === undefined) {
     errors.push(`${path}.paths must be a string array or a comma separated string`);
   }
+  if (record.keyword_acquit !== undefined && asKeywordAcquit(record.keyword_acquit) === undefined) {
+    errors.push(`${path}.keyword_acquit must be one of proven-only, never`);
+  }
   if (record.judge !== undefined) {
     if (!isRecord(record.judge))
       errors.push(`${path}.judge must be an object`);
     else
       validateJudge(record.judge, `${path}.judge`, errors);
   }
-  rejectUnknown(record, ["enabled", "custom_prompt", "append_prompt", "max_warnings_per_file", "dedup_window_ms", "timeout_ms", "tools", "paths", "judge"], path, errors);
+  rejectUnknown(record, ["enabled", "custom_prompt", "append_prompt", "max_warnings_per_file", "dedup_window_ms", "timeout_ms", "tools", "paths", "keyword_acquit", "judge"], path, errors);
 }
 function validateTestGuard(record, path, errors) {
   if (record.enabled !== undefined && typeof record.enabled !== "boolean")
