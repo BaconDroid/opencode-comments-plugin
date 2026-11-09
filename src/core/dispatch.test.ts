@@ -250,6 +250,11 @@ const DID_NOT_RUN_CASES = [
   { label: "exit 127", body: "#!/bin/sh\ncat > /dev/null\nexit 127\n", reason: "exited with code 127" },
   { label: "ENOENT", body: null, reason: "binary not found" },
   { label: "timeout", body: "#!/bin/sh\nsleep 30\n", reason: "timed out or could not be spawned" },
+  {
+    label: "unparseable",
+    body: "#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' 'no xml' >&2\nexit 2\n",
+    reason: "output could not be parsed",
+  },
 ] as const
 
 for (const scenario of DID_NOT_RUN_CASES) {
@@ -261,7 +266,8 @@ for (const scenario of DID_NOT_RUN_CASES) {
     const session = `test-did-not-run-${scenario.label}`
 
     const first = await writeTestFile(guard, session, `first-${scenario.label}`)
-    expect(first.output).toContain("test-checker did not run — nothing checked this write.")
+    expect(first.output).toContain("test-checker did not run")
+    expect(first.output).toContain("the in-process regex rules were used instead")
     expect(first.output).toContain(scenario.reason)
     expect(first.output.startsWith("Wrote file successfully.")).toBe(true)
 
@@ -270,3 +276,22 @@ for (const scenario of DID_NOT_RUN_CASES) {
     expect(second.output).not.toContain("did not run")
   }, 20_000)
 }
+
+test("a stale cached binary announces the regex fallback once per session", async () => {
+  const cliPath = fakeTestChecker(
+    "fake-test-checker-stale-version",
+    "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"test-checker 0.1.0\"; exit 0; fi\ncat > /dev/null\nexit 0\n",
+  )
+  const guard = guarded(config({ engine: "binary" }), {
+    runTestChecker: input => runTestChecker(input, { cliPath, timeoutMs: 200, expectedVersion: "0.2.0" }),
+  })
+  const session = "stale-binary"
+
+  const first = await writeTestFile(guard, session, "stale-first")
+  expect(first.output).toContain("test-checker did not run")
+  expect(first.output).toContain("the in-process regex rules were used instead")
+  expect(first.output).toContain("cached test-checker binary is 0.1.0 but the plugin expects 0.2.0")
+
+  const second = await writeTestFile(guard, session, "stale-second")
+  expect(second.output).toBe("Wrote file successfully.")
+})

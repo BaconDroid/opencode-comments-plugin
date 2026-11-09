@@ -196,6 +196,19 @@ export function createTestEngineAnalyzer(
         change.newText.trim().length > 0
 
       if (useBinary) {
+        const fallbackWithNotice = (reason: string) => {
+          // The fallback still runs so detection works offline, but
+          // `protected-paths` fires for every edit of an existing test file and
+          // would bury the notice under a second, unrelated message. Suppress
+          // it only for this change when the binary could not be used.
+          const fallback = rules.analyze(ctx)
+          return {
+            ...fallback,
+            findings: (fallback.findings ?? []).filter(finding => finding.rule !== "protected-paths"),
+            didNotRun: reason,
+            fallbackUsed: true,
+          }
+        }
         let outcome: TestCheckerResult | null = null
         try {
           outcome = await run(buildTestCheckerInput(change, ctx, isTestFile && !isHarnessFile))
@@ -209,18 +222,11 @@ export function createTestEngineAnalyzer(
             bypasses: collectBypasses(change),
           }
         }
-        if (outcome?.kind === "did-not-run") {
-          // The fallback still runs so detection works offline, but
-          // `protected-paths` fires for every edit of an existing test file and
-          // would bury the "did not run" warning under a second, unrelated
-          // message. Suppress it only for this change when the binary skipped.
-          const fallback = rules.analyze(ctx)
-          return {
-            ...fallback,
-            findings: (fallback.findings ?? []).filter(finding => finding.rule !== "protected-paths"),
-            didNotRun: outcome.reason,
-          }
+        if (outcome?.kind === "did-not-run") return fallbackWithNotice(outcome.reason)
+        if (outcome?.kind === "fallback") {
+          return fallbackWithNotice("test-checker output could not be parsed; used the in-process regex rules")
         }
+        return fallbackWithNotice("test-checker could not be run; used the in-process regex rules")
       }
 
       return rules.analyze(ctx)

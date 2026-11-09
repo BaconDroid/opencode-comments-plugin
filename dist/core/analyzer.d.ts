@@ -15,6 +15,7 @@ export interface AnalyzerResult {
     raw?: string;
     bypasses?: Bypass[];
     didNotRun?: string;
+    fallbackUsed?: boolean;
     note?: string;
 }
 export interface Analyzer {

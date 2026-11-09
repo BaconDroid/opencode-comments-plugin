@@ -8,6 +8,7 @@ import {
   getCachedTestCheckerPath,
   getLatestCommentCheckerVersion,
   getLatestTestCheckerVersion,
+  getPreferredTestCheckerVersionSync,
   getTestCheckerCacheDir,
   getTestCheckerVersion,
   parseLatestTag,
@@ -177,6 +178,18 @@ test("resolves and caches the latest test-checker release from the redirect", as
 
   const cached = JSON.parse(readFileSync(join(getTestCheckerCacheDir(), "latest.json"), "utf8"))
   expect(cached.version).toBe("4.5.6")
+})
+
+test("TEST_CHECKER_VERSION pins the version over a cached latest", async () => {
+  process.env.XDG_CACHE_HOME = dir
+  writeTestLatestCache("3.2.1", Date.now())
+  process.env.TEST_CHECKER_VERSION = "2.0.0"
+  try {
+    expect(getPreferredTestCheckerVersionSync()).toBe("2.0.0")
+    expect(await getLatestTestCheckerVersion()).toBe("2.0.0")
+  } finally {
+    delete process.env.TEST_CHECKER_VERSION
+  }
 })
 
 test("the comment cache cleanup never removes the test-checker cache", () => {

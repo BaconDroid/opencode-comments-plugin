@@ -6,7 +6,7 @@ import { readFileSync as readFileSync5 } from "fs";
 
 // src/core/ci.ts
 import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
-import { isAbsolute, join as join2, relative } from "path";
+import { isAbsolute as isAbsolute2, join as join2, relative as relative2 } from "path";
 
 // src/cli.ts
 import { existsSync as existsSync2 } from "fs";
@@ -14,7 +14,7 @@ import { existsSync as existsSync2 } from "fs";
 // src/downloader.ts
 var {spawn } = globalThis.Bun;
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { join } from "path";
+import { isAbsolute, join, relative, sep } from "path";
 import { homedir } from "os";
 
 // src/core/debug.ts
@@ -57,6 +57,16 @@ function getCachedBinaryPath(version) {
     return null;
   const binaryPath = join(getCacheDir(), version, COMMENT_CHECKER_BINARY_NAME);
   return existsSync(binaryPath) ? binaryPath : null;
+}
+function getCachedVersionForPath(binaryPath, cacheDir) {
+  const rel = relative(cacheDir, binaryPath);
+  if (rel.length === 0 || isAbsolute(rel) || rel.startsWith(`..${sep}`) || rel === "..")
+    return null;
+  const segments = rel.split(sep);
+  return segments.length >= 2 ? segments[0] ?? null : null;
+}
+function getCommentCheckerVersionFromCachePath(binaryPath) {
+  return getCachedVersionForPath(binaryPath, getCacheDir());
 }
 function parseLatestTag(location) {
   if (!location)
@@ -320,6 +330,28 @@ function firstLine(text) {
   return text.trim().split(`
 `)[0]?.trim() ?? "";
 }
+var binaryVersionCache = new Map;
+async function readBinaryVersion(binaryPath, binaryName, timeoutMs) {
+  if (binaryVersionCache.has(binaryPath))
+    return binaryVersionCache.get(binaryPath) ?? null;
+  const outcome = await runProcess([binaryPath, "--version"], { timeoutMs });
+  let version = null;
+  if (outcome !== "timeout" && outcome.exitCode === 0) {
+    const match = outcome.stdout.trim().match(/^(\S+)\s+(\S+)$/);
+    if (match && match[1] === binaryName)
+      version = match[2] ?? null;
+  }
+  binaryVersionCache.set(binaryPath, version);
+  return version;
+}
+async function staleBinaryReason(binaryPath, binaryName, expectedVersion, timeoutMs) {
+  if (!expectedVersion)
+    return null;
+  const actual = await readBinaryVersion(binaryPath, binaryName, timeoutMs);
+  if (!actual || actual === expectedVersion)
+    return null;
+  return `cached ${binaryName} binary is ${actual} but the plugin expects ${expectedVersion}`;
+}
 function didNotRunComment(reason) {
   return { hasComments: false, message: "", didNotRun: { reason } };
 }
@@ -332,6 +364,11 @@ async function runCommentChecker(input, options = {}) {
   if (!existsSync2(binaryPath)) {
     debugLog2("comment-checker binary does not exist:", binaryPath);
     return didNotRunComment(`binary not found at ${binaryPath}`);
+  }
+  const stale = await staleBinaryReason(binaryPath, "comment-checker", options.expectedVersion ?? getCommentCheckerVersionFromCachePath(binaryPath), options.timeoutMs);
+  if (stale) {
+    debugLog2(stale);
+    return didNotRunComment(stale);
   }
   const jsonInput = JSON.stringify(input);
   debugLog2("running comment-checker with input:", jsonInput.substring(0, 200));
@@ -1802,7 +1839,7 @@ function changedTestChanges(directory, base, testPatterns) {
 function diffChanges(directory, base) {
   const changes = [];
   for (const relativePath of changedFiles(directory, base)) {
-    const absolute = isAbsolute(relativePath) ? relativePath : join2(directory, relativePath);
+    const absolute = isAbsolute2(relativePath) ? relativePath : join2(directory, relativePath);
     const newText = readWorktree(absolute);
     if (newText === undefined)
       continue;
@@ -1863,7 +1900,7 @@ function runDiffCheck(options) {
       }
       findings.push({
         rule: finding.rule,
-        filePath: relative(directory, change.filePath) || change.filePath,
+        filePath: relative2(directory, change.filePath) || change.filePath,
         line: finding.line,
         message: finding.message,
         severity: checks[finding.rule] ?? "warn",
@@ -1901,7 +1938,7 @@ async function runCommentDiffCheck(options, deps = {}) {
     try {
       const result = await runCheck(change);
       if (result.hasComments && result.message) {
-        entries.push({ file: relative(directory, change.filePath) || change.filePath, message: result.message });
+        entries.push({ file: relative2(directory, change.filePath) || change.filePath, message: result.message });
       }
     } catch {}
   }
@@ -2159,7 +2196,7 @@ function detectTestCommand(directory) {
 // src/audit.ts
 import { tool as tool2 } from "@opencode-ai/plugin";
 import { readFileSync as readFileSync4, readdirSync as readdirSync2, statSync } from "fs";
-import { isAbsolute as isAbsolute2, join as join4, relative as relative2 } from "path";
+import { isAbsolute as isAbsolute3, join as join4, relative as relative3 } from "path";
 
 // src/core/idle-advisory.ts
 import { tool } from "@opencode-ai/plugin";
@@ -2205,7 +2242,7 @@ function listRepositoryFiles(directory, paths) {
   const collected = [];
   if (paths && paths.length > 0) {
     for (const entry of paths) {
-      const abs = isAbsolute2(entry) ? entry : join4(directory, entry);
+      const abs = isAbsolute3(entry) ? entry : join4(directory, entry);
       try {
         const stat = statSync(abs);
         if (stat.isDirectory())
@@ -2401,7 +2438,7 @@ function renderAudit(report, format = "markdown") {
 `);
 }
 function display(filePath) {
-  return relative2(process.cwd(), filePath) || filePath;
+  return relative3(process.cwd(), filePath) || filePath;
 }
 function escapeCell(value) {
   return value.replace(/\|/g, "\\|").replace(/\n/g, " ").slice(0, 120);

@@ -21,6 +21,7 @@ const binaryPath = join(binaryDir, process.platform === "win32" ? "comment-check
 mkdirSync(binaryDir, { recursive: true })
 writeFileSync(join(cacheBase, "latest.json"), JSON.stringify({ version, checkedAt: Date.now() }))
 writeFileSync(binaryPath, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "comment-checker ${version}"; exit 0; fi
 {
   printf 'ARGS:'
   printf '%s\\037' "$@"
@@ -49,6 +50,7 @@ const testModePath = join(cacheRoot, "test-mode")
 mkdirSync(testBinaryDir, { recursive: true })
 writeFileSync(join(testCacheBase, "latest.json"), JSON.stringify({ version: testVersion, checkedAt: Date.now() }))
 writeFileSync(testBinaryPath, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "test-checker ${testVersion}"; exit 0; fi
 cat > /dev/null
 case "$(cat '${testModePath}')" in
   clean) printf '%s\\n' 'TEST QUALITY DETECTED: no weakened tests.' >&2; exit 0 ;;

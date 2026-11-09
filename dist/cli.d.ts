@@ -12,6 +12,7 @@ export interface RunOptions {
     cliPath?: string;
     prompt?: string;
     timeoutMs?: number;
+    expectedVersion?: string;
 }
 export declare function runCommentChecker(input: HookInput, options?: RunOptions): Promise<CheckResult>;
 export declare function getTestCheckerPath(): Promise<string | null>;
@@ -20,6 +21,7 @@ export declare function startTestCheckerBackgroundInit(): void;
 export interface RunTestOptions {
     cliPath?: string;
     timeoutMs?: number;
+    expectedVersion?: string;
 }
 export declare function parseTestCheckerFindings(stderr: string, fallbackFile?: string): TestCheckerFinding[] | null;
 export declare function runTestChecker(input: HookInput, options?: RunTestOptions): Promise<TestCheckerResult>;

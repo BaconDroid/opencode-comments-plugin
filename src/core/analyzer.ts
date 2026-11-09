@@ -30,6 +30,10 @@ export interface AnalyzerResult {
   // Set when the engine could not run. The guard surfaces it once per session
   // and otherwise leaves the edit alone.
   didNotRun?: string
+  // True when the regex rules produced this result because the binary engine
+  // could not be used, so the guard can say the fallback ran instead of
+  // claiming nothing checked the change.
+  fallbackUsed?: boolean
   // Message queued for the next tool call (idle analyzers).
   note?: string
 }

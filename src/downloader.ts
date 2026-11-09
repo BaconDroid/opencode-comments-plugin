@@ -1,6 +1,6 @@
 import { spawn } from "bun"
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { isAbsolute, join, relative, sep } from "node:path"
 import { homedir } from "node:os"
 import { createDebugLog } from "./core/debug"
 import { COMMENT_CHECKER_BINARY_NAME, COMMENT_CHECKER_FALLBACK_VERSION } from "./constants"
@@ -36,6 +36,20 @@ export function getCachedBinaryPath(version?: string | null): string | null {
   if (!version) return null
   const binaryPath = join(getCacheDir(), version, COMMENT_CHECKER_BINARY_NAME)
   return existsSync(binaryPath) ? binaryPath : null
+}
+
+// The version segment of a cache path (`<cacheDir>/<version>/<binary>`), or
+// null for a binary resolved outside the cache (e.g. a test `cliPath`). Used to
+// compare the binary's own `--version` with the version the plugin pinned.
+function getCachedVersionForPath(binaryPath: string, cacheDir: string): string | null {
+  const rel = relative(cacheDir, binaryPath)
+  if (rel.length === 0 || isAbsolute(rel) || rel.startsWith(`..${sep}`) || rel === "..") return null
+  const segments = rel.split(sep)
+  return segments.length >= 2 ? (segments[0] ?? null) : null
+}
+
+export function getCommentCheckerVersionFromCachePath(binaryPath: string): string | null {
+  return getCachedVersionForPath(binaryPath, getCacheDir())
 }
 
 export function parseLatestTag(location: string | null): string | null {
@@ -263,6 +277,10 @@ export function getCachedTestCheckerPath(version?: string | null): string | null
   return existsSync(binaryPath) ? binaryPath : null
 }
 
+export function getTestCheckerVersionFromCachePath(binaryPath: string): string | null {
+  return getCachedVersionForPath(binaryPath, getTestCheckerCacheDir())
+}
+
 export function getTestCheckerVersion(): string | null {
   const version = process.env.TEST_CHECKER_VERSION
   return typeof version === "string" && version.trim().length > 0 ? version.trim() : null
@@ -295,10 +313,14 @@ function writeTestLatestCache(version: string): void {
 }
 
 export function getPreferredTestCheckerVersionSync(): string | null {
-  return readTestLatestCache()?.version ?? getTestCheckerVersion()
+  // TEST_CHECKER_VERSION is an explicit pin, so it outranks a cached "latest".
+  return getTestCheckerVersion() ?? readTestLatestCache()?.version ?? null
 }
 
 export async function getLatestTestCheckerVersion(): Promise<string | null> {
+  const pinned = getTestCheckerVersion()
+  if (pinned) return pinned
+
   const cached = readTestLatestCache()
   if (cached && Date.now() - cached.checkedAt < LATEST_TTL_MS) {
     return cached.version

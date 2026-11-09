@@ -110,7 +110,7 @@ Every option can also be set (and overridden) through the environment, which alw
 - Runs on the tools in `tools` (`write`, `edit`, and `apply_patch` by default).
 - If the CLI detects comments, it appends the warning message to the tool output, so the model that called the tool reads it on its next turn. Nothing is blocked and the file is never rewritten.
 - Only comments introduced by the change are candidates: for `edit` and `apply_patch` the plugin passes the old and the new snippet, so a comment that was already on the changed lines is not reported; for `write` the plugin reads the previous on-disk content first and, when that previous content exists, skips the check when no comment line was added - rewriting a file does not re-flag the comments it already contained. When new comment lines are added, the whole new content is checked.
-- The `comment-checker` version is resolved from the latest GitHub release (checked at most once a day); offline it falls back to the previously cached release tag or the built-in fallback version. The binary for that version is downloaded on demand into `~/.cache/opencode-comments-plugin/bin/<version>/` when the cache does not already have it - the exact order is listed under [Detection engine](#detection-engine).
+- The `comment-checker` version is resolved from the latest GitHub release (checked at most once a day); offline it falls back to the previously cached release tag or the built-in fallback version. The binary for that version is downloaded on demand into `~/.cache/opencode-comments-plugin/bin/<version>/` when the cache does not already have it - the exact order is listed under [Detection engine](#detection-engine). A cached binary that reports a different `--version` than the resolved cache version is rejected with a warning shown once per session, instead of running comment checks through the wrong engine.
 - Inline bypass: `// comment-guard: allow <reason>` within +/-2 lines of the added comments suppresses the file's warning; file-level `// comment-guard-disable-file` suppresses it outright. A suppressed or warned file with markers reports them under a "Comment guard bypass recorded" footer.
 
 ## Detection
@@ -196,8 +196,15 @@ If the binary is unavailable (offline, unsupported platform, timeout or a
 download failure), the guard falls back to the in-process regex rules below, so a
 missing binary only degrades precision - never the guard's safety. Set
 `test_guard.engine: "regex"` (or `TEST_GUARD_ENGINE=regex`) to force the
-deterministic regex engine. `TEST_CHECKER_VERSION` pins the binary version; the
-binary has no npm package, so an explicit version is the only offline source.
+deterministic regex engine. `TEST_CHECKER_VERSION` pins the binary version and
+outranks a cached release tag; the binary has no npm package, so an explicit
+version is the only offline source.
+
+Before using a cached binary, the plugin probes its `--version` and compares it
+with the version it resolved for the cache directory. On a mismatch it warns once
+per session, names both versions, and uses the in-process regex rules for that
+run instead of silently trusting the wrong engine. The same check applies to
+`comment-checker`.
 
 `test_patterns` selects test files only. Harness/config paths (CI workflows,
 `.test-checker.json`, `jest`/`vitest`/`karma` config, `pytest.ini`, `tox.ini`,
@@ -413,9 +420,12 @@ rules.
 
 The default `test-checker` binary is AST-grade (tree-sitter), but
 the regex fallback that runs when it is unavailable can misread a test
-declaration written inside a string or a regex literal — use the opt-in external
+declaration written inside a string or a regex literal - use the opt-in external
 parser adapter for AST-grade precision without the binary. Cross-file duplicate
 detection runs in the audit/CI paths, not the live per-file hook.
+
+Switching to the regex fallback is announced once per session: a missing,
+stale/wrong-version or unparseable binary no longer changes the rule ids silently.
 
 `config-edited`, `harness-edited` and `gate-weakened` require the
 `test-checker` binary; the regex fallback that runs without it has no equivalent,

@@ -6,10 +6,12 @@ import {
   ensureTestCheckerBinary,
   getCachedBinaryPath,
   getCachedTestCheckerPath,
+  getCommentCheckerVersionFromCachePath,
   getLatestCommentCheckerVersion,
   getLatestTestCheckerVersion,
   getPreferredCommentCheckerVersionSync,
   getPreferredTestCheckerVersionSync,
+  getTestCheckerVersionFromCachePath,
 } from "./downloader"
 import { runProcess } from "./core/runner"
 import { createDebugLog } from "./core/debug"
@@ -105,11 +107,48 @@ export interface RunOptions {
   cliPath?: string
   prompt?: string
   timeoutMs?: number
+  // The version the plugin pinned for this binary. Defaults to the version
+  // segment of a cache path; binaries resolved elsewhere are not checked.
+  expectedVersion?: string
 }
 
 // First stderr line, for a compact "did not run" reason.
 function firstLine(text: string): string {
   return text.trim().split("\n")[0]?.trim() ?? ""
+}
+
+// One `--version` probe per binary path per process. The probe result never
+// blocks a check on its own: an unreadable version is treated as "unknown".
+const binaryVersionCache = new Map<string, string | null>()
+
+async function readBinaryVersion(
+  binaryPath: string,
+  binaryName: string,
+  timeoutMs?: number,
+): Promise<string | null> {
+  if (binaryVersionCache.has(binaryPath)) return binaryVersionCache.get(binaryPath) ?? null
+  const outcome = await runProcess([binaryPath, "--version"], { timeoutMs })
+  let version: string | null = null
+  if (outcome !== "timeout" && outcome.exitCode === 0) {
+    const match = outcome.stdout.trim().match(/^(\S+)\s+(\S+)$/)
+    if (match && match[1] === binaryName) version = match[2] ?? null
+  }
+  binaryVersionCache.set(binaryPath, version)
+  return version
+}
+
+// Returns a user-facing reason when the cached binary reports a version other
+// than the one the plugin pinned, or null when it is unknown/fresh.
+async function staleBinaryReason(
+  binaryPath: string,
+  binaryName: string,
+  expectedVersion: string | null,
+  timeoutMs: number | undefined,
+): Promise<string | null> {
+  if (!expectedVersion) return null
+  const actual = await readBinaryVersion(binaryPath, binaryName, timeoutMs)
+  if (!actual || actual === expectedVersion) return null
+  return `cached ${binaryName} binary is ${actual} but the plugin expects ${expectedVersion}`
 }
 
 function didNotRunComment(reason: string): CheckResult {
@@ -127,6 +166,17 @@ export async function runCommentChecker(input: HookInput, options: RunOptions = 
   if (!existsSync(binaryPath)) {
     debugLog("comment-checker binary does not exist:", binaryPath)
     return didNotRunComment(`binary not found at ${binaryPath}`)
+  }
+
+  const stale = await staleBinaryReason(
+    binaryPath,
+    "comment-checker",
+    options.expectedVersion ?? getCommentCheckerVersionFromCachePath(binaryPath),
+    options.timeoutMs,
+  )
+  if (stale) {
+    debugLog(stale)
+    return didNotRunComment(stale)
   }
 
   const jsonInput = JSON.stringify(input)
@@ -241,6 +291,7 @@ export function startTestCheckerBackgroundInit(): void {
 export interface RunTestOptions {
   cliPath?: string
   timeoutMs?: number
+  expectedVersion?: string
 }
 
 // Decodes one numeric character reference, guarding against out-of-range code
@@ -328,6 +379,17 @@ export async function runTestChecker(input: HookInput, options: RunTestOptions =
   if (!existsSync(binaryPath)) {
     debugLog("test-checker binary does not exist:", binaryPath)
     return { kind: "did-not-run", reason: `binary not found at ${binaryPath}` }
+  }
+
+  const stale = await staleBinaryReason(
+    binaryPath,
+    "test-checker",
+    options.expectedVersion ?? getTestCheckerVersionFromCachePath(binaryPath),
+    options.timeoutMs,
+  )
+  if (stale) {
+    debugLog(stale)
+    return { kind: "did-not-run", reason: stale }
   }
 
   const jsonInput = JSON.stringify(input)
