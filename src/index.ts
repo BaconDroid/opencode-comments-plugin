@@ -31,6 +31,7 @@ import { buildRuleChecks } from "./rules/tests"
 import { LEGACY_RULE_ALIASES } from "./rules/tests/rule-ids"
 import { detectTestCommand } from "./core/test-command"
 import { createGuardAuditTool, GUARD_AUDIT_COMMAND } from "./audit"
+import { createGuardCleanupTool, GUARD_CLEANUP_COMMAND } from "./cleanup"
 import type { ToolExecuteInput, ToolExecuteOutput } from "./types"
 
 // Single source of truth: deterministic rules warn, advisory rules are off.
@@ -303,6 +304,7 @@ export async function createHooks(input: PluginHooksInput, options?: unknown): P
   const commentGuard = createCommentGuard(() => resolvedCommentConfig)
   const testGuard = createTestGuard(() => resolvedTestGuard)
   const auditTool = createGuardAuditTool({ directory: projectDirectory, getConfig: () => resolvedTestGuard })
+  const cleanupTool = createGuardCleanupTool({ directory: projectDirectory, getConfig: () => resolvedTestGuard })
   const judge = createJudge({
     directory: projectDirectory,
     getConfig: () => resolvedJudge,
@@ -334,6 +336,7 @@ export async function createHooks(input: PluginHooksInput, options?: unknown): P
   return {
     tool: {
       guard_audit: auditTool,
+      guard_cleanup: cleanupTool,
       guard_judge: judgeTool,
       guard_parse: parseTool,
       guard_comment_judge: commentJudgeTool,
@@ -471,16 +474,26 @@ export const CommentCheckerPlugin = Plugin.define({
     const commands: unknown[] = Array.isArray(listed)
       ? listed
       : ((listed as { data?: unknown }).data as unknown[]) ?? []
-    const taken = commands.some((command: any) => command?.name === "guard-audit")
-    if (!taken) {
+    const taken = new Set(
+      commands
+        .map((command: any) => command?.name)
+        .filter((name): name is string => typeof name === "string"),
+    )
+    const definitions = [
+      { name: "guard-audit", definition: GUARD_AUDIT_COMMAND },
+      { name: "guard-cleanup", definition: GUARD_CLEANUP_COMMAND },
+    ].filter(entry => !taken.has(entry.name))
+    if (definitions.length > 0) {
       await ctx.command.transform(editor => {
-        editor.add({
-          name: "guard-audit",
-          description: GUARD_AUDIT_COMMAND.description,
-          execute: async ({ sessionID, prompt, delivery }) => {
-            await ctx.session.prompt({ ...prompt, sessionID, text: GUARD_AUDIT_COMMAND.template, delivery })
-          },
-        })
+        for (const { name, definition } of definitions) {
+          editor.add({
+            name,
+            description: definition.description,
+            execute: async ({ sessionID, prompt, delivery }) => {
+              await ctx.session.prompt({ ...prompt, sessionID, text: definition.template, delivery })
+            },
+          })
+        }
       })
     }
 

@@ -720,6 +720,7 @@ test("still warns when the allow marker is out of range", async () => {
 test("registers the guard tools", async () => {
   const hooks = await newSession()
   expect(hooks.tool!.guard_audit).toBeDefined()
+  expect(hooks.tool!.guard_cleanup).toBeDefined()
   expect(hooks.tool!.guard_judge).toBeDefined()
   expect(hooks.tool!.guard_parse).toBeDefined()
   expect(hooks.tool!.guard_comment_judge).toBeDefined()
@@ -735,6 +736,7 @@ test("registers the guard tools on the v2 tool domain", async () => {
   const host = await newV2Session()
   expect(host.tools.map(tool => tool.name)).toEqual([
     "guard_audit",
+    "guard_cleanup",
     "guard_judge",
     "guard_parse",
     "guard_comment_judge",
@@ -749,15 +751,30 @@ test("registers the guard tools on the v2 tool domain", async () => {
   host.cleanup?.()
 })
 
-test("registers the /guard-audit command without overwriting existing commands", async () => {
+test("registers the guard commands without overwriting existing commands", async () => {
   const host = await newV2Session(undefined, [{ name: "build", description: "build it" }])
-  expect(host.commands.map(command => command.name)).toEqual(["guard-audit"])
+  expect(host.commands.map(command => command.name)).toEqual(["guard-audit", "guard-cleanup"])
   expect(host.existingCommands).toEqual([{ name: "build", description: "build it" }])
   host.cleanup?.()
 })
 
 test("leaves an existing /guard-audit command alone", async () => {
   const host = await newV2Session(undefined, [{ name: "guard-audit", description: "mine" }])
+  expect(host.commands.map(command => command.name)).toEqual(["guard-cleanup"])
+  host.cleanup?.()
+})
+
+test("leaves an existing /guard-cleanup command alone", async () => {
+  const host = await newV2Session(undefined, [{ name: "guard-cleanup", description: "mine" }])
+  expect(host.commands.map(command => command.name)).toEqual(["guard-audit"])
+  host.cleanup?.()
+})
+
+test("registers neither guard command when both already exist", async () => {
+  const host = await newV2Session(undefined, [
+    { name: "guard-audit", description: "mine" },
+    { name: "guard-cleanup", description: "mine" },
+  ])
   expect(host.commands).toHaveLength(0)
   host.cleanup?.()
 })
@@ -770,6 +787,18 @@ test("the /guard-audit command prompts the session with the audit template", asy
   expect(host.prompts).toHaveLength(1)
   expect(host.prompts[0]).toMatchObject({ sessionID: "session-audit", delivery: "steer" })
   expect(host.prompts[0].text).toContain("guard_audit")
+  host.cleanup?.()
+})
+
+test("the /guard-cleanup command prompts the session with the cleanup template", async () => {
+  const host = await newV2Session()
+  const command = host.commands.find(entry => entry.name === "guard-cleanup")!
+  await command.execute({ sessionID: "session-cleanup", prompt: { text: "ignored" }, delivery: "steer" })
+
+  expect(host.prompts).toHaveLength(1)
+  expect(host.prompts[0]).toMatchObject({ sessionID: "session-cleanup", delivery: "steer" })
+  expect(host.prompts[0].text).toContain("guard_cleanup")
+  expect(host.prompts[0].text).toContain(".test-checker.json")
   host.cleanup?.()
 })
 

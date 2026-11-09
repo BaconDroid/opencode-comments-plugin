@@ -23,6 +23,7 @@ export interface AuditReport {
     generatedAt: string;
     testCommand?: string | null;
 }
+export declare function isSecretFile(filePath: string): boolean;
 export declare function listRepositoryFiles(directory: string, paths: string[] | undefined): string[];
 export declare function parseCommentsXml(xml: string): Array<{
     line: number;

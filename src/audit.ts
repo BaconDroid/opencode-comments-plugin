@@ -48,7 +48,7 @@ export interface AuditReport {
   testCommand?: string | null
 }
 
-function isSecretFile(filePath: string): boolean {
+export function isSecretFile(filePath: string): boolean {
   return SECRET_PATTERNS.some(pattern => pattern.test(filePath))
 }
 

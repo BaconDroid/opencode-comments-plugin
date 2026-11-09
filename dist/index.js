@@ -1,6 +1,6 @@
 // @bun
 // src/index.ts
-import { tool as tool3 } from "@opencode-ai/plugin";
+import { tool as tool4 } from "@opencode-ai/plugin";
 import { Plugin } from "@opencode/plugin";
 import { isAbsolute as isAbsolute4, join as join5 } from "path";
 
@@ -2370,7 +2370,7 @@ var ADVISORY_RULES = [
 // src/rules/tests/binary-rule-ids.json
 var binary_rule_ids_default = {
   source: "BaconDroid/test-checker",
-  ref: "60e58e0bee091490ef194a5995d1964938839ab8",
+  ref: "e024462be2901c555bbeec7cd304e6801152c0e4",
   rules: [
     "skip-added",
     "focus-added",
@@ -3890,6 +3890,283 @@ var GUARD_AUDIT_COMMAND = {
   description: "Audit existing comments and tests and produce a cleanup plan"
 };
 
+// src/cleanup.ts
+import { tool as tool3 } from "@opencode-ai/plugin";
+import { existsSync as existsSync5, readFileSync as readFileSync5 } from "fs";
+import { relative as relative4 } from "path";
+var CLEANUP_TIMEOUT_MS = 30000;
+var SUMMARY_MARKER = "[test-checker] cleanup pass:";
+var REMOVED_LINE = /^\s+removed: (.+) \[([^\]]+)\]\s*$/;
+var KEPT_LINE = /^\s+kept awaiting approval: (.+) \[([^\]]+)\]\s*$/;
+var NOTE_LINE = /^\s+note: (.+)\s*$/;
+function parseCleanupSummary(stderr) {
+  const removed = [];
+  const kept = [];
+  let note;
+  let summary = false;
+  for (const line of stderr.split(`
+`)) {
+    if (line.includes(SUMMARY_MARKER)) {
+      summary = true;
+      continue;
+    }
+    const removedMatch = REMOVED_LINE.exec(line);
+    if (removedMatch) {
+      removed.push({ name: removedMatch[1].trim(), rule: removedMatch[2].trim() });
+      continue;
+    }
+    const keptMatch = KEPT_LINE.exec(line);
+    if (keptMatch) {
+      kept.push({ name: keptMatch[1].trim(), rule: keptMatch[2].trim() });
+      continue;
+    }
+    if (note === undefined) {
+      const noteMatch = NOTE_LINE.exec(line);
+      if (noteMatch)
+        note = noteMatch[1].trim();
+    }
+  }
+  return { removed, kept, ...note ? { note } : {}, summary };
+}
+function cleanupPayload(filePath, cwd, content) {
+  return {
+    session_id: "guard-cleanup",
+    tool_name: "Write",
+    transcript_path: "",
+    cwd,
+    hook_event_name: COMMENT_CHECKER_EVENT,
+    is_test_file: true,
+    tool_input: { file_path: filePath, content }
+  };
+}
+async function defaultRun2(input, binaryPath, timeoutMs) {
+  if (!existsSync5(binaryPath)) {
+    return { kind: "did-not-run", reason: `binary not found at ${binaryPath}` };
+  }
+  const outcome = await runProcess([binaryPath, "--strip", "--min-confidence", "low"], {
+    stdin: JSON.stringify(input),
+    timeoutMs
+  });
+  if (outcome === "timeout") {
+    return { kind: "did-not-run", reason: "timed out or could not be spawned" };
+  }
+  if (outcome.exitCode !== 0 && outcome.exitCode !== 2) {
+    const detail = outcome.stderr.trim().split(`
+`)[0]?.trim() ?? "";
+    return { kind: "did-not-run", reason: `exited with code ${outcome.exitCode}${detail ? `: ${detail}` : ""}` };
+  }
+  return { kind: "output", stderr: outcome.stderr, exitCode: outcome.exitCode };
+}
+async function resolveBinary(cliPath) {
+  if (cliPath)
+    return cliPath;
+  const override = process.env.TC_BINARY?.trim();
+  if (override)
+    return override;
+  try {
+    return await getTestCheckerPath();
+  } catch {
+    return null;
+  }
+}
+function display2(filePath, directory) {
+  return relative4(directory, filePath) || filePath;
+}
+async function collectCleanup(options, deps = {}) {
+  const directory = options.directory;
+  const testPatterns = options.testPatterns ?? [];
+  const run = deps.run ?? defaultRun2;
+  const skipped = [];
+  const testFiles = [];
+  for (const filePath of listRepositoryFiles(directory, options.paths)) {
+    if (isSecretFile(filePath)) {
+      skipped.push(`${display2(filePath, directory)} (secret file pattern)`);
+      continue;
+    }
+    const language = detectLanguage(filePath);
+    if (!isSupportedLanguage(language))
+      continue;
+    if (!isTestPath(filePath, testPatterns))
+      continue;
+    testFiles.push(filePath);
+  }
+  const binaryPath = await resolveBinary(options.cliPath);
+  if (!binaryPath) {
+    return {
+      directory,
+      files: [],
+      skipped,
+      binaryAvailable: false,
+      unsupported: false,
+      generatedAt: new Date().toISOString()
+    };
+  }
+  const files = [];
+  for (const filePath of testFiles) {
+    let content;
+    try {
+      content = readFileSync5(filePath, "utf8");
+    } catch {
+      skipped.push(`${display2(filePath, directory)} (unreadable)`);
+      continue;
+    }
+    const file = {
+      filePath,
+      display: display2(filePath, directory),
+      removed: [],
+      kept: [],
+      summary: false
+    };
+    const outcome = await run(cleanupPayload(filePath, directory, content), binaryPath, options.timeoutMs ?? CLEANUP_TIMEOUT_MS);
+    if (outcome.kind === "did-not-run") {
+      file.error = outcome.reason;
+      files.push(file);
+      continue;
+    }
+    const parsed = parseCleanupSummary(outcome.stderr);
+    file.removed = parsed.removed;
+    file.kept = parsed.kept;
+    file.summary = parsed.summary;
+    if (parsed.note)
+      file.note = parsed.note;
+    files.push(file);
+  }
+  return {
+    directory,
+    files,
+    skipped,
+    binaryAvailable: true,
+    unsupported: files.length > 0 && files.every((file) => !file.summary && !file.error),
+    generatedAt: new Date().toISOString()
+  };
+}
+function renderCleanup(report) {
+  const lines = [];
+  lines.push("# Test guard cleanup");
+  lines.push("");
+  lines.push(`Generated ${report.generatedAt}`);
+  lines.push("");
+  const removed = report.files.reduce((count, file) => count + file.removed.length, 0);
+  const kept = report.files.reduce((count, file) => count + file.kept.length, 0);
+  if (!report.binaryAvailable) {
+    lines.push("No test-checker binary available; nothing was checked or rewritten.");
+    appendSkipped(lines, report.skipped);
+    return lines.join(`
+`);
+  }
+  if (report.files.length === 0) {
+    lines.push("No test files found. Nothing to clean up.");
+    appendSkipped(lines, report.skipped);
+    return lines.join(`
+`);
+  }
+  if (report.unsupported) {
+    lines.push("test-checker did not report a cleanup pass for any test file. The binary may predate `--strip`; nothing was rewritten.");
+    lines.push("Upgrade test-checker to the version that added `--strip` and run the cleanup again.");
+    appendSkipped(lines, report.skipped);
+    return lines.join(`
+`);
+  }
+  lines.push(`Removed ${removed} test block(s); ${kept} kept awaiting approval across ${report.files.length} test file(s).`);
+  lines.push("");
+  if (removed > 0) {
+    lines.push(`## Removed (${removed})`);
+    lines.push("");
+    lines.push("| file | test | rule |");
+    lines.push("|---|---|---|");
+    for (const file of report.files) {
+      for (const item of file.removed) {
+        lines.push(`| ${escapeCell2(file.display)} | ${escapeCell2(item.name)} | ${item.rule} |`);
+      }
+    }
+    lines.push("");
+  }
+  if (kept > 0) {
+    lines.push(`## Kept awaiting approval (${kept})`);
+    lines.push("");
+    lines.push("| file | test | rule |");
+    lines.push("|---|---|---|");
+    for (const file of report.files) {
+      for (const item of file.kept) {
+        lines.push(`| ${escapeCell2(file.display)} | ${escapeCell2(item.name)} | ${item.rule} |`);
+      }
+    }
+    lines.push("");
+    lines.push('Approve a removal with a "remove" entry (`{"glob","rules","reason"}`, reason at least 12 characters) in the git root\'s `.test-checker.json`, then run the cleanup again. The test-checker binary enforces the approval; the plugin never rewrites an unapproved candidate.');
+    lines.push("");
+  }
+  const notes = report.files.filter((file) => file.note);
+  if (notes.length > 0) {
+    lines.push("## Notes");
+    lines.push("");
+    for (const file of notes)
+      lines.push(`- \`${file.display}\`: ${file.note}`);
+    lines.push("");
+  }
+  const errors = report.files.filter((file) => file.error);
+  if (errors.length > 0) {
+    lines.push("## Files that could not be cleaned");
+    lines.push("");
+    for (const file of errors)
+      lines.push(`- \`${file.display}\`: ${file.error}`);
+    lines.push("");
+  }
+  const noSummary = report.files.filter((file) => !file.summary && !file.error);
+  if (noSummary.length > 0) {
+    lines.push("## No cleanup summary");
+    lines.push("");
+    lines.push("These files got no cleanup summary from the binary, which happens when it predates `--strip`. Nothing was rewritten.");
+    for (const file of noSummary)
+      lines.push(`- \`${file.display}\``);
+    lines.push("");
+  }
+  if (removed === 0 && kept === 0 && errors.length === 0 && noSummary.length === 0) {
+    lines.push("No cleanup candidates. Nothing to clean up.");
+  }
+  appendSkipped(lines, report.skipped);
+  return lines.join(`
+`);
+}
+function appendSkipped(lines, skipped) {
+  if (skipped.length === 0)
+    return;
+  lines.push("");
+  lines.push("## Skipped");
+  lines.push("");
+  for (const entry of skipped)
+    lines.push(`- ${entry}`);
+}
+function escapeCell2(value) {
+  return value.replace(/\|/g, "\\|").replace(/\n/g, " ").slice(0, 120);
+}
+async function runCleanup(options, deps = {}) {
+  return renderCleanup(await collectCleanup(options, deps));
+}
+function createGuardCleanupTool(options) {
+  return tool3({
+    description: "Run the test-checker cleanup pass over the repository's test files. Removes only candidates approved by a `remove` entry in `.test-checker.json` and reports the kept candidates awaiting approval. The binary owns the approval gate; the plugin never relaxes it.",
+    args: {},
+    execute: async () => {
+      try {
+        const config = (() => {
+          try {
+            return options.getConfig();
+          } catch {
+            return;
+          }
+        })();
+        return await runCleanup({ directory: options.directory, testPatterns: config?.testPatterns ?? [] }, options.deps);
+      } catch (err) {
+        return `cleanup failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+  });
+}
+var GUARD_CLEANUP_COMMAND = {
+  template: "Use the guard_cleanup tool to run the test-checker cleanup pass. It removes only the candidates a human approved with a `remove` entry in .test-checker.json and reports the rest as kept awaiting approval. Report the removed and kept items.",
+  description: "Remove test-checker cleanup candidates approved in .test-checker.json"
+};
+
 // src/index.ts
 var DEFAULT_TEST_CHECKS = buildRuleChecks(false);
 var V2_TOOL_ALIASES = {
@@ -4077,6 +4354,7 @@ async function createHooks(input, options) {
   const commentGuard = createCommentGuard(() => resolvedCommentConfig);
   const testGuard = createTestGuard(() => resolvedTestGuard);
   const auditTool = createGuardAuditTool({ directory: projectDirectory, getConfig: () => resolvedTestGuard });
+  const cleanupTool = createGuardCleanupTool({ directory: projectDirectory, getConfig: () => resolvedTestGuard });
   const judge = createJudge({
     directory: projectDirectory,
     getConfig: () => resolvedJudge,
@@ -4106,6 +4384,7 @@ async function createHooks(input, options) {
   return {
     tool: {
       guard_audit: auditTool,
+      guard_cleanup: cleanupTool,
       guard_judge: judgeTool,
       guard_parse: parseTool,
       guard_comment_judge: commentJudgeTool
@@ -4187,7 +4466,7 @@ ${user}` : user;
         editor.add({
           name,
           description: definition.description,
-          input: tool3.schema.toJSONSchema(tool3.schema.object(definition.args)),
+          input: tool4.schema.toJSONSchema(tool4.schema.object(definition.args)),
           execute: async (args) => ({ content: await definition.execute(args) })
         });
       }
@@ -4213,16 +4492,22 @@ ${user}` : user;
     })();
     const listed = await ctx.command.list();
     const commands = Array.isArray(listed) ? listed : listed.data ?? [];
-    const taken = commands.some((command) => command?.name === "guard-audit");
-    if (!taken) {
+    const taken = new Set(commands.map((command) => command?.name).filter((name) => typeof name === "string"));
+    const definitions = [
+      { name: "guard-audit", definition: GUARD_AUDIT_COMMAND },
+      { name: "guard-cleanup", definition: GUARD_CLEANUP_COMMAND }
+    ].filter((entry) => !taken.has(entry.name));
+    if (definitions.length > 0) {
       await ctx.command.transform((editor) => {
-        editor.add({
-          name: "guard-audit",
-          description: GUARD_AUDIT_COMMAND.description,
-          execute: async ({ sessionID, prompt, delivery }) => {
-            await ctx.session.prompt({ ...prompt, sessionID, text: GUARD_AUDIT_COMMAND.template, delivery });
-          }
-        });
+        for (const { name, definition } of definitions) {
+          editor.add({
+            name,
+            description: definition.description,
+            execute: async ({ sessionID, prompt, delivery }) => {
+              await ctx.session.prompt({ ...prompt, sessionID, text: definition.template, delivery });
+            }
+          });
+        }
       });
     }
     return () => controller.abort();
