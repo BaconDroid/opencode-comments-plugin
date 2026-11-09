@@ -45,7 +45,7 @@ const AUTHORITATIVE_RULE_IDS = [
   "mirror-implementation-test",
 ] as const
 
-const EXPECTED_REF = "485e1490c53d20fe4fa2577b95ac8764fe3b6285"
+const EXPECTED_REF = "4313271890fb9ff79be5b0fb48ad1a39856b3615"
 
 function parseRulesParagraph(markdown: string): string[] {
   const heading = /^##\s+Rules\s*$/m.exec(markdown)
@@ -60,7 +60,7 @@ const readmePath = join(tcRepo, "README.md")
 const hasReadme = existsSync(readmePath)
 if (!hasReadme) console.warn(`[binary-rule-ids] skipping README comparison: ${readmePath} not found (set TC_REPO to a test-checker checkout)`)
 
-test("the contract JSON is well formed, unique and points at tc main 485e149", () => {
+test("the contract JSON is well formed, unique and points at tc main 4313271", () => {
   expect(binaryRuleIds.source).toBe("BaconDroid/test-checker")
   expect(binaryRuleIds.ref).toBe(EXPECTED_REF)
   expect(Array.isArray(binaryRuleIds.rules)).toBe(true)
