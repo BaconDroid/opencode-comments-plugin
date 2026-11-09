@@ -8,7 +8,7 @@ import type { Bypass } from "./bypass"
 import type { GuardBaseConfig, Severity, TestEngine } from "./config"
 import { createDebugLog } from "./debug"
 import { extractPatchChanges, extractToolChange, firstString, readFileIfExists, type ExtractedChange } from "./diff"
-import { appendFeedback, didNotRunMessage, type Finding } from "./feedback"
+import { appendFeedback, didNotRunMessage, fallbackMessage, type Finding } from "./feedback"
 import { PendingCallStore, type PendingToolCall } from "./pending"
 import { formatBypassNote, renderAnalyzerResults, renderBypassFooter } from "./result-pipeline"
 import { isTriggeredTool } from "./triggers"
@@ -119,6 +119,7 @@ export function createTestGuard(
         const findings: Finding[] = []
         const bypassNotes: string[] = []
         let didNotRun: string | undefined
+        let fallbackUsed = false
         for (const change of changes) {
           const results = await registry.run("after", {
             tool: input.tool,
@@ -132,6 +133,7 @@ export function createTestGuard(
             if (result.findings) changeFindings.push(...result.findings)
             if (result.bypasses) changeBypasses.push(...result.bypasses)
             if (result.didNotRun !== undefined) didNotRun ??= result.didNotRun
+            if (result.fallbackUsed) fallbackUsed = true
           }
 
           for (const bypass of changeBypasses) {
@@ -166,7 +168,11 @@ export function createTestGuard(
 
         if (didNotRun !== undefined && !didNotRunWarned.has(input.sessionID)) {
           didNotRunWarned.add(input.sessionID)
-          parts.push(didNotRunMessage("test-checker", didNotRun))
+          parts.push(
+            fallbackUsed
+              ? fallbackMessage("test-checker", didNotRun)
+              : didNotRunMessage("test-checker", didNotRun),
+          )
         }
 
         let message = renderAnalyzerResults([{ findings }], {

@@ -273,3 +273,67 @@ test("parseTestCheckerFindings survives out-of-range numeric entities without dr
     { file: "a.ts", line: 3, rule: "r3", message: "ok" },
   ])
 })
+
+// --- cached binary version check ---
+
+function writeVersionedBinary(path: string, name: string, version: string, checkBody: string): string {
+  writeFileSync(
+    path,
+    [
+      "#!/bin/sh",
+      `if [ "$1" = "--version" ]; then echo "${name} ${version}"; exit 0; fi`,
+      checkBody,
+      "",
+    ].join("\n"),
+  )
+  chmodSync(path, 0o755)
+  return path
+}
+
+const FINDINGS_BODY =
+  `cat > /dev/null\nprintf '%s\\n' '<findings file="/work/a.test.ts"><finding line-number="2" rule="focus-added" confidence="high">Focused.</finding></findings>' >&2\nexit 2`
+
+test("runTestChecker warns when the cached test-checker version is stale", async () => {
+  process.env.XDG_CACHE_HOME = dir
+  const binaryName = process.platform === "win32" ? "test-checker.exe" : "test-checker"
+  const binaryPath = join(dir, "opencode-comments-plugin", "test-checker", "8.8.1", binaryName)
+  mkdirSync(join(dir, "opencode-comments-plugin", "test-checker", "8.8.1"), { recursive: true })
+  writeVersionedBinary(binaryPath, "test-checker", "8.8.0", FINDINGS_BODY)
+
+  const result = await runTestChecker(testHookInput(), { cliPath: binaryPath })
+
+  expect(result).toEqual({
+    kind: "did-not-run",
+    reason: "cached test-checker binary is 8.8.0 but the plugin expects 8.8.1",
+  })
+})
+
+test("runTestChecker does not warn when the cached test-checker version is fresh", async () => {
+  process.env.XDG_CACHE_HOME = dir
+  const binaryName = process.platform === "win32" ? "test-checker.exe" : "test-checker"
+  const binaryPath = join(dir, "opencode-comments-plugin", "test-checker", "8.8.2", binaryName)
+  mkdirSync(join(dir, "opencode-comments-plugin", "test-checker", "8.8.2"), { recursive: true })
+  writeVersionedBinary(binaryPath, "test-checker", "8.8.2", FINDINGS_BODY)
+
+  const result = await runTestChecker(testHookInput(), { cliPath: binaryPath })
+  const findings = result.kind === "findings" ? result.findings : []
+
+  expect(result.kind).toBe("findings")
+  expect(findings[0]?.rule).toBe("focus-added")
+})
+
+test("runCommentChecker warns when the cached comment-checker version is stale", async () => {
+  process.env.XDG_CACHE_HOME = dir
+  const binaryName = process.platform === "win32" ? "comment-checker.exe" : "comment-checker"
+  const binaryPath = join(dir, "opencode-comments-plugin", "bin", "8.8.3", binaryName)
+  mkdirSync(join(dir, "opencode-comments-plugin", "bin", "8.8.3"), { recursive: true })
+  writeVersionedBinary(binaryPath, "comment-checker", "8.8.2", "cat > /dev/null\nexit 0")
+
+  const result = await runCommentChecker(hookInput(), { cliPath: binaryPath })
+
+  expect(result).toEqual({
+    hasComments: false,
+    message: "",
+    didNotRun: { reason: "cached comment-checker binary is 8.8.2 but the plugin expects 8.8.3" },
+  })
+})

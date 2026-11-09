@@ -84,6 +84,18 @@ test("engine binary falls back to the regex rules when the binary is unavailable
 
   const result = await engine.analyze(ctx(change("it.only('a', () => {\n  expect(1).toBe(1)\n})\n")))
   expect(result.findings?.some(finding => finding.rule === "skip-focus-added")).toBe(true)
+  expect(result.didNotRun).toBe("test-checker output could not be parsed; used the in-process regex rules")
+})
+
+test("engine binary announces a thrown runner instead of falling back silently", async () => {
+  const engine = createTestEngineAnalyzer(() => engineConfig(), async () => {
+    throw new Error("spawn failed")
+  })
+
+  const result = await engine.analyze(ctx(change("it.only('a', () => {\n  expect(1).toBe(1)\n})\n")))
+
+  expect(result.findings?.some(finding => finding.rule === "skip-focus-added")).toBe(true)
+  expect(result.didNotRun).toBe("test-checker could not be run; used the in-process regex rules")
 })
 
 test("engine regex never invokes the binary", async () => {

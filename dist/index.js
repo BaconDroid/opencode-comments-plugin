@@ -2,7 +2,7 @@
 // src/index.ts
 import { tool as tool3 } from "@opencode-ai/plugin";
 import { Plugin } from "@opencode/plugin";
-import { isAbsolute as isAbsolute3, join as join5 } from "path";
+import { isAbsolute as isAbsolute4, join as join5 } from "path";
 
 // src/constants.ts
 var COMMENT_CHECKER_EVENT = "PostToolUse";
@@ -19,7 +19,7 @@ import { existsSync as existsSync2 } from "fs";
 // src/downloader.ts
 var {spawn } = globalThis.Bun;
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { join } from "path";
+import { isAbsolute, join, relative, sep } from "path";
 import { homedir } from "os";
 
 // src/core/debug.ts
@@ -56,6 +56,16 @@ function getCachedBinaryPath(version) {
     return null;
   const binaryPath = join(getCacheDir(), version, COMMENT_CHECKER_BINARY_NAME);
   return existsSync(binaryPath) ? binaryPath : null;
+}
+function getCachedVersionForPath(binaryPath, cacheDir) {
+  const rel = relative(cacheDir, binaryPath);
+  if (rel.length === 0 || isAbsolute(rel) || rel.startsWith(`..${sep}`) || rel === "..")
+    return null;
+  const segments = rel.split(sep);
+  return segments.length >= 2 ? segments[0] ?? null : null;
+}
+function getCommentCheckerVersionFromCachePath(binaryPath) {
+  return getCachedVersionForPath(binaryPath, getCacheDir());
 }
 function parseLatestTag(location) {
   if (!location)
@@ -235,6 +245,9 @@ function getCachedTestCheckerPath(version) {
   const binaryPath = join(getTestCheckerCacheDir(), version, getTestCheckerBinaryName());
   return existsSync(binaryPath) ? binaryPath : null;
 }
+function getTestCheckerVersionFromCachePath(binaryPath) {
+  return getCachedVersionForPath(binaryPath, getTestCheckerCacheDir());
+}
 function getTestCheckerVersion() {
   const version = process.env.TEST_CHECKER_VERSION;
   return typeof version === "string" && version.trim().length > 0 ? version.trim() : null;
@@ -264,9 +277,12 @@ function writeTestLatestCache(version) {
   }
 }
 function getPreferredTestCheckerVersionSync() {
-  return readTestLatestCache()?.version ?? getTestCheckerVersion();
+  return getTestCheckerVersion() ?? readTestLatestCache()?.version ?? null;
 }
 async function getLatestTestCheckerVersion() {
+  const pinned = getTestCheckerVersion();
+  if (pinned)
+    return pinned;
   const cached = readTestLatestCache();
   if (cached && Date.now() - cached.checkedAt < LATEST_TTL_MS) {
     return cached.version;
@@ -485,6 +501,28 @@ function firstLine(text) {
   return text.trim().split(`
 `)[0]?.trim() ?? "";
 }
+var binaryVersionCache = new Map;
+async function readBinaryVersion(binaryPath, binaryName, timeoutMs) {
+  if (binaryVersionCache.has(binaryPath))
+    return binaryVersionCache.get(binaryPath) ?? null;
+  const outcome = await runProcess([binaryPath, "--version"], { timeoutMs });
+  let version = null;
+  if (outcome !== "timeout" && outcome.exitCode === 0) {
+    const match = outcome.stdout.trim().match(/^(\S+)\s+(\S+)$/);
+    if (match && match[1] === binaryName)
+      version = match[2] ?? null;
+  }
+  binaryVersionCache.set(binaryPath, version);
+  return version;
+}
+async function staleBinaryReason(binaryPath, binaryName, expectedVersion, timeoutMs) {
+  if (!expectedVersion)
+    return null;
+  const actual = await readBinaryVersion(binaryPath, binaryName, timeoutMs);
+  if (!actual || actual === expectedVersion)
+    return null;
+  return `cached ${binaryName} binary is ${actual} but the plugin expects ${expectedVersion}`;
+}
 function didNotRunComment(reason) {
   return { hasComments: false, message: "", didNotRun: { reason } };
 }
@@ -497,6 +535,11 @@ async function runCommentChecker(input, options = {}) {
   if (!existsSync2(binaryPath)) {
     debugLog2("comment-checker binary does not exist:", binaryPath);
     return didNotRunComment(`binary not found at ${binaryPath}`);
+  }
+  const stale = await staleBinaryReason(binaryPath, "comment-checker", options.expectedVersion ?? getCommentCheckerVersionFromCachePath(binaryPath), options.timeoutMs);
+  if (stale) {
+    debugLog2(stale);
+    return didNotRunComment(stale);
   }
   const jsonInput = JSON.stringify(input);
   debugLog2("running comment-checker with input:", jsonInput.substring(0, 200));
@@ -635,6 +678,11 @@ async function runTestChecker(input, options = {}) {
   if (!existsSync2(binaryPath)) {
     debugLog2("test-checker binary does not exist:", binaryPath);
     return { kind: "did-not-run", reason: `binary not found at ${binaryPath}` };
+  }
+  const stale = await staleBinaryReason(binaryPath, "test-checker", options.expectedVersion ?? getTestCheckerVersionFromCachePath(binaryPath), options.timeoutMs);
+  if (stale) {
+    debugLog2(stale);
+    return { kind: "did-not-run", reason: stale };
   }
   const jsonInput = JSON.stringify(input);
   debugLog2("running test-checker with input:", jsonInput.substring(0, 200));
@@ -1202,6 +1250,10 @@ ${message}`;
 }
 function didNotRunMessage(tool, reason) {
   return `${tool} did not run \u2014 nothing checked this write.
+${reason}`;
+}
+function fallbackMessage(tool, reason) {
+  return `${tool} did not run \u2014 the in-process regex rules were used instead.
 ${reason}`;
 }
 function appendFeedback(output, message) {
@@ -2533,6 +2585,15 @@ function createTestEngineAnalyzer(getConfig, run = runTestChecker) {
       const isHarnessFile = isHarnessPath(change.filePath);
       const useBinary = (config.engine ?? "binary") === "binary" && (isTestFile || isHarnessFile) && !change.isDelete && change.newText.trim().length > 0;
       if (useBinary) {
+        const fallbackWithNotice = (reason) => {
+          const fallback = rules.analyze(ctx);
+          return {
+            ...fallback,
+            findings: (fallback.findings ?? []).filter((finding) => finding.rule !== "protected-paths"),
+            didNotRun: reason,
+            fallbackUsed: true
+          };
+        };
         let outcome = null;
         try {
           outcome = await run(buildTestCheckerInput(change, ctx, isTestFile && !isHarnessFile));
@@ -2545,14 +2606,12 @@ function createTestEngineAnalyzer(getConfig, run = runTestChecker) {
             bypasses: collectBypasses2(change)
           };
         }
-        if (outcome?.kind === "did-not-run") {
-          const fallback = rules.analyze(ctx);
-          return {
-            ...fallback,
-            findings: (fallback.findings ?? []).filter((finding) => finding.rule !== "protected-paths"),
-            didNotRun: outcome.reason
-          };
+        if (outcome?.kind === "did-not-run")
+          return fallbackWithNotice(outcome.reason);
+        if (outcome?.kind === "fallback") {
+          return fallbackWithNotice("test-checker output could not be parsed; used the in-process regex rules");
         }
+        return fallbackWithNotice("test-checker could not be run; used the in-process regex rules");
       }
       return rules.analyze(ctx);
     }
@@ -2631,6 +2690,7 @@ function createTestGuard(getResolved, deps = {}) {
         const findings = [];
         const bypassNotes = [];
         let didNotRun;
+        let fallbackUsed = false;
         for (const change of changes) {
           const results = await registry.run("after", {
             tool: input.tool,
@@ -2646,6 +2706,8 @@ function createTestGuard(getResolved, deps = {}) {
               changeBypasses.push(...result.bypasses);
             if (result.didNotRun !== undefined)
               didNotRun ??= result.didNotRun;
+            if (result.fallbackUsed)
+              fallbackUsed = true;
           }
           for (const bypass of changeBypasses) {
             debugLog4("bypass", change.filePath, bypass);
@@ -2677,7 +2739,7 @@ function createTestGuard(getResolved, deps = {}) {
         }
         if (didNotRun !== undefined && !didNotRunWarned.has(input.sessionID)) {
           didNotRunWarned.add(input.sessionID);
-          parts.push(didNotRunMessage("test-checker", didNotRun));
+          parts.push(fallbackUsed ? fallbackMessage("test-checker", didNotRun) : didNotRunMessage("test-checker", didNotRun));
         }
         let message = renderAnalyzerResults([{ findings }], {
           customPrompt: resolved.customPrompt,
@@ -2790,7 +2852,7 @@ function createAdvisoryTool(description, controller) {
 
 // src/core/ci.ts
 import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
-import { isAbsolute, join as join2, relative } from "path";
+import { isAbsolute as isAbsolute2, join as join2, relative as relative2 } from "path";
 function run(args, cwd) {
   const result = Bun.spawnSync(args, { cwd, stdout: "pipe", stderr: "ignore" });
   return { stdout: result.stdout.toString(), exitCode: result.exitCode };
@@ -2830,7 +2892,7 @@ function changedTestChanges(directory, base, testPatterns) {
 function diffChanges(directory, base) {
   const changes = [];
   for (const relativePath of changedFiles(directory, base)) {
-    const absolute = isAbsolute(relativePath) ? relativePath : join2(directory, relativePath);
+    const absolute = isAbsolute2(relativePath) ? relativePath : join2(directory, relativePath);
     const newText = readWorktree(absolute);
     if (newText === undefined)
       continue;
@@ -3508,7 +3570,7 @@ function detectTestCommand(directory) {
 // src/audit.ts
 import { tool as tool2 } from "@opencode-ai/plugin";
 import { readFileSync as readFileSync4, readdirSync as readdirSync2, statSync } from "fs";
-import { isAbsolute as isAbsolute2, join as join4, relative as relative2 } from "path";
+import { isAbsolute as isAbsolute3, join as join4, relative as relative3 } from "path";
 var EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "build", "vendor", ".cache", "coverage"]);
 var SECRET_PATTERNS = [/(?:^|\/)\.env(?:\.|$)/, /\.pem$/, /\.key$/, /(?:^|\/)id_(?:rsa|ed25519)$/, /\.p12$/];
 var MAX_FILES = 500;
@@ -3549,7 +3611,7 @@ function listRepositoryFiles(directory, paths) {
   const collected = [];
   if (paths && paths.length > 0) {
     for (const entry of paths) {
-      const abs = isAbsolute2(entry) ? entry : join4(directory, entry);
+      const abs = isAbsolute3(entry) ? entry : join4(directory, entry);
       try {
         const stat = statSync(abs);
         if (stat.isDirectory())
@@ -3745,7 +3807,7 @@ function renderAudit(report, format = "markdown") {
 `);
 }
 function display(filePath) {
-  return relative2(process.cwd(), filePath) || filePath;
+  return relative3(process.cwd(), filePath) || filePath;
 }
 function escapeCell(value) {
   return value.replace(/\|/g, "\\|").replace(/\n/g, " ").slice(0, 120);
@@ -3890,7 +3952,7 @@ function canonicalPatchMetadata(metadata, directory) {
       if (typeof mapped.type !== "string" && status !== undefined)
         mapped.type = PATCH_STATUS_TO_TYPE[status];
       if (typeof mapped.filePath !== "string" && path !== undefined) {
-        mapped.filePath = isAbsolute3(path) ? path : join5(directory, path);
+        mapped.filePath = isAbsolute4(path) ? path : join5(directory, path);
       }
       return mapped;
     })

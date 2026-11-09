@@ -21,6 +21,7 @@ export declare function appendGuardMessage(output: {
     output: string;
 }, message: string, marker?: string): void;
 export declare function didNotRunMessage(tool: string, reason: string): string;
+export declare function fallbackMessage(tool: string, reason: string): string;
 export declare function appendFeedback(output: {
     output: string;
 }, message: string): void;

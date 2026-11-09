@@ -69,6 +69,12 @@ export function didNotRunMessage(tool: string, reason: string): string {
   return `${tool} did not run — nothing checked this write.\n${reason}`
 }
 
+// The test guard's regex rules ran instead of the binary. Distinct from
+// `didNotRunMessage` so the user is not told nothing checked the change.
+export function fallbackMessage(tool: string, reason: string): string {
+  return `${tool} did not run — the in-process regex rules were used instead.\n${reason}`
+}
+
 // Appends feedback to the tool output. Idempotent: a second call with the same
 // marker does not duplicate the message.
 export function appendFeedback(output: { output: string }, message: string): void {

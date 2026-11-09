@@ -1,5 +1,6 @@
 export declare function getCacheDir(): string;
 export declare function getCachedBinaryPath(version?: string | null): string | null;
+export declare function getCommentCheckerVersionFromCachePath(binaryPath: string): string | null;
 export declare function parseLatestTag(location: string | null): string | null;
 export declare function getPreferredCommentCheckerVersionSync(): string;
 export declare function getLatestCommentCheckerVersion(): Promise<string>;
@@ -9,6 +10,7 @@ export declare function ensureCommentCheckerBinary(versionOverride?: string): Pr
 export declare function getTestCheckerCacheDir(): string;
 export declare function getTestCheckerBinaryName(): string;
 export declare function getCachedTestCheckerPath(version?: string | null): string | null;
+export declare function getTestCheckerVersionFromCachePath(binaryPath: string): string | null;
 export declare function getTestCheckerVersion(): string | null;
 export declare function getPreferredTestCheckerVersionSync(): string | null;
 export declare function getLatestTestCheckerVersion(): Promise<string | null>;
