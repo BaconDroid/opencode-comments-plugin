@@ -368,7 +368,7 @@ export async function createHooks(input: PluginHooksInput, options?: unknown): P
 // OpenCode V2 entrypoint. `setup` is the only adapter between the V2 host event
 // shapes and the V1 hook contract the guards are written against.
 export const CommentCheckerPlugin = Plugin.define({
-  id: "opencode-comments-plugin",
+  id: "opencode-guard-plugin",
   async setup(ctx) {
     // V1 handed the judge runner the SDK client. V2 exposes a stateless,
     // tool-free generation, which is exactly what the judge asked for (tools
@@ -376,7 +376,7 @@ export const CommentCheckerPlugin = Plugin.define({
     // only mints the token the runner threads through create -> prompt -> delete.
     const client = {
       session: {
-        create: async () => ({ data: { id: "opencode-comments-plugin-judge" } }),
+        create: async () => ({ data: { id: "opencode-guard-plugin-judge" } }),
         prompt: async (request: { body?: Record<string, any> }) => {
           const body = request?.body ?? {}
           const system = typeof body.system === "string" ? body.system : ""
@@ -461,12 +461,12 @@ export const CommentCheckerPlugin = Plugin.define({
           try {
             await hooks.event?.({ event: { type: event.type, properties: { sessionID } } })
           } catch (error) {
-            console.error("[opencode-comments-plugin] idle advisory failed:", error)
+            console.error("[opencode-guard-plugin] idle advisory failed:", error)
           }
         }
       } catch (error) {
         if (!controller.signal.aborted) {
-          console.error("[opencode-comments-plugin] event subscription failed:", error)
+          console.error("[opencode-guard-plugin] event subscription failed:", error)
         }
       }
     })()

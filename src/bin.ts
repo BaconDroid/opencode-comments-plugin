@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
-// opencode-comments-plugin CLI: CI parity and config validation.
+// opencode-guard-plugin CLI: CI parity and config validation.
 //
-//   opencode-comments-plugin guard check [--diff] [--base <rev>] [--json] [--include-advisory]
-//   opencode-comments-plugin guard validate-config [file]
-//   opencode-comments-plugin guard audit [--scope comments|tests|both] [--paths a,b] [--json]
-//   opencode-comments-plugin guard cleanup
+//   opencode-guard-plugin guard check [--diff] [--base <rev>] [--json] [--include-advisory]
+//   opencode-guard-plugin guard validate-config [file]
+//   opencode-guard-plugin guard audit [--scope comments|tests|both] [--paths a,b] [--json]
+//   opencode-guard-plugin guard cleanup
 
 import { readFileSync } from "node:fs"
 import { runCommentDiffCheck, runDiffCheck } from "./core/ci"
@@ -128,7 +128,7 @@ async function checkCommand(parsed: ParsedArgs): Promise<number> {
 function usage(): void {
   process.stdout.write(
     [
-      "opencode-comments-plugin guard <command>",
+      "opencode-guard-plugin guard <command>",
       "",
       "  check [--diff] [--base <rev>] [--scope tests|comments|both] [--json] [--include-advisory]",
       "  validate-config [file]",

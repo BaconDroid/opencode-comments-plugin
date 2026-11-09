@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "opencode-comments-plugin",
+      "name": "opencode-guard-plugin",
       "dependencies": {
         "@opencode-ai/plugin": "^1.0.162",
         "@opencode/plugin": "2.0.30",
