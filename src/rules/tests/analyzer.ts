@@ -11,7 +11,7 @@ import { createDebugLog } from "../../core/debug"
 import { stripComments, type ExtractedChange } from "../../core/diff"
 import type { HookInput, TestCheckerFinding, TestCheckerResult } from "../../types"
 import { runTestChecker } from "../../cli"
-import { isTestPath } from "./patterns"
+import { isHarnessPath, isTestPath } from "./patterns"
 import { runTestRules } from "./index"
 import { collectBypasses } from "./content"
 import { resolveRuleSeverity } from "./rule-ids"
@@ -98,7 +98,10 @@ export interface TestEngineConfig extends RuleAnalyzerConfig {
 
 // Reconstructs the hook payload the test-checker binary expects from an
 // extracted change: a new file is a `Write`, anything else an `Edit`.
-function buildTestCheckerInput(change: ExtractedChange, ctx: AnalyzerContext): HookInput {
+// `isTestFile` is the plugin's classification: harness/config paths are sent as
+// non-test so the binary reaches its `harness-edited`/`gate-weakened` branch
+// instead of the test-file analysis.
+function buildTestCheckerInput(change: ExtractedChange, ctx: AnalyzerContext, isTestFile: boolean): HookInput {
   const toolInput: HookInput["tool_input"] = { file_path: change.filePath }
   let toolName: string
   if (change.isNew) {
@@ -116,8 +119,9 @@ function buildTestCheckerInput(change: ExtractedChange, ctx: AnalyzerContext): H
     cwd: process.cwd(),
     hook_event_name: COMMENT_CHECKER_EVENT,
     // The plugin already classified the path; the binary honors this so custom
-    // `test_patterns` cannot cause a false negative.
-    is_test_file: true,
+    // `test_patterns` cannot cause a false negative. Harness paths are not test
+    // files, and the binary only runs its harness rules when this is false.
+    is_test_file: isTestFile,
     tool_input: toolInput,
   }
 }
@@ -158,14 +162,14 @@ function binaryToFindings(
   }))
 }
 
-// The test guard's default engine. For a test change it first asks the
-// `test-checker` binary; its findings are authoritative. When the binary cannot
-// run, the change still falls back to the in-process regex rules so detection
-// works offline, and the result carries `didNotRun` so the guard can say the
-// binary checked nothing. A `fallback` outcome (exit 2 with unparseable stderr)
-// uses the regex rules silently, as before. Non-test changes, deletes and
-// empty-newText changes always use the regex rules (the binary would silently
-// clear them).
+// The test guard's default engine. For a test change or a harness/config change
+// it first asks the `test-checker` binary; its findings are authoritative. When
+// the binary cannot run, the change still falls back to the in-process regex
+// rules so detection works offline, and the result carries `didNotRun` so the
+// guard can say the binary checked nothing. A `fallback` outcome (exit 2 with
+// unparseable stderr) uses the regex rules silently, as before. Non-test,
+// non-harness changes, deletes and empty-newText changes always use the regex
+// rules (the binary would silently clear them).
 export function createTestEngineAnalyzer(
   getConfig: () => TestEngineConfig,
   run: TestCheckerRunner = runTestChecker,
@@ -180,16 +184,21 @@ export function createTestEngineAnalyzer(
       if (!change) return {}
       const config = getConfig()
       const isTestFile = config.isTestFile ?? isTestPath(change.filePath, config.testPatterns)
+      // Harness/config edits are not test files, but the binary has rules for
+      // them that only run when it receives the change. Classification here wins
+      // over `isTestFile` so a test-pattern match (e.g. `tests/conftest.py`)
+      // cannot route a harness file down the test-file analysis path.
+      const isHarnessFile = isHarnessPath(change.filePath)
       const useBinary =
         (config.engine ?? "binary") === "binary" &&
-        isTestFile &&
+        (isTestFile || isHarnessFile) &&
         !change.isDelete &&
         change.newText.trim().length > 0
 
       if (useBinary) {
         let outcome: TestCheckerResult | null = null
         try {
-          outcome = await run(buildTestCheckerInput(change, ctx))
+          outcome = await run(buildTestCheckerInput(change, ctx, isTestFile && !isHarnessFile))
         } catch {
           // Fail-open: an engine failure degrades to the regex fallback.
           outcome = null

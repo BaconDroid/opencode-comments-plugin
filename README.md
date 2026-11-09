@@ -194,10 +194,17 @@ on demand. It is AST-grade (tree-sitter) for Python, JS/TS, Rust and Go.
 
 If the binary is unavailable (offline, unsupported platform, timeout or a
 download failure), the guard falls back to the in-process regex rules below, so a
-missing binary only degrades precision — never the guard's safety. Set
+missing binary only degrades precision - never the guard's safety. Set
 `test_guard.engine: "regex"` (or `TEST_GUARD_ENGINE=regex`) to force the
 deterministic regex engine. `TEST_CHECKER_VERSION` pins the binary version; the
 binary has no npm package, so an explicit version is the only offline source.
+
+`test_patterns` selects test files only. Harness/config paths (CI workflows,
+`.test-checker.json`, `jest`/`vitest`/`karma` config, `pytest.ini`, `tox.ini`,
+`conftest.py`, `package.json`, ...) are classified independently, mirroring the
+binary's `is_harness_path`, and are always forwarded to the binary so
+`config-edited`/`harness-edited`/`gate-weakened` fire even when they do not match
+`test_patterns`.
 
 The plugin never spawns a binary by name from `PATH`; each binary is resolved to an absolute path in this order:
 
@@ -282,11 +289,15 @@ changes the binary engine does not handle - deletions and changes with empty
 new text - even when `engine: "binary"`. The audit and `guard check` paths always
 run the regex analyzer, whatever `engine` says. Most binary rules -
 `allow-invalid`, `config-edited`, `snapshot-regenerated`,
-`expected-copied-from-actual`, `harness-edited`, and others — have no regex
+`expected-copied-from-actual`, `harness-edited`, and others - have no regex
 fallback equivalent, so offline coverage is intentionally narrower. The live
-hook only sends test-file changes to the binary, so the binary's
-harness/config-only ids (`config-edited`, `harness-edited`) do not surface
-through OpenCode today; they remain part of the contract for other consumers.
+hook forwards test files and test harness/config paths (`.test-checker.json`, CI
+workflows, `jest`/`vitest`/`karma` config, `pytest.ini`, `tox.ini`,
+`conftest.py`, `package.json`, ...) to the binary, so its
+`config-edited`/`harness-edited`/`gate-weakened` ids surface in OpenCode. The
+regex fallback is skipped for those harness paths, matching its previous silence
+on non-test files; Low-confidence harness findings stay hidden at the default
+gate, as in Claude Code.
 
 | Regex id | Default | Detectable from an edit hook |
 |---|---|---|
@@ -406,8 +417,9 @@ declaration written inside a string or a regex literal — use the opt-in extern
 parser adapter for AST-grade precision without the binary. Cross-file duplicate
 detection runs in the audit/CI paths, not the live per-file hook.
 
-`config-edited` is not detected in OpenCode because the plugin forwards only
-test files, so edits to `.test-checker.json` are protected only in Claude Code.
+`config-edited`, `harness-edited` and `gate-weakened` require the
+`test-checker` binary; the regex fallback that runs without it has no equivalent,
+so harness edits are unchecked offline.
 
 ## Debug
 

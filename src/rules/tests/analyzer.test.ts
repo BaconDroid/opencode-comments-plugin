@@ -1,7 +1,9 @@
 import { test, expect } from "bun:test"
 import { runAnalyzer } from "../../core/analyzer"
 import { extractChange } from "../../core/diff"
+import type { HookInput } from "../../types"
 import { createRuleAnalyzer, createTestEngineAnalyzer, type RuleAnalyzerConfig } from "./analyzer"
+import { isHarnessPath } from "./patterns"
 
 const CHECKS = { "skip-focus-added": "warn" as const, "empty-test": "warn" as const }
 
@@ -106,6 +108,75 @@ test("engine binary does not invoke the binary for a non-test change", async () 
   const result = await engine.analyze(ctx(change("const a = 1\n", "/work/plain.ts")))
   expect(called).toBe(false)
   expect(result.findings ?? []).toEqual([])
+})
+
+// --- harness/config forwarding ---
+
+test("isHarnessPath matches the binary's harness and suppression-config paths", () => {
+  for (const path of [
+    ".test-checker.json",
+    "pytest.ini",
+    "conftest.py",
+    ".github/workflows/ci.yml",
+    "jest.config.js",
+    "vitest.config.ts",
+    "package.json",
+    "Makefile",
+  ]) {
+    expect(isHarnessPath(path)).toBe(true)
+  }
+  expect(isHarnessPath("src/app.py")).toBe(false)
+  expect(isHarnessPath("src/app.test.ts")).toBe(false)
+})
+
+test("engine binary forwards a harness path with is_test_file false", async () => {
+  let payload: HookInput | undefined
+  const engine = createTestEngineAnalyzer(
+    () => engineConfig(),
+    async input => {
+      payload = input
+      return { kind: "findings", findings: [] }
+    },
+  )
+
+  await engine.analyze(ctx(change("run: bun test\n", "/work/.github/workflows/ci.yml")))
+
+  expect(payload?.tool_name).toBe("Write")
+  expect(payload?.is_test_file).toBe(false)
+  expect(payload?.tool_input.file_path).toBe("/work/.github/workflows/ci.yml")
+  expect(payload?.tool_input.content).toBe("run: bun test\n")
+})
+
+test("engine binary forwards the suppression config with is_test_file false", async () => {
+  let payload: HookInput | undefined
+  const engine = createTestEngineAnalyzer(
+    () => engineConfig(),
+    async input => {
+      payload = input
+      return { kind: "findings", findings: [] }
+    },
+  )
+
+  await engine.analyze(ctx(change('{"ignore": []}\n', "/work/.test-checker.json")))
+
+  expect(payload?.is_test_file).toBe(false)
+  expect(payload?.tool_input.file_path).toBe("/work/.test-checker.json")
+})
+
+test("engine binary still marks a test path as a test file", async () => {
+  let payload: HookInput | undefined
+  const engine = createTestEngineAnalyzer(
+    () => engineConfig(),
+    async input => {
+      payload = input
+      return { kind: "findings", findings: [] }
+    },
+  )
+
+  await engine.analyze(ctx(change("it('a', () => {})\n")))
+
+  expect(payload?.tool_name).toBe("Write")
+  expect(payload?.is_test_file).toBe(true)
 })
 
 test("engine binary reports did-not-run and still falls back to the regex rules", async () => {

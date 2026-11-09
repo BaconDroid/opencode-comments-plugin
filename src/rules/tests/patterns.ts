@@ -26,6 +26,37 @@ export function isTestPath(filePath: string, patterns: string[]): boolean {
   return matchPathFilter(patterns, filePath, DEFAULT_TEST_PATTERNS)
 }
 
+// Test harness/config paths that carry a test gate but are not test files.
+// Mirrors test-checker's `is_harness_path` so the live hook forwards the same
+// paths the binary classifies independently of language. `.test-checker.json`
+// is included because the binary reports it as `config-edited` before it
+// reaches the harness branch; forwarding it is what surfaces that rule.
+const HARNESS_FILES = new Set([
+  ".test-checker.json",
+  "pytest.ini",
+  "tox.ini",
+  "conftest.py",
+  "setup.cfg",
+  "pyproject.toml",
+  "package.json",
+  "makefile",
+  "codecov.yml",
+])
+
+export function isHarnessPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase()
+  const file = normalized.split("/").pop() ?? ""
+  return (
+    normalized.includes(".github/workflows/") ||
+    normalized.includes(".gitlab-ci") ||
+    HARNESS_FILES.has(file) ||
+    file.startsWith("jest.config") ||
+    file.startsWith("vitest.config") ||
+    file.startsWith("karma.conf") ||
+    file.startsWith(".nycrc")
+  )
+}
+
 // jest/no-disabled-tests + ruff PT015 + go t.Skip + rust #[ignore].
 export const SKIP_FOCUS_PATTERNS: Partial<Record<Language, RegExp[]>> = {
   js: [/\.(?:skip|only|todo)\s*\(/, /\b(?:xit|xdescribe|xtest)\s*\(/],
