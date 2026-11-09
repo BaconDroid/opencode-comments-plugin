@@ -1,6 +1,6 @@
 {
   "source": "BaconDroid/test-checker",
-  "ref": "e024462be2901c555bbeec7cd304e6801152c0e4",
+  "ref": "15310418df09af0f511a91abae1ef6a7fb7907cb",
   "rules": [
     "skip-added",
     "focus-added",
