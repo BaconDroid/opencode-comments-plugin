@@ -1,5 +1,5 @@
 // CI parity: run the same test-guard engine over a git diff, for pre-merge use
-// (`opencode-comments-plugin guard check --diff`).
+// (`opencode-guard-plugin guard check --diff`).
 
 import { existsSync, readFileSync } from "node:fs"
 import { isAbsolute, join, relative } from "node:path"

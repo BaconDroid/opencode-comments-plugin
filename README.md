@@ -1,4 +1,4 @@
-# opencode-comments-plugin
+# opencode-guard-plugin
 
 Stop the comment slop.
 
@@ -25,26 +25,29 @@ and to [ajoslin/opencode-comments-plugin](https://github.com/ajoslin/opencode-co
 
 ## Install
 
-### NPM/Bun
+### From Git
+
+There is no npm package. Install the plugin straight from its repository:
 
 ```bash
-bun add opencode-comments-plugin
-# or
-npm install opencode-comments-plugin
+bun add github:BaconDroid/opencode-guard-plugin
 ```
 
-### Local plugin
+Or clone it and build locally:
 
 ```bash
+git clone https://github.com/BaconDroid/opencode-guard-plugin
+cd opencode-guard-plugin
 bun install
 bun run build
 ```
 
-Then point your OpenCode config at the built file:
+Then point your OpenCode config at the installed package, or at the built
+`dist/index.js` from a local checkout:
 
 ```json
 {
-  "plugin": ["opencode-comments-plugin"]
+  "plugin": ["opencode-guard-plugin"]
 }
 ```
 
@@ -55,7 +58,7 @@ Options are passed as the second element of the plugin tuple; the plugin reads t
 ```json
 {
   "plugin": [
-    ["opencode-comments-plugin", { "comment_checker": { "custom_prompt": "DETECTED:\n{{comments}}\nFix it." } }]
+    ["opencode-guard-plugin", { "comment_checker": { "custom_prompt": "DETECTED:\n{{comments}}\nFix it." } }]
   ]
 }
 ```
@@ -84,14 +87,14 @@ Keep the default CLI warning and add your own line to it, for example:
 ```json
 {
   "plugin": [
-    ["opencode-comments-plugin", { "comment_checker": { "append_prompt": "Be concise, specific, and direct by default." } }]
+    ["opencode-guard-plugin", { "comment_checker": { "append_prompt": "Be concise, specific, and direct by default." } }]
   ]
 }
 ```
 
 `append_prompt` is not passed to the CLI; the plugin appends it to the warning it already injects.
 
-The options may also be given flat, without the `comment_checker` wrapper (`["opencode-comments-plugin", { "tools": ["write"] }]`); both forms are equivalent.
+The options may also be given flat, without the `comment_checker` wrapper (`["opencode-guard-plugin", { "tools": ["write"] }]`); both forms are equivalent.
 
 Every option can also be set (and overridden) through the environment, which always wins:
 
@@ -146,7 +149,7 @@ the added comment lines (not the whole repo) are sent to the configured model.
 ```json
 {
   "plugin": [
-    ["opencode-comments-plugin", { "comment_checker": { "judge": { "enabled": true, "model": "opencode/big-pickle" } } }]
+    ["opencode-guard-plugin", { "comment_checker": { "judge": { "enabled": true, "model": "opencode/big-pickle" } } }]
   ]
 }
 ```
@@ -162,7 +165,7 @@ tests. It reuses the same tuple, under a sibling `test_guard` key:
 ```json
 {
   "plugin": [
-    ["opencode-comments-plugin", {
+    ["opencode-guard-plugin", {
       "comment_checker": { "custom_prompt": "DETECTED:\n{{comments}}\nFix it." },
       "test_guard": {
         "enabled": true,
@@ -399,7 +402,7 @@ kept awaiting approval.
 
 The intended workflow is report first, approve narrowly, then clean up:
 
-1. Run `guard_audit` or `opencode-comments-plugin guard audit --scope tests` to
+1. Run `guard_audit` or `opencode-guard-plugin guard audit --scope tests` to
    see the cleanup candidates.
 2. A human adds a `remove` entry to `<git root>/.test-checker.json`:
 
@@ -418,7 +421,7 @@ The intended workflow is report first, approve narrowly, then clean up:
    `reason` must be at least 12 characters. Keep both the glob and the rule list
    as narrow as the case allows.
 3. Run `guard_cleanup`, `/guard-cleanup` or
-   `opencode-comments-plugin guard cleanup`. Only approved candidates are
+   `opencode-guard-plugin guard cleanup`. Only approved candidates are
    removed; the rest are reported again.
 
 ### CLI (CI parity)
@@ -429,10 +432,10 @@ auto-detected from `package.json`, `pytest.ini`/`pyproject.toml`, `go.mod`,
 `test_command` option or `TEST_GUARD_TEST_COMMAND`.
 
 ```bash
-opencode-comments-plugin guard check --diff [--base <rev>] [--scope tests|comments|both] [--json] [--include-advisory]
-opencode-comments-plugin guard validate-config [config.json]
-opencode-comments-plugin guard audit [--scope comments|tests|both] [--paths a,b] [--json] [--include-advisory]
-opencode-comments-plugin guard cleanup
+opencode-guard-plugin guard check --diff [--base <rev>] [--scope tests|comments|both] [--json] [--include-advisory]
+opencode-guard-plugin guard validate-config [config.json]
+opencode-guard-plugin guard audit [--scope comments|tests|both] [--paths a,b] [--json] [--include-advisory]
+opencode-guard-plugin guard cleanup
 ```
 
 `guard validate-config` reads the tuple options object - the same object passed

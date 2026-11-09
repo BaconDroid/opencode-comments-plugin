@@ -766,7 +766,7 @@ test("registers the guard tools", async () => {
 
 test("default export is a v2 plugin definition", () => {
   const definition = CommentCheckerPlugin as unknown as { id?: string; setup?: unknown }
-  expect(definition.id).toBe("opencode-comments-plugin")
+  expect(definition.id).toBe("opencode-guard-plugin")
   expect(typeof definition.setup).toBe("function")
 })
 

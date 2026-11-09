@@ -192,7 +192,7 @@ export async function downloadCommentChecker(versionOverride?: string): Promise<
   const downloadUrl = `https://github.com/${REPO}/releases/download/v${version}/${assetName}`
 
   debugLog("Downloading from:", downloadUrl)
-  console.log("[opencode-comments-plugin] Downloading comment-checker binary...")
+  console.log("[opencode-guard-plugin] Downloading comment-checker binary...")
 
   try {
     if (!existsSync(cacheDir)) {
@@ -225,15 +225,15 @@ export async function downloadCommentChecker(versionOverride?: string): Promise<
     }
 
     debugLog("Successfully downloaded binary to:", binaryPath)
-    console.log("[opencode-comments-plugin] comment-checker binary ready.")
+    console.log("[opencode-guard-plugin] comment-checker binary ready.")
 
     cleanupStaleCache(version)
 
     return binaryPath
   } catch (err) {
     debugLog("Failed to download:", err)
-    console.error(`[opencode-comments-plugin] Failed to download comment-checker: ${err instanceof Error ? err.message : err}`)
-    console.error("[opencode-comments-plugin] Comment checking disabled.")
+    console.error(`[opencode-guard-plugin] Failed to download comment-checker: ${err instanceof Error ? err.message : err}`)
+    console.error("[opencode-guard-plugin] Comment checking disabled.")
     return null
   }
 }
@@ -389,7 +389,7 @@ export async function downloadTestChecker(versionOverride?: string): Promise<str
   const downloadUrl = `https://github.com/${TEST_REPO}/releases/download/v${version}/${assetName}`
 
   debugLog("Downloading from:", downloadUrl)
-  console.log("[opencode-comments-plugin] Downloading test-checker binary...")
+  console.log("[opencode-guard-plugin] Downloading test-checker binary...")
 
   try {
     if (!existsSync(cacheDir)) {
@@ -422,15 +422,15 @@ export async function downloadTestChecker(versionOverride?: string): Promise<str
     }
 
     debugLog("Successfully downloaded binary to:", binaryPath)
-    console.log("[opencode-comments-plugin] test-checker binary ready.")
+    console.log("[opencode-guard-plugin] test-checker binary ready.")
 
     cleanupTestCheckerStaleCache(version)
 
     return binaryPath
   } catch (err) {
     debugLog("Failed to download test-checker:", err)
-    console.error(`[opencode-comments-plugin] Failed to download test-checker: ${err instanceof Error ? err.message : err}`)
-    console.error("[opencode-comments-plugin] Test checking disabled.")
+    console.error(`[opencode-guard-plugin] Failed to download test-checker: ${err instanceof Error ? err.message : err}`)
+    console.error("[opencode-guard-plugin] Test checking disabled.")
     return null
   }
 }

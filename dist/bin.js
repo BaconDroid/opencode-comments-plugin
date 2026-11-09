@@ -185,7 +185,7 @@ async function downloadCommentChecker(versionOverride) {
   const assetName = `comment-checker_v${version}_${os}_${arch}.${ext}`;
   const downloadUrl = `https://github.com/${REPO}/releases/download/v${version}/${assetName}`;
   debugLog("Downloading from:", downloadUrl);
-  console.log("[opencode-comments-plugin] Downloading comment-checker binary...");
+  console.log("[opencode-guard-plugin] Downloading comment-checker binary...");
   try {
     if (!existsSync(cacheDir)) {
       mkdirSync(cacheDir, { recursive: true });
@@ -210,13 +210,13 @@ async function downloadCommentChecker(versionOverride) {
       chmodSync(binaryPath, 493);
     }
     debugLog("Successfully downloaded binary to:", binaryPath);
-    console.log("[opencode-comments-plugin] comment-checker binary ready.");
+    console.log("[opencode-guard-plugin] comment-checker binary ready.");
     cleanupStaleCache(version);
     return binaryPath;
   } catch (err) {
     debugLog("Failed to download:", err);
-    console.error(`[opencode-comments-plugin] Failed to download comment-checker: ${err instanceof Error ? err.message : err}`);
-    console.error("[opencode-comments-plugin] Comment checking disabled.");
+    console.error(`[opencode-guard-plugin] Failed to download comment-checker: ${err instanceof Error ? err.message : err}`);
+    console.error("[opencode-guard-plugin] Comment checking disabled.");
     return null;
   }
 }
@@ -341,7 +341,7 @@ async function downloadTestChecker(versionOverride) {
   const assetName = `test-checker_v${version}_${os}_${arch}.${ext}`;
   const downloadUrl = `https://github.com/${TEST_REPO}/releases/download/v${version}/${assetName}`;
   debugLog("Downloading from:", downloadUrl);
-  console.log("[opencode-comments-plugin] Downloading test-checker binary...");
+  console.log("[opencode-guard-plugin] Downloading test-checker binary...");
   try {
     if (!existsSync(cacheDir)) {
       mkdirSync(cacheDir, { recursive: true });
@@ -366,13 +366,13 @@ async function downloadTestChecker(versionOverride) {
       chmodSync(binaryPath, 493);
     }
     debugLog("Successfully downloaded binary to:", binaryPath);
-    console.log("[opencode-comments-plugin] test-checker binary ready.");
+    console.log("[opencode-guard-plugin] test-checker binary ready.");
     cleanupTestCheckerStaleCache(version);
     return binaryPath;
   } catch (err) {
     debugLog("Failed to download test-checker:", err);
-    console.error(`[opencode-comments-plugin] Failed to download test-checker: ${err instanceof Error ? err.message : err}`);
-    console.error("[opencode-comments-plugin] Test checking disabled.");
+    console.error(`[opencode-guard-plugin] Failed to download test-checker: ${err instanceof Error ? err.message : err}`);
+    console.error("[opencode-guard-plugin] Test checking disabled.");
     return null;
   }
 }
@@ -1853,7 +1853,7 @@ var ADVISORY_RULES = [
 // src/rules/tests/binary-rule-ids.json
 var binary_rule_ids_default = {
   source: "BaconDroid/test-checker",
-  ref: "485e1490c53d20fe4fa2577b95ac8764fe3b6285",
+  ref: "4313271890fb9ff79be5b0fb48ad1a39856b3615",
   rules: [
     "skip-added",
     "focus-added",
@@ -3092,7 +3092,7 @@ async function checkCommand(parsed) {
 }
 function usage() {
   process.stdout.write([
-    "opencode-comments-plugin guard <command>",
+    "opencode-guard-plugin guard <command>",
     "",
     "  check [--diff] [--base <rev>] [--scope tests|comments|both] [--json] [--include-advisory]",
     "  validate-config [file]",
