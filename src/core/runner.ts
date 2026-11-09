@@ -11,6 +11,7 @@ export type RunOutcome =
 export interface RunnerOptions {
   timeoutMs?: number
   stdin?: string
+  env?: Record<string, string>
 }
 
 // Runs a shell command string through the platform shell.
@@ -22,7 +23,12 @@ export async function runProcess(args: string[], options: RunnerOptions = {}): P
   const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_CLI_TIMEOUT_MS
 
   try {
-    const proc = spawn(args, { stdin: options.stdin === undefined ? "ignore" : "pipe", stdout: "pipe", stderr: "pipe" })
+    const proc = spawn(args, {
+      stdin: options.stdin === undefined ? "ignore" : "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
+    })
 
     if (options.stdin !== undefined && proc.stdin) {
       proc.stdin.write(options.stdin)

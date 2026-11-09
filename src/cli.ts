@@ -15,6 +15,7 @@ import {
 } from "./downloader"
 import { runProcess } from "./core/runner"
 import { createDebugLog } from "./core/debug"
+import type { KeywordAcquit } from "./core/config"
 import { COMMENT_CHECKER_EVENT } from "./constants"
 import type { CheckResult, HookInput, TestCheckerFinding, TestCheckerResult } from "./types"
 
@@ -107,6 +108,7 @@ export interface RunOptions {
   cliPath?: string
   prompt?: string
   timeoutMs?: number
+  keywordAcquit?: KeywordAcquit
   // The version the plugin pinned for this binary. Defaults to the version
   // segment of a cache path; binaries resolved elsewhere are not checked.
   expectedVersion?: string
@@ -187,7 +189,10 @@ export async function runCommentChecker(input: HookInput, options: RunOptions = 
     args.push("--prompt", options.prompt)
   }
 
-  const outcome = await runProcess(args, { stdin: jsonInput, timeoutMs: options.timeoutMs })
+  const env = options.keywordAcquit
+    ? { COMMENT_CHECKER_KEYWORD_ACQUIT: options.keywordAcquit }
+    : undefined
+  const outcome = await runProcess(args, { stdin: jsonInput, timeoutMs: options.timeoutMs, env })
   if (outcome === "timeout") {
     debugLog("comment-checker abandoned after timeout or stream failure")
     return didNotRunComment("timed out or could not be spawned")

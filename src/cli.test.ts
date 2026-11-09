@@ -94,6 +94,16 @@ test("ignores an empty prompt instead of passing a bare --prompt flag", async ()
   expect((await Bun.file(argsPath).text()).trim()).toBe("")
 })
 
+test("passes the keyword-acquit mode to the CLI environment", async () => {
+  const envPath = join(dir, "env.txt")
+  writeFileSync(scriptPath, `#!/bin/sh\nprintf '%s' "$COMMENT_CHECKER_KEYWORD_ACQUIT" > '${envPath}'\nexit 0\n`)
+  chmodSync(scriptPath, 0o755)
+
+  await runCommentChecker(hookInput(), { cliPath: scriptPath, keywordAcquit: "never" })
+
+  expect(await Bun.file(envPath).text()).toBe("never")
+})
+
 test("ignores a CLI that never answers instead of hanging the tool call", async () => {
   const result = await runCommentChecker(hookInput(), { cliPath: writeFakeBinary("hang") })
 

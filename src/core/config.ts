@@ -22,6 +22,18 @@ export function asEngine(value: unknown): TestEngine | undefined {
   return undefined
 }
 
+// How the comment-checker may acquit a comment on a prose keyword. `proven-only`
+// (default) lets the CLI decide; `never` turns prose-keyword acquittal off and
+// leaves only its structural classes.
+export type KeywordAcquit = "proven-only" | "never"
+
+export function asKeywordAcquit(value: unknown): KeywordAcquit | undefined {
+  if (typeof value !== "string") return undefined
+  const normalized = value.trim().toLowerCase()
+  if (normalized === "proven-only" || normalized === "never") return normalized
+  return undefined
+}
+
 // Options shared by both guards, resolved with the env > options > config
 // precedence. Each guard extends it with its own fields.
 export interface GuardBaseConfig {

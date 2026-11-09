@@ -1,6 +1,8 @@
 export type Severity = "off" | "warn";
 export type TestEngine = "binary" | "regex";
 export declare function asEngine(value: unknown): TestEngine | undefined;
+export type KeywordAcquit = "proven-only" | "never";
+export declare function asKeywordAcquit(value: unknown): KeywordAcquit | undefined;
 export interface GuardBaseConfig {
     enabled: boolean;
     customPrompt?: string;

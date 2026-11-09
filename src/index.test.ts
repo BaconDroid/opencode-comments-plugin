@@ -25,6 +25,7 @@ if [ "$1" = "--version" ]; then echo "comment-checker ${version}"; exit 0; fi
 {
   printf 'ARGS:'
   printf '%s\\037' "$@"
+  printf '\\nACQUIT:%s' "\${COMMENT_CHECKER_KEYWORD_ACQUIT:-}"
   printf '\\nSTDIN:'
   cat
   printf '\\036===END===\\036\\n'
@@ -75,6 +76,7 @@ interface CommentCheckerHooks {
 
 interface Invocation {
   args: string[]
+  keywordAcquit: string
   input: HookInput
 }
 
@@ -189,10 +191,14 @@ async function cliInvocations(): Promise<Invocation[]> {
     .split(RECORD_END)
     .filter(block => block.length > 0)
     .map(block => {
-      const separator = block.indexOf("\nSTDIN:")
-      const argsPart = block.slice("ARGS:".length, separator)
+      const acquitLabel = "\nACQUIT:"
+      const acquitSeparator = block.indexOf(acquitLabel)
+      const argsPart = block.slice("ARGS:".length, acquitSeparator)
+      const acquitStart = acquitSeparator + acquitLabel.length
+      const separator = block.indexOf("\nSTDIN:", acquitStart)
       return {
         args: argsPart.split(UNIT_SEP).filter(arg => arg.length > 0),
+        keywordAcquit: block.slice(acquitStart, separator),
         input: JSON.parse(block.slice(separator + "\nSTDIN:".length)) as HookInput,
       }
     })
@@ -220,6 +226,7 @@ const ENV_KEYS = [
   "COMMENT_CHECKER_MAX_WARNINGS_PER_FILE",
   "COMMENT_CHECKER_TOOLS",
   "COMMENT_CHECKER_TIMEOUT_MS",
+  "COMMENT_CHECKER_KEYWORD_ACQUIT",
   "TEST_GUARD_ENGINE",
 ] as const
 
@@ -525,6 +532,37 @@ test("lets an environment variable override the plugin options", async () => {
   const calls = await cliInvocations()
   expect(calls[0]!.args).toContain("FROM ENV")
   expect(calls[0]!.args).not.toContain("FROM OPTIONS")
+})
+
+test("sends the default keyword_acquit mode to the CLI", async () => {
+  const hooks = await newSession()
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// explain\n"))
+  await hooks["tool.execute.after"](TOOL_AFTER_INPUT, output)
+
+  expect((await cliInvocations())[0]!.keywordAcquit).toBe("proven-only")
+})
+
+test("reads keyword_acquit from the plugin options", async () => {
+  const hooks = await newSession({ comment_checker: { keyword_acquit: "never" } })
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// explain\n"))
+  await hooks["tool.execute.after"](TOOL_AFTER_INPUT, output)
+
+  expect((await cliInvocations())[0]!.keywordAcquit).toBe("never")
+})
+
+test("lets an environment variable override the keyword_acquit option", async () => {
+  process.env.COMMENT_CHECKER_KEYWORD_ACQUIT = "never"
+  const hooks = await newSession({ comment_checker: { keyword_acquit: "proven-only" } })
+  const output = writeOutput("Wrote file successfully.")
+
+  await hooks["tool.execute.before"](TOOL_AFTER_INPUT, writeArgs("// explain\n"))
+  await hooks["tool.execute.after"](TOOL_AFTER_INPUT, output)
+
+  expect((await cliInvocations())[0]!.keywordAcquit).toBe("never")
 })
 
 test("reads max_warnings_per_file from the plugin options", async () => {
