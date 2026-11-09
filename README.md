@@ -7,21 +7,16 @@ docstrings are added (wrapping the `comment-checker` CLI from
 `BaconDroid/comment-checker`) and ships a deterministic test guard that
 discourages weakened tests. Both surface their findings in tool output.
 
-## Origin and independence
+## Origin and credits
 
-This project began as a fork of
-[`ajoslin/opencode-comments-plugin`](https://github.com/ajoslin/opencode-comments-plugin),
-which itself derives from the comment-checker hook in
-[oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode). It is now an
-independent project maintained by BaconDroid and has grown beyond comments: the
-test guard, the audit tooling and the opt-in analyzers are original work. The
-original credits are kept below.
+The comment guard derives from the comment-checker hook in
+[oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode), through
+[`ajoslin/opencode-comments-plugin`](https://github.com/ajoslin/opencode-comments-plugin).
+This is an independent project maintained by BaconDroid; the test guard, the
+audit tooling and the opt-in analyzers are original work.
 
-## Credits
-
-The comment guard is derived from the comment-checker hook logic in `oh-my-opencode`.
-Credit to [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) for the original hook integration,
-and to [ajoslin/opencode-comments-plugin](https://github.com/ajoslin/opencode-comments-plugin) for the plugin this one forked from.
+Credit to [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) for the hook integration,
+and to [ajoslin/opencode-comments-plugin](https://github.com/ajoslin/opencode-comments-plugin) for the plugin this project derives from.
 
 ## Install
 
@@ -115,7 +110,7 @@ Every option can also be set (and overridden) through the environment, which alw
 - Runs on the tools in `tools` (`write`, `edit`, and `apply_patch` by default).
 - If the CLI detects comments, it appends the warning message to the tool output, so the model that called the tool reads it on its next turn. Nothing is blocked and the file is never rewritten.
 - Only comments introduced by the change are candidates: for `edit` and `apply_patch` the plugin passes the old and the new snippet, so a comment that was already on the changed lines is not reported; for `write` the plugin reads the previous on-disk content first and, when that previous content exists, skips the check when no comment line was added - rewriting a file does not re-flag the comments it already contained. When new comment lines are added, the whole new content is checked.
-- The `comment-checker` version is resolved from the latest GitHub release (checked at most once a day); offline it falls back to the previously cached release tag or the built-in fallback version. The binary for that version is downloaded on demand into `~/.cache/opencode-comments-plugin/bin/<version>/` when the cache does not already have it - the exact order is listed under [Detection engine](#detection-engine). A cached binary that reports a different `--version` than the resolved cache version is rejected with a warning shown once per session, instead of running comment checks through the wrong engine.
+- The `comment-checker` version is resolved from the latest GitHub release (checked at most once a day); offline it falls back to a cached release tag or the built-in fallback version. The binary for that version is downloaded on demand into `~/.cache/opencode-comments-plugin/bin/<version>/` when the cache does not already have it - the exact order is listed under [Detection engine](#detection-engine). A cached binary that reports a different `--version` than the resolved cache version is rejected with a warning shown once per session, instead of running comment checks through the wrong engine.
 - Inline bypass: `// comment-guard: allow <reason>` within +/-2 lines of the added comments suppresses the file's warning; file-level `// comment-guard-disable-file` suppresses it outright. A suppressed or warned file with markers reports them under a "Comment guard bypass recorded" footer.
 
 ## Detection
@@ -307,8 +302,7 @@ hook forwards test files and test harness/config paths (`.test-checker.json`, CI
 workflows, `jest`/`vitest`/`karma` config, `pytest.ini`, `tox.ini`,
 `conftest.py`, `package.json`, ...) to the binary, so its
 `config-edited`/`harness-edited`/`gate-weakened` ids surface in OpenCode. The
-regex fallback is skipped for those harness paths, matching its previous silence
-on non-test files; Low-confidence harness findings stay hidden at the default
+regex fallback stays silent on those harness paths; Low-confidence harness findings stay hidden at the default
 gate, as in Claude Code.
 
 | Regex id | Default | Detectable from an edit hook |
@@ -471,7 +465,7 @@ parser adapter for AST-grade precision without the binary. Cross-file duplicate
 detection runs in the audit/CI paths, not the live per-file hook.
 
 Switching to the regex fallback is announced once per session: a missing,
-stale/wrong-version or unparseable binary no longer changes the rule ids silently.
+stale/wrong-version or unparseable binary never changes the rule ids silently.
 
 `config-edited`, `harness-edited` and `gate-weakened` require the
 `test-checker` binary; the regex fallback that runs without it has no equivalent,
@@ -495,3 +489,6 @@ bun run build
 bun test
 bun run typecheck
 ```
+
+The invariants a change must preserve are in
+[`docs/design-constraints.md`](docs/design-constraints.md).
