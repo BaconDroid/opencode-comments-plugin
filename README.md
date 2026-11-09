@@ -384,6 +384,41 @@ applies afterwards:
 { "scope": "both", "paths": ["src/", "tests/"], "format": "markdown", "include_advisory": false }
 ```
 
+### Cleanup
+
+`guard_cleanup` (plus `/guard-cleanup`) runs test-checker's `--strip` cleanup
+pass over the repository's test files. The tool takes no arguments.
+
+The binary analyzes each file on disk as a whole and removes only test blocks
+covered by a human-approved `remove` entry in the git root's
+`.test-checker.json`. The plugin never rewrites an unapproved candidate and
+never relaxes the approval gate. The report lists what was removed and what was
+kept awaiting approval.
+
+The intended workflow is report first, approve narrowly, then clean up:
+
+1. Run `guard_audit` or `opencode-comments-plugin guard audit --scope tests` to
+   see the cleanup candidates.
+2. A human adds a `remove` entry to `<git root>/.test-checker.json`:
+
+```jsonc
+{
+  "remove": [
+    {
+      "glob": "tests/report.test.ts",
+      "rules": ["duplicate-test"],
+      "reason": "covered by report-format.test.ts since the table rewrite"
+    }
+  ]
+}
+```
+
+   `reason` must be at least 12 characters. Keep both the glob and the rule list
+   as narrow as the case allows.
+3. Run `guard_cleanup`, `/guard-cleanup` or
+   `opencode-comments-plugin guard cleanup`. Only approved candidates are
+   removed; the rest are reported again.
+
 ### CLI (CI parity)
 
 The same engine is exposed as a CLI for pre-merge use. `test_command` is
@@ -395,6 +430,7 @@ auto-detected from `package.json`, `pytest.ini`/`pyproject.toml`, `go.mod`,
 opencode-comments-plugin guard check --diff [--base <rev>] [--scope tests|comments|both] [--json] [--include-advisory]
 opencode-comments-plugin guard validate-config [config.json]
 opencode-comments-plugin guard audit [--scope comments|tests|both] [--paths a,b] [--json] [--include-advisory]
+opencode-comments-plugin guard cleanup
 ```
 
 `guard validate-config` reads the tuple options object - the same object passed
@@ -408,6 +444,11 @@ output (they are hidden by default).
 `guard check` exits non-zero when the diff trips a rule, so it can gate a PR.
 `--scope` defaults to `tests`; `comments` runs the comment-checker binary over
 the added lines of the changed files, and `both` runs both.
+
+`guard cleanup` walks the repository's test files, runs the test-checker
+`--strip` pass on each, and prints the removed and kept-awaiting-approval items.
+It exits 0 on success, including when nothing was approved or removed. A missing
+binary is reported and treated as a no-op rather than a failure.
 
 ### Language matrix and limits
 
@@ -430,6 +471,12 @@ stale/wrong-version or unparseable binary no longer changes the rule ids silentl
 `config-edited`, `harness-edited` and `gate-weakened` require the
 `test-checker` binary; the regex fallback that runs without it has no equivalent,
 so harness edits are unchecked offline.
+
+`guard cleanup` requires a test-checker release that includes `--strip`. The
+stale-binary warning covers an older cached binary on the hook path. A binary
+that predates `--strip` ignores the flag and prints no cleanup summary, so the
+cleanup reports that the binary predates `--strip` and rewrites nothing
+(fail-open). Upgrade the test-checker release and run the cleanup again.
 
 ## Debug
 

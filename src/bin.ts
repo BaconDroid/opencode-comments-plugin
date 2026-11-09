@@ -4,12 +4,14 @@
 //   opencode-comments-plugin guard check [--diff] [--base <rev>] [--json] [--include-advisory]
 //   opencode-comments-plugin guard validate-config [file]
 //   opencode-comments-plugin guard audit [--scope comments|tests|both] [--paths a,b] [--json]
+//   opencode-comments-plugin guard cleanup
 
 import { readFileSync } from "node:fs"
 import { runCommentDiffCheck, runDiffCheck } from "./core/ci"
 import { validateTupleOptions } from "./core/schema"
 import { detectTestCommand } from "./core/test-command"
 import { runAudit } from "./audit"
+import { runCleanup } from "./cleanup"
 
 interface ParsedArgs {
   positionals: string[]
@@ -88,6 +90,12 @@ async function auditCommand(parsed: ParsedArgs): Promise<number> {
   return 0
 }
 
+async function cleanupCommand(): Promise<number> {
+  const output = await runCleanup({ directory: process.cwd(), testPatterns: [] })
+  process.stdout.write(`${output}\n`)
+  return 0
+}
+
 async function checkCommand(parsed: ParsedArgs): Promise<number> {
   const base = typeof parsed.flags.base === "string" ? parsed.flags.base : "HEAD"
   const scope = (parsed.flags.scope as string | undefined) ?? "tests"
@@ -125,6 +133,7 @@ function usage(): void {
       "  check [--diff] [--base <rev>] [--scope tests|comments|both] [--json] [--include-advisory]",
       "  validate-config [file]",
       "  audit [--scope comments|tests|both] [--paths a,b] [--json] [--include-advisory]",
+      "  cleanup",
       "",
     ].join("\n"),
   )
@@ -145,6 +154,8 @@ async function main(argv: string[]): Promise<number> {
       return validateConfigCommand(parsed.positionals[0])
     case "audit":
       return auditCommand(parsed)
+    case "cleanup":
+      return cleanupCommand()
     default:
       usage()
       return command ? 2 : 0

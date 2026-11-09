@@ -2,7 +2,7 @@
 // @bun
 
 // src/bin.ts
-import { readFileSync as readFileSync5 } from "fs";
+import { readFileSync as readFileSync6 } from "fs";
 
 // src/core/ci.ts
 import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
@@ -232,6 +232,162 @@ async function ensureCommentCheckerBinary(versionOverride) {
 }
 var TEST_REPO = "BaconDroid/test-checker";
 var TEST_LATEST_URL = `https://github.com/${TEST_REPO}/releases/latest`;
+function getTestCheckerCacheDir() {
+  const xdgCache = process.env.XDG_CACHE_HOME;
+  const base = xdgCache || join(homedir(), ".cache");
+  return join(base, "opencode-comments-plugin", "test-checker");
+}
+function getTestCheckerBinaryName() {
+  return process.platform === "win32" ? "test-checker.exe" : "test-checker";
+}
+function getCachedTestCheckerPath(version) {
+  if (!version)
+    return null;
+  const binaryPath = join(getTestCheckerCacheDir(), version, getTestCheckerBinaryName());
+  return existsSync(binaryPath) ? binaryPath : null;
+}
+function getTestCheckerVersion() {
+  const version = process.env.TEST_CHECKER_VERSION;
+  return typeof version === "string" && version.trim().length > 0 ? version.trim() : null;
+}
+function getTestLatestCachePath() {
+  return join(getTestCheckerCacheDir(), LATEST_CACHE_FILE);
+}
+function readTestLatestCache() {
+  try {
+    const parsed = JSON.parse(readFileSync(getTestLatestCachePath(), "utf8"));
+    if (typeof parsed.version === "string" && parsed.version.length > 0 && typeof parsed.checkedAt === "number") {
+      return { version: parsed.version, checkedAt: parsed.checkedAt };
+    }
+  } catch {
+    debugLog("no test-checker latest-version cache");
+  }
+  return null;
+}
+function writeTestLatestCache(version) {
+  try {
+    const dir = getTestCheckerCacheDir();
+    if (!existsSync(dir))
+      mkdirSync(dir, { recursive: true });
+    writeFileSync(getTestLatestCachePath(), JSON.stringify({ version, checkedAt: Date.now() }));
+  } catch (err) {
+    debugLog("failed to cache test-checker latest version:", err);
+  }
+}
+function getPreferredTestCheckerVersionSync() {
+  return getTestCheckerVersion() ?? readTestLatestCache()?.version ?? null;
+}
+async function getLatestTestCheckerVersion() {
+  const pinned = getTestCheckerVersion();
+  if (pinned)
+    return pinned;
+  const cached = readTestLatestCache();
+  if (cached && Date.now() - cached.checkedAt < LATEST_TTL_MS) {
+    return cached.version;
+  }
+  try {
+    const response = await fetch(TEST_LATEST_URL, { redirect: "manual" });
+    const version = parseLatestTag(response.headers.get("location"));
+    if (version) {
+      debugLog("resolved latest test-checker release:", version);
+      writeTestLatestCache(version);
+      return version;
+    }
+    debugLog("could not parse latest test-checker release location:", response.headers.get("location"));
+  } catch (err) {
+    debugLog("failed to resolve latest test-checker release:", err);
+  }
+  if (cached)
+    return cached.version;
+  return getTestCheckerVersion();
+}
+function cleanupTestCheckerStaleCache(version) {
+  let entries;
+  try {
+    entries = readdirSync(getTestCheckerCacheDir());
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry === version || entry === LATEST_CACHE_FILE)
+      continue;
+    try {
+      rmSync(join(getTestCheckerCacheDir(), entry), { recursive: true, force: true });
+    } catch (err) {
+      debugLog("Failed to remove stale test-checker cache entry:", entry, err);
+    }
+  }
+}
+async function downloadTestChecker(versionOverride) {
+  const platformKey = `${process.platform}-${process.arch}`;
+  const platformInfo = PLATFORM_MAP[platformKey];
+  if (!platformInfo) {
+    debugLog("Unsupported platform:", platformKey);
+    return null;
+  }
+  const version = versionOverride ?? getTestCheckerVersion();
+  if (!version) {
+    debugLog("Cannot resolve a test-checker version; refusing to download a stale binary");
+    return null;
+  }
+  const cacheDir = join(getTestCheckerCacheDir(), version);
+  const binaryName = getTestCheckerBinaryName();
+  const binaryPath = join(cacheDir, binaryName);
+  if (existsSync(binaryPath)) {
+    debugLog("Binary already cached at:", binaryPath);
+    return binaryPath;
+  }
+  const { os, arch, ext } = platformInfo;
+  const assetName = `test-checker_v${version}_${os}_${arch}.${ext}`;
+  const downloadUrl = `https://github.com/${TEST_REPO}/releases/download/v${version}/${assetName}`;
+  debugLog("Downloading from:", downloadUrl);
+  console.log("[opencode-comments-plugin] Downloading test-checker binary...");
+  try {
+    if (!existsSync(cacheDir)) {
+      mkdirSync(cacheDir, { recursive: true });
+    }
+    const response = await fetch(downloadUrl, { redirect: "follow" });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    const archivePath = join(cacheDir, assetName);
+    const arrayBuffer = await response.arrayBuffer();
+    await Bun.write(archivePath, arrayBuffer);
+    debugLog("Downloaded archive to:", archivePath);
+    if (ext === "tar.gz") {
+      await extractTarGz(archivePath, cacheDir);
+    } else {
+      await extractZip(archivePath, cacheDir);
+    }
+    if (existsSync(archivePath)) {
+      unlinkSync(archivePath);
+    }
+    if (process.platform !== "win32" && existsSync(binaryPath)) {
+      chmodSync(binaryPath, 493);
+    }
+    debugLog("Successfully downloaded binary to:", binaryPath);
+    console.log("[opencode-comments-plugin] test-checker binary ready.");
+    cleanupTestCheckerStaleCache(version);
+    return binaryPath;
+  } catch (err) {
+    debugLog("Failed to download test-checker:", err);
+    console.error(`[opencode-comments-plugin] Failed to download test-checker: ${err instanceof Error ? err.message : err}`);
+    console.error("[opencode-comments-plugin] Test checking disabled.");
+    return null;
+  }
+}
+async function ensureTestCheckerBinary(versionOverride) {
+  const version = versionOverride ?? await getLatestTestCheckerVersion();
+  if (!version)
+    return null;
+  const cachedPath = getCachedTestCheckerPath(version);
+  if (cachedPath) {
+    debugLog("Using cached test-checker binary:", cachedPath);
+    cleanupTestCheckerStaleCache(version);
+    return cachedPath;
+  }
+  return downloadTestChecker(version);
+}
 
 // src/core/runner.ts
 var {spawn: spawn2 } = globalThis.Bun;
@@ -392,6 +548,54 @@ async function runCommentChecker(input, options = {}) {
   debugLog2("unexpected exit code:", exitCode, "stderr:", stderr);
   const detail = firstLine(stderr);
   return didNotRunComment(`exited with code ${exitCode}${detail ? `: ${detail}` : ""}`);
+}
+function findTestCheckerPathSync() {
+  const version = getPreferredTestCheckerVersionSync();
+  if (!version) {
+    debugLog2("cannot resolve a test-checker version; binary engine unavailable");
+    return null;
+  }
+  const cachedPath = getCachedTestCheckerPath(version);
+  if (cachedPath) {
+    debugLog2("found test-checker in cache:", cachedPath);
+    cleanupTestCheckerStaleCache(version);
+    return cachedPath;
+  }
+  debugLog2("no test-checker binary found in known locations");
+  return null;
+}
+var resolvedTestCliPath = null;
+var testInitPromise = null;
+async function getTestCheckerPath() {
+  if (resolvedTestCliPath !== null) {
+    return resolvedTestCliPath;
+  }
+  if (testInitPromise) {
+    return testInitPromise;
+  }
+  testInitPromise = (async () => {
+    const version = await getLatestTestCheckerVersion();
+    if (!version) {
+      debugLog2("cannot resolve a test-checker version; binary engine unavailable");
+      return null;
+    }
+    const syncPath = findTestCheckerPathSync();
+    if (syncPath && existsSync2(syncPath)) {
+      resolvedTestCliPath = syncPath;
+      debugLog2("using sync-resolved test-checker path:", syncPath);
+      return syncPath;
+    }
+    debugLog2("triggering lazy test-checker download...");
+    const downloadedPath = await ensureTestCheckerBinary(version);
+    if (downloadedPath) {
+      resolvedTestCliPath = downloadedPath;
+      debugLog2("using downloaded test-checker path:", downloadedPath);
+      return downloadedPath;
+    }
+    debugLog2("no test-checker binary available");
+    return null;
+  })();
+  return testInitPromise;
 }
 
 // src/core/analyzer.ts
@@ -1643,7 +1847,7 @@ var ADVISORY_RULES = [
 // src/rules/tests/binary-rule-ids.json
 var binary_rule_ids_default = {
   source: "BaconDroid/test-checker",
-  ref: "60e58e0bee091490ef194a5995d1964938839ab8",
+  ref: "e024462be2901c555bbeec7cd304e6801152c0e4",
   rules: [
     "skip-added",
     "focus-added",
@@ -2502,6 +2706,259 @@ async function runAudit(options, deps = {}) {
   return renderAudit({ scope, comments, tests, skipped, generatedAt: new Date().toISOString(), testCommand: config?.testCommand ?? null }, format);
 }
 
+// src/cleanup.ts
+import { tool as tool3 } from "@opencode-ai/plugin";
+import { existsSync as existsSync5, readFileSync as readFileSync5 } from "fs";
+import { relative as relative4 } from "path";
+var CLEANUP_TIMEOUT_MS = 30000;
+var SUMMARY_MARKER = "[test-checker] cleanup pass:";
+var REMOVED_LINE = /^\s+removed: (.+) \[([^\]]+)\]\s*$/;
+var KEPT_LINE = /^\s+kept awaiting approval: (.+) \[([^\]]+)\]\s*$/;
+var NOTE_LINE = /^\s+note: (.+)\s*$/;
+function parseCleanupSummary(stderr) {
+  const removed = [];
+  const kept = [];
+  let note;
+  let summary = false;
+  for (const line of stderr.split(`
+`)) {
+    if (line.includes(SUMMARY_MARKER)) {
+      summary = true;
+      continue;
+    }
+    const removedMatch = REMOVED_LINE.exec(line);
+    if (removedMatch) {
+      removed.push({ name: removedMatch[1].trim(), rule: removedMatch[2].trim() });
+      continue;
+    }
+    const keptMatch = KEPT_LINE.exec(line);
+    if (keptMatch) {
+      kept.push({ name: keptMatch[1].trim(), rule: keptMatch[2].trim() });
+      continue;
+    }
+    if (note === undefined) {
+      const noteMatch = NOTE_LINE.exec(line);
+      if (noteMatch)
+        note = noteMatch[1].trim();
+    }
+  }
+  return { removed, kept, ...note ? { note } : {}, summary };
+}
+function cleanupPayload(filePath, cwd, content) {
+  return {
+    session_id: "guard-cleanup",
+    tool_name: "Write",
+    transcript_path: "",
+    cwd,
+    hook_event_name: COMMENT_CHECKER_EVENT,
+    is_test_file: true,
+    tool_input: { file_path: filePath, content }
+  };
+}
+async function defaultRun(input, binaryPath, timeoutMs) {
+  if (!existsSync5(binaryPath)) {
+    return { kind: "did-not-run", reason: `binary not found at ${binaryPath}` };
+  }
+  const outcome = await runProcess([binaryPath, "--strip", "--min-confidence", "low"], {
+    stdin: JSON.stringify(input),
+    timeoutMs
+  });
+  if (outcome === "timeout") {
+    return { kind: "did-not-run", reason: "timed out or could not be spawned" };
+  }
+  if (outcome.exitCode !== 0 && outcome.exitCode !== 2) {
+    const detail = outcome.stderr.trim().split(`
+`)[0]?.trim() ?? "";
+    return { kind: "did-not-run", reason: `exited with code ${outcome.exitCode}${detail ? `: ${detail}` : ""}` };
+  }
+  return { kind: "output", stderr: outcome.stderr, exitCode: outcome.exitCode };
+}
+async function resolveBinary(cliPath) {
+  if (cliPath)
+    return cliPath;
+  const override = process.env.TC_BINARY?.trim();
+  if (override)
+    return override;
+  try {
+    return await getTestCheckerPath();
+  } catch {
+    return null;
+  }
+}
+function display2(filePath, directory) {
+  return relative4(directory, filePath) || filePath;
+}
+async function collectCleanup(options, deps = {}) {
+  const directory = options.directory;
+  const testPatterns = options.testPatterns ?? [];
+  const run = deps.run ?? defaultRun;
+  const skipped = [];
+  const testFiles = [];
+  for (const filePath of listRepositoryFiles(directory, options.paths)) {
+    if (isSecretFile(filePath)) {
+      skipped.push(`${display2(filePath, directory)} (secret file pattern)`);
+      continue;
+    }
+    const language = detectLanguage(filePath);
+    if (!isSupportedLanguage(language))
+      continue;
+    if (!isTestPath(filePath, testPatterns))
+      continue;
+    testFiles.push(filePath);
+  }
+  const binaryPath = await resolveBinary(options.cliPath);
+  if (!binaryPath) {
+    return {
+      directory,
+      files: [],
+      skipped,
+      binaryAvailable: false,
+      unsupported: false,
+      generatedAt: new Date().toISOString()
+    };
+  }
+  const files = [];
+  for (const filePath of testFiles) {
+    let content;
+    try {
+      content = readFileSync5(filePath, "utf8");
+    } catch {
+      skipped.push(`${display2(filePath, directory)} (unreadable)`);
+      continue;
+    }
+    const file = {
+      filePath,
+      display: display2(filePath, directory),
+      removed: [],
+      kept: [],
+      summary: false
+    };
+    const outcome = await run(cleanupPayload(filePath, directory, content), binaryPath, options.timeoutMs ?? CLEANUP_TIMEOUT_MS);
+    if (outcome.kind === "did-not-run") {
+      file.error = outcome.reason;
+      files.push(file);
+      continue;
+    }
+    const parsed = parseCleanupSummary(outcome.stderr);
+    file.removed = parsed.removed;
+    file.kept = parsed.kept;
+    file.summary = parsed.summary;
+    if (parsed.note)
+      file.note = parsed.note;
+    files.push(file);
+  }
+  return {
+    directory,
+    files,
+    skipped,
+    binaryAvailable: true,
+    unsupported: files.length > 0 && files.every((file) => !file.summary && !file.error),
+    generatedAt: new Date().toISOString()
+  };
+}
+function renderCleanup(report) {
+  const lines = [];
+  lines.push("# Test guard cleanup");
+  lines.push("");
+  lines.push(`Generated ${report.generatedAt}`);
+  lines.push("");
+  const removed = report.files.reduce((count, file) => count + file.removed.length, 0);
+  const kept = report.files.reduce((count, file) => count + file.kept.length, 0);
+  if (!report.binaryAvailable) {
+    lines.push("No test-checker binary available; nothing was checked or rewritten.");
+    appendSkipped(lines, report.skipped);
+    return lines.join(`
+`);
+  }
+  if (report.files.length === 0) {
+    lines.push("No test files found. Nothing to clean up.");
+    appendSkipped(lines, report.skipped);
+    return lines.join(`
+`);
+  }
+  if (report.unsupported) {
+    lines.push("test-checker did not report a cleanup pass for any test file. The binary may predate `--strip`; nothing was rewritten.");
+    lines.push("Upgrade test-checker to the version that added `--strip` and run the cleanup again.");
+    appendSkipped(lines, report.skipped);
+    return lines.join(`
+`);
+  }
+  lines.push(`Removed ${removed} test block(s); ${kept} kept awaiting approval across ${report.files.length} test file(s).`);
+  lines.push("");
+  if (removed > 0) {
+    lines.push(`## Removed (${removed})`);
+    lines.push("");
+    lines.push("| file | test | rule |");
+    lines.push("|---|---|---|");
+    for (const file of report.files) {
+      for (const item of file.removed) {
+        lines.push(`| ${escapeCell2(file.display)} | ${escapeCell2(item.name)} | ${item.rule} |`);
+      }
+    }
+    lines.push("");
+  }
+  if (kept > 0) {
+    lines.push(`## Kept awaiting approval (${kept})`);
+    lines.push("");
+    lines.push("| file | test | rule |");
+    lines.push("|---|---|---|");
+    for (const file of report.files) {
+      for (const item of file.kept) {
+        lines.push(`| ${escapeCell2(file.display)} | ${escapeCell2(item.name)} | ${item.rule} |`);
+      }
+    }
+    lines.push("");
+    lines.push('Approve a removal with a "remove" entry (`{"glob","rules","reason"}`, reason at least 12 characters) in the git root\'s `.test-checker.json`, then run the cleanup again. The test-checker binary enforces the approval; the plugin never rewrites an unapproved candidate.');
+    lines.push("");
+  }
+  const notes = report.files.filter((file) => file.note);
+  if (notes.length > 0) {
+    lines.push("## Notes");
+    lines.push("");
+    for (const file of notes)
+      lines.push(`- \`${file.display}\`: ${file.note}`);
+    lines.push("");
+  }
+  const errors = report.files.filter((file) => file.error);
+  if (errors.length > 0) {
+    lines.push("## Files that could not be cleaned");
+    lines.push("");
+    for (const file of errors)
+      lines.push(`- \`${file.display}\`: ${file.error}`);
+    lines.push("");
+  }
+  const noSummary = report.files.filter((file) => !file.summary && !file.error);
+  if (noSummary.length > 0) {
+    lines.push("## No cleanup summary");
+    lines.push("");
+    lines.push("These files got no cleanup summary from the binary, which happens when it predates `--strip`. Nothing was rewritten.");
+    for (const file of noSummary)
+      lines.push(`- \`${file.display}\``);
+    lines.push("");
+  }
+  if (removed === 0 && kept === 0 && errors.length === 0 && noSummary.length === 0) {
+    lines.push("No cleanup candidates. Nothing to clean up.");
+  }
+  appendSkipped(lines, report.skipped);
+  return lines.join(`
+`);
+}
+function appendSkipped(lines, skipped) {
+  if (skipped.length === 0)
+    return;
+  lines.push("");
+  lines.push("## Skipped");
+  lines.push("");
+  for (const entry of skipped)
+    lines.push(`- ${entry}`);
+}
+function escapeCell2(value) {
+  return value.replace(/\|/g, "\\|").replace(/\n/g, " ").slice(0, 120);
+}
+async function runCleanup(options, deps = {}) {
+  return renderCleanup(await collectCleanup(options, deps));
+}
+
 // src/bin.ts
 function parseArgs(argv) {
   const positionals = [];
@@ -2526,7 +2983,7 @@ function parseArgs(argv) {
 function validateConfigCommand(path) {
   let raw;
   try {
-    raw = path ? readFileSync5(path, "utf8") : readFileSync5(0, "utf8");
+    raw = path ? readFileSync6(path, "utf8") : readFileSync6(0, "utf8");
   } catch (err) {
     process.stderr.write(`cannot read config: ${err instanceof Error ? err.message : String(err)}
 `);
@@ -2580,6 +3037,12 @@ async function auditCommand(parsed) {
 `);
   return 0;
 }
+async function cleanupCommand() {
+  const output = await runCleanup({ directory: process.cwd(), testPatterns: [] });
+  process.stdout.write(`${output}
+`);
+  return 0;
+}
 async function checkCommand(parsed) {
   const base = typeof parsed.flags.base === "string" ? parsed.flags.base : "HEAD";
   const scope = parsed.flags.scope ?? "tests";
@@ -2617,6 +3080,7 @@ function usage() {
     "  check [--diff] [--base <rev>] [--scope tests|comments|both] [--json] [--include-advisory]",
     "  validate-config [file]",
     "  audit [--scope comments|tests|both] [--paths a,b] [--json] [--include-advisory]",
+    "  cleanup",
     ""
   ].join(`
 `));
@@ -2635,6 +3099,8 @@ async function main(argv) {
       return validateConfigCommand(parsed.positionals[0]);
     case "audit":
       return auditCommand(parsed);
+    case "cleanup":
+      return cleanupCommand();
     default:
       usage();
       return command ? 2 : 0;

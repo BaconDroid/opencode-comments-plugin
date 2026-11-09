@@ -13,6 +13,7 @@ import {
   type AuditReport,
 } from "./audit"
 import type { ResolvedTestGuard } from "./core/dispatch"
+import { collectCleanup, parseCleanupSummary, renderCleanup } from "./cleanup"
 
 const dir = mkdtempSync(join(tmpdir(), "guard-audit-"))
 writeFileSync(join(dir, "a.test.ts"), 'test("empty", () => {\n})\n\ntest("taut", () => {\n  expect(true).toBe(true)\n})\n')
@@ -115,6 +116,100 @@ test("audit never mutates files", async () => {
   await runAudit({ scope: "both", paths: [dir], directory: dir, getConfig: config }, { runCheck: async () => [] })
   const after = await Bun.file(join(dir, "a.test.ts")).text()
   expect(after).toBe(before)
+})
+
+test("parseCleanupSummary reads removed, kept and note lines", () => {
+  const summary = parseCleanupSummary(
+    [
+      "[test-checker] cleanup pass: 1 removed, 1 kept awaiting approval.",
+      "  removed: same block [duplicate-test]",
+      "  kept awaiting approval: taut assertion [tautological-assertion]",
+      "  note: the target file is not on disk; nothing was rewritten",
+      '  approve a removal with a "remove" entry ({"glob","rules","reason"}) in .test-checker.json',
+    ].join("\n"),
+  )
+
+  expect(summary.summary).toBe(true)
+  expect(summary.removed).toEqual([{ name: "same block", rule: "duplicate-test" }])
+  expect(summary.kept).toEqual([{ name: "taut assertion", rule: "tautological-assertion" }])
+  expect(summary.note).toContain("not on disk")
+})
+
+test("parseCleanupSummary marks stderr without the cleanup summary", () => {
+  expect(parseCleanupSummary("TEST QUALITY DETECTED\n<findings file=\"a.test.ts\"></findings>").summary).toBe(false)
+})
+
+test("cleanup forwards test files and drops non-test files", async () => {
+  const calls: string[] = []
+  const report = await collectCleanup(
+    { directory: dir, paths: [dir], testPatterns: ["**/*.test.ts"], cliPath: "/fake/test-checker" },
+    {
+      run: async input => {
+        calls.push(input.tool_input.file_path!)
+        return {
+          kind: "output",
+          exitCode: 2,
+          stderr: "[test-checker] cleanup pass: 0 removed, 1 kept awaiting approval.\n  kept awaiting approval: x [gutted-test]",
+        }
+      },
+    },
+  )
+
+  expect(calls).toHaveLength(1)
+  expect(calls[0]).toBe(join(dir, "a.test.ts"))
+  expect(report.files.map(file => file.display)).toEqual(["a.test.ts"])
+})
+
+test("cleanup renders removed and kept items with the approval pointer", async () => {
+  const report = await collectCleanup(
+    { directory: dir, paths: [dir], testPatterns: ["**/*.test.ts"], cliPath: "/fake/test-checker" },
+    {
+      run: async () => ({
+        kind: "output",
+        exitCode: 2,
+        stderr: [
+          "[test-checker] cleanup pass: 1 removed, 1 kept awaiting approval.",
+          "  removed: same block [duplicate-test]",
+          "  kept awaiting approval: taut assertion [tautological-assertion]",
+        ].join("\n"),
+      }),
+    },
+  )
+
+  const output = renderCleanup(report)
+  expect(output).toContain("Removed 1 test block(s); 1 kept awaiting approval")
+  expect(output).toContain("same block")
+  expect(output).toContain("taut assertion")
+  expect(output).toContain(".test-checker.json")
+  expect(output).toContain('"remove" entry')
+})
+
+test("cleanup leaves unapproved files untouched when the binary only reports them", async () => {
+  const testFile = join(dir, "a.test.ts")
+  const before = await Bun.file(testFile).text()
+  const report = await collectCleanup(
+    { directory: dir, paths: [dir], testPatterns: ["**/*.test.ts"], cliPath: "/fake/test-checker" },
+    {
+      run: async () => ({
+        kind: "output",
+        exitCode: 2,
+        stderr: "[test-checker] cleanup pass: 0 removed, 1 kept awaiting approval.\n  kept awaiting approval: x [tautological-assertion]",
+      }),
+    },
+  )
+
+  expect(report.files[0]!.kept).toHaveLength(1)
+  expect(await Bun.file(testFile).text()).toBe(before)
+})
+
+test("cleanup reports a pre-strip binary without failing", async () => {
+  const report = await collectCleanup(
+    { directory: dir, paths: [dir], testPatterns: ["**/*.test.ts"], cliPath: "/fake/test-checker" },
+    { run: async () => ({ kind: "output", exitCode: 0, stderr: "TEST QUALITY DETECTED: no weakened tests.\n" }) },
+  )
+
+  expect(report.unsupported).toBe(true)
+  expect(renderCleanup(report)).toContain("predate `--strip`")
 })
 
 test("directory walk skips node_modules and hidden directories", () => {
