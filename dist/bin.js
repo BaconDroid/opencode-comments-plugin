@@ -643,6 +643,17 @@ var DEFAULT_TEST_PATTERNS = [
 function isTestPath(filePath, patterns) {
   return matchPathFilter(patterns, filePath, DEFAULT_TEST_PATTERNS);
 }
+var HARNESS_FILES = new Set([
+  ".test-checker.json",
+  "pytest.ini",
+  "tox.ini",
+  "conftest.py",
+  "setup.cfg",
+  "pyproject.toml",
+  "package.json",
+  "makefile",
+  "codecov.yml"
+]);
 var SKIP_FOCUS_PATTERNS = {
   js: [/\.(?:skip|only|todo)\s*\(/, /\b(?:xit|xdescribe|xtest)\s*\(/],
   ts: [/\.(?:skip|only|todo)\s*\(/, /\b(?:xit|xdescribe|xtest)\s*\(/],

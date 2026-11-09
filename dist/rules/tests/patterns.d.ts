@@ -1,6 +1,7 @@
 import type { Language } from "../../core/diff";
 export declare const DEFAULT_TEST_PATTERNS: string[];
 export declare function isTestPath(filePath: string, patterns: string[]): boolean;
+export declare function isHarnessPath(filePath: string): boolean;
 export declare const SKIP_FOCUS_PATTERNS: Partial<Record<Language, RegExp[]>>;
 export declare const CONDITIONAL_SKIP_PATTERNS: RegExp[];
 export declare const TAUTOLOGICAL_PATTERNS: RegExp[];

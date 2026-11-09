@@ -1347,6 +1347,22 @@ var DEFAULT_TEST_PATTERNS = [
 function isTestPath(filePath, patterns) {
   return matchPathFilter(patterns, filePath, DEFAULT_TEST_PATTERNS);
 }
+var HARNESS_FILES = new Set([
+  ".test-checker.json",
+  "pytest.ini",
+  "tox.ini",
+  "conftest.py",
+  "setup.cfg",
+  "pyproject.toml",
+  "package.json",
+  "makefile",
+  "codecov.yml"
+]);
+function isHarnessPath(filePath) {
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+  const file = normalized.split("/").pop() ?? "";
+  return normalized.includes(".github/workflows/") || normalized.includes(".gitlab-ci") || HARNESS_FILES.has(file) || file.startsWith("jest.config") || file.startsWith("vitest.config") || file.startsWith("karma.conf") || file.startsWith(".nycrc");
+}
 var SKIP_FOCUS_PATTERNS = {
   js: [/\.(?:skip|only|todo)\s*\(/, /\b(?:xit|xdescribe|xtest)\s*\(/],
   ts: [/\.(?:skip|only|todo)\s*\(/, /\b(?:xit|xdescribe|xtest)\s*\(/],
@@ -2457,7 +2473,7 @@ function toFindings(findings, filePath, checks, sessionID) {
     excerpt: finding.excerpt
   }));
 }
-function buildTestCheckerInput(change, ctx) {
+function buildTestCheckerInput(change, ctx, isTestFile) {
   const toolInput = { file_path: change.filePath };
   let toolName;
   if (change.isNew) {
@@ -2474,7 +2490,7 @@ function buildTestCheckerInput(change, ctx) {
     transcript_path: "",
     cwd: process.cwd(),
     hook_event_name: COMMENT_CHECKER_EVENT,
-    is_test_file: true,
+    is_test_file: isTestFile,
     tool_input: toolInput
   };
 }
@@ -2514,11 +2530,12 @@ function createTestEngineAnalyzer(getConfig, run = runTestChecker) {
         return {};
       const config = getConfig();
       const isTestFile = config.isTestFile ?? isTestPath(change.filePath, config.testPatterns);
-      const useBinary = (config.engine ?? "binary") === "binary" && isTestFile && !change.isDelete && change.newText.trim().length > 0;
+      const isHarnessFile = isHarnessPath(change.filePath);
+      const useBinary = (config.engine ?? "binary") === "binary" && (isTestFile || isHarnessFile) && !change.isDelete && change.newText.trim().length > 0;
       if (useBinary) {
         let outcome = null;
         try {
-          outcome = await run(buildTestCheckerInput(change, ctx));
+          outcome = await run(buildTestCheckerInput(change, ctx, isTestFile && !isHarnessFile));
         } catch {
           outcome = null;
         }
