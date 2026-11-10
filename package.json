@@ -34,7 +34,9 @@
 		"test": "bun test",
 		"typecheck": "tsc --noEmit",
 		"rules:generate": "node scripts/generate-rule-ids.mjs",
-		"check:rule-ids": "node scripts/generate-rule-ids.mjs --check"
+		"rules:path-predicates": "node scripts/generate-path-predicates.mjs",
+		"check:rule-ids": "node scripts/generate-rule-ids.mjs --check",
+		"check:path-predicates": "node scripts/generate-path-predicates.mjs --check"
 	},
 	"dependencies": {
 		"@opencode-ai/plugin": "^1.0.162",

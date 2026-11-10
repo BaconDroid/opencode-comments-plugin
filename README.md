@@ -503,5 +503,20 @@ bun test
 bun run typecheck
 ```
 
+Two JSON files are generated contracts with the `test-checker` binary; do not
+edit them by hand. Set `TC_REPO` to a current checkout when the default
+`../test-checker` is stale or absent.
+
+| file                                   | source                                                                            | refresh                         | drift check                     |
+| -------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------- | ------------------------------- |
+| `src/rules/tests/binary-rule-ids.json` | test-checker README `## Rules` paragraph                                          | `npm run rules:generate`        | `npm run check:rule-ids`        |
+| `src/rules/tests/path-predicates.json` | test-checker `eval/path-predicates.json`, itself generated from `src/language.rs` | `npm run rules:path-predicates` | `npm run check:path-predicates` |
+
+Each `check:` command regenerates the contract in memory and exits non-zero on
+a diff, so a sibling bump is detected without rewriting the file. The
+path-predicate artifact records the `source` repository and `ref` it came from;
+`src/rules/tests/patterns.ts` reads its tables, so the test and harness path
+predicates track the binary instead of a hand transcription.
+
 The invariants a change must preserve are in
 [`docs/design-constraints.md`](docs/design-constraints.md).

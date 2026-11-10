@@ -1475,17 +1475,26 @@ function matchPathFilter(patterns, filePath, fallback) {
     return fallback ? matchesAnyGlob(fallback, filePath) : true;
   return matchesAnyGlob(patterns, filePath);
 }
-
-// src/rules/tests/patterns.ts
-var TEST_PATH_TABLE = {
-  directorySegments: ["tests", "test", "__tests__", "spec", "specs"],
-  filenamePrefixes: ["test_", "test-"],
-  filenameInfixes: ["_test.", ".test.", ".spec.", "_spec."]
-};
-var DEFAULT_TEST_PATTERNS = [];
-var HARNESS_PATH_TABLE = {
-  pathSubstrings: [".github/workflows/", ".gitlab-ci"],
-  filenames: [
+// src/rules/tests/path-predicates.json
+var path_predicates_default = {
+  source: "BaconDroid/test-checker",
+  ref: "4a009686caf82cd7c1fc5559865773665ac4b732",
+  extension_test_name_rules: [
+    {
+      extensions: [
+        "java",
+        "kt"
+      ],
+      filename_prefixes: [
+        "test"
+      ],
+      filename_suffixes: [
+        "test"
+      ]
+    }
+  ],
+  generated_from: "src/language.rs",
+  harness_basenames: [
     "pytest.ini",
     "tox.ini",
     "conftest.py",
@@ -1495,9 +1504,67 @@ var HARNESS_PATH_TABLE = {
     "makefile",
     "codecov.yml"
   ],
-  filenamePrefixes: ["jest.config", "vitest.config", "karma.conf", ".nycrc"]
+  harness_filename_prefixes: [
+    "jest.config",
+    "vitest.config",
+    "karma.conf",
+    ".nycrc"
+  ],
+  harness_path_substrings: [
+    ".github/workflows/",
+    ".gitlab-ci"
+  ],
+  sensitive_harness_basenames: [
+    "pytest.ini",
+    "tox.ini",
+    "conftest.py"
+  ],
+  sensitive_harness_filename_prefixes: [
+    "jest.config",
+    "vitest.config"
+  ],
+  sensitive_harness_path_substrings: [
+    ".github/workflows/",
+    ".gitlab-ci"
+  ],
+  test_filename_infixes: [
+    "_test.",
+    ".test.",
+    ".spec.",
+    "_spec."
+  ],
+  test_filename_prefixes: [
+    "test_",
+    "test-"
+  ],
+  test_path_segments: [
+    "tests",
+    "test",
+    "__tests__",
+    "spec",
+    "specs"
+  ]
+};
+
+// src/rules/tests/patterns.ts
+var PATH_PREDICATE_CONTRACT = path_predicates_default;
+var TEST_PATH_TABLE = {
+  directorySegments: PATH_PREDICATE_CONTRACT.test_path_segments,
+  filenamePrefixes: PATH_PREDICATE_CONTRACT.test_filename_prefixes,
+  filenameInfixes: PATH_PREDICATE_CONTRACT.test_filename_infixes
+};
+var DEFAULT_TEST_PATTERNS = [];
+var HARNESS_PATH_TABLE = {
+  pathSubstrings: PATH_PREDICATE_CONTRACT.harness_path_substrings,
+  filenames: PATH_PREDICATE_CONTRACT.harness_basenames,
+  filenamePrefixes: PATH_PREDICATE_CONTRACT.harness_filename_prefixes
 };
 var TEST_CONFIG_BASENAMES = [".test-checker.json"];
+var SENSITIVE_HARNESS_PATH_TABLE = {
+  pathSubstrings: PATH_PREDICATE_CONTRACT.sensitive_harness_path_substrings,
+  filenames: PATH_PREDICATE_CONTRACT.sensitive_harness_basenames,
+  filenamePrefixes: PATH_PREDICATE_CONTRACT.sensitive_harness_filename_prefixes
+};
 function normalizePath(filePath) {
   return filePath.replace(/\\/g, "/").toLowerCase();
 }
