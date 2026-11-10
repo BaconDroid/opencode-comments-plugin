@@ -45,6 +45,8 @@ export type Language =
 
 // The extension set the bundled test-checker builds parse (TSLP_LANGUAGES in
 // its `.cargo/config.toml`). The plugin classifies only; it ships no parser.
+// Every extension the generated path-predicate contract scopes to a test-name
+// rule maps here; path-predicates.test.ts keeps the two lists aligned.
 export const LANGUAGE_BY_EXTENSION: Readonly<Record<string, Language>> = {
   ".bash": "bash",
   ".sh": "bash",

@@ -1,4 +1,25 @@
 import type { Language } from "../../core/diff";
+export interface ExtensionTestNameRule {
+    readonly extensions: readonly string[];
+    readonly filename_prefixes: readonly string[];
+    readonly filename_suffixes: readonly string[];
+}
+export interface PathPredicateContract {
+    readonly source: string;
+    readonly ref: string;
+    readonly generated_from: string;
+    readonly test_path_segments: readonly string[];
+    readonly test_filename_prefixes: readonly string[];
+    readonly test_filename_infixes: readonly string[];
+    readonly extension_test_name_rules: readonly ExtensionTestNameRule[];
+    readonly harness_path_substrings: readonly string[];
+    readonly harness_basenames: readonly string[];
+    readonly harness_filename_prefixes: readonly string[];
+    readonly sensitive_harness_path_substrings: readonly string[];
+    readonly sensitive_harness_basenames: readonly string[];
+    readonly sensitive_harness_filename_prefixes: readonly string[];
+}
+export declare const PATH_PREDICATE_CONTRACT: PathPredicateContract;
 export interface TestPathTable {
     readonly directorySegments: readonly string[];
     readonly filenamePrefixes: readonly string[];

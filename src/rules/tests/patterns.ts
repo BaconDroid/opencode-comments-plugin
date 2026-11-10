@@ -12,10 +12,39 @@
 
 import type { Language } from "../../core/diff"
 import { matchesAnyGlob } from "../../core/glob"
+import pathPredicateContract from "./path-predicates.json"
+
+export interface ExtensionTestNameRule {
+  readonly extensions: readonly string[]
+  readonly filename_prefixes: readonly string[]
+  readonly filename_suffixes: readonly string[]
+}
+
+// The generated contract copies test-checker's `eval/path-predicates.json`,
+// which is itself generated from `src/language.rs`. `source` and `ref` record
+// the checkout it came from; `scripts/generate-path-predicates.mjs` rewrites it.
+export interface PathPredicateContract {
+  readonly source: string
+  readonly ref: string
+  readonly generated_from: string
+  readonly test_path_segments: readonly string[]
+  readonly test_filename_prefixes: readonly string[]
+  readonly test_filename_infixes: readonly string[]
+  readonly extension_test_name_rules: readonly ExtensionTestNameRule[]
+  readonly harness_path_substrings: readonly string[]
+  readonly harness_basenames: readonly string[]
+  readonly harness_filename_prefixes: readonly string[]
+  readonly sensitive_harness_path_substrings: readonly string[]
+  readonly sensitive_harness_basenames: readonly string[]
+  readonly sensitive_harness_filename_prefixes: readonly string[]
+}
+
+export const PATH_PREDICATE_CONTRACT = pathPredicateContract as PathPredicateContract
 
 // Test-path truth, matching test-checker's `is_test_path`: a directory segment,
-// a filename prefix, or a filename infix decides. The table is data so a
-// generated table can replace it without touching call sites.
+// a filename prefix, or a filename infix decides. Extension-scoped class-name
+// rules stay in the contract unconsumed because the predicate exposes the same
+// selection as before: path segment, filename prefix, filename infix.
 export interface TestPathTable {
   readonly directorySegments: readonly string[]
   readonly filenamePrefixes: readonly string[]
@@ -23,9 +52,9 @@ export interface TestPathTable {
 }
 
 export const TEST_PATH_TABLE: TestPathTable = {
-  directorySegments: ["tests", "test", "__tests__", "spec", "specs"],
-  filenamePrefixes: ["test_", "test-"],
-  filenameInfixes: ["_test.", ".test.", ".spec.", "_spec."],
+  directorySegments: PATH_PREDICATE_CONTRACT.test_path_segments,
+  filenamePrefixes: PATH_PREDICATE_CONTRACT.test_filename_prefixes,
+  filenameInfixes: PATH_PREDICATE_CONTRACT.test_filename_infixes,
 }
 
 // `test_patterns` is an override; an empty list selects the built-in table.
@@ -33,9 +62,9 @@ export const TEST_PATH_TABLE: TestPathTable = {
 // remains the single source of the default selection.
 export const DEFAULT_TEST_PATTERNS: string[] = []
 
-// Paths that carry a test gate but are not test files. Mirrors test-checker's
-// `is_harness_path` so the live hook forwards the same paths the binary
-// classifies independently of language.
+// Paths that carry a test gate but are not test files. The contract mirrors
+// test-checker's `is_harness_path` so the live hook forwards the same paths the
+// binary classifies independently of language.
 export interface HarnessPathTable {
   readonly pathSubstrings: readonly string[]
   readonly filenames: readonly string[]
@@ -43,32 +72,24 @@ export interface HarnessPathTable {
 }
 
 export const HARNESS_PATH_TABLE: HarnessPathTable = {
-  pathSubstrings: [".github/workflows/", ".gitlab-ci"],
-  filenames: [
-    "pytest.ini",
-    "tox.ini",
-    "conftest.py",
-    "setup.cfg",
-    "pyproject.toml",
-    "package.json",
-    "makefile",
-    "codecov.yml",
-  ],
-  filenamePrefixes: ["jest.config", "vitest.config", "karma.conf", ".nycrc"],
+  pathSubstrings: PATH_PREDICATE_CONTRACT.harness_path_substrings,
+  filenames: PATH_PREDICATE_CONTRACT.harness_basenames,
+  filenamePrefixes: PATH_PREDICATE_CONTRACT.harness_filename_prefixes,
 }
 
 // The binary recognises its own suppression config before either the config
 // or harness branch runs, and reports `config-edited` for it. The plugin
-// forwards it as a non-test path for the same reason.
+// forwards it as a non-test path for the same reason. The contract omits this
+// basename; test-checker defines it in `src/filters.rs:10`.
 export const TEST_CONFIG_BASENAMES: readonly string[] = [".test-checker.json"]
 
 // The harness paths whose edit directly decides what CI runs. The binary
 // resolves a finding on these above the Medium gate; every other harness file
 // stays Low telemetry.
 export const SENSITIVE_HARNESS_PATH_TABLE: HarnessPathTable = {
-  pathSubstrings: [".github/workflows/", ".gitlab-ci"],
-  filenames: ["pytest.ini", "tox.ini", "conftest.py"],
-  filenamePrefixes: ["jest.config", "vitest.config"],
+  pathSubstrings: PATH_PREDICATE_CONTRACT.sensitive_harness_path_substrings,
+  filenames: PATH_PREDICATE_CONTRACT.sensitive_harness_basenames,
+  filenamePrefixes: PATH_PREDICATE_CONTRACT.sensitive_harness_filename_prefixes,
 }
 
 function normalizePath(filePath: string): string {

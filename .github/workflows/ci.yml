@@ -24,3 +24,8 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/BaconDroid/test-checker.git ../test-checker
           TC_REPO=../test-checker npm run check:rule-ids
+      - name: path-predicate contract (advisory)
+        continue-on-error: true
+        run: |
+          git clone --depth 1 https://github.com/BaconDroid/test-checker.git ../test-checker-path
+          TC_REPO=../test-checker-path npm run check:path-predicates
