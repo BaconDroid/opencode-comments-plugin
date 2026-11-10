@@ -1402,32 +1402,47 @@ function matchPathFilter(patterns, filePath, fallback) {
 }
 
 // src/rules/tests/patterns.ts
-var DEFAULT_TEST_PATTERNS = [
-  "**/*.test.*",
-  "**/*_test.*",
-  "**/test_*.py",
-  "**/tests/**",
-  "**/__tests__/**",
-  "**/*.spec.*"
-];
-function isTestPath(filePath, patterns) {
-  return matchPathFilter(patterns, filePath, DEFAULT_TEST_PATTERNS);
+var TEST_PATH_TABLE = {
+  directorySegments: ["tests", "test", "__tests__", "spec", "specs"],
+  filenamePrefixes: ["test_", "test-"],
+  filenameInfixes: ["_test.", ".test.", ".spec.", "_spec."]
+};
+var DEFAULT_TEST_PATTERNS = [];
+var HARNESS_PATH_TABLE = {
+  pathSubstrings: [".github/workflows/", ".gitlab-ci"],
+  filenames: [
+    ".test-checker.json",
+    "pytest.ini",
+    "tox.ini",
+    "conftest.py",
+    "setup.cfg",
+    "pyproject.toml",
+    "package.json",
+    "makefile",
+    "codecov.yml"
+  ],
+  filenamePrefixes: ["jest.config", "vitest.config", "karma.conf", ".nycrc"]
+};
+function normalizePath(filePath) {
+  return filePath.replace(/\\/g, "/").toLowerCase();
 }
-var HARNESS_FILES = new Set([
-  ".test-checker.json",
-  "pytest.ini",
-  "tox.ini",
-  "conftest.py",
-  "setup.cfg",
-  "pyproject.toml",
-  "package.json",
-  "makefile",
-  "codecov.yml"
-]);
-function isHarnessPath(filePath) {
-  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+function matchesTestPathTable(filePath, table = TEST_PATH_TABLE) {
+  const normalized = normalizePath(filePath);
   const file = normalized.split("/").pop() ?? "";
-  return normalized.includes(".github/workflows/") || normalized.includes(".gitlab-ci") || HARNESS_FILES.has(file) || file.startsWith("jest.config") || file.startsWith("vitest.config") || file.startsWith("karma.conf") || file.startsWith(".nycrc");
+  return normalized.split("/").some((segment) => table.directorySegments.includes(segment)) || table.filenamePrefixes.some((prefix) => file.startsWith(prefix)) || table.filenameInfixes.some((infix) => file.includes(infix));
+}
+function matchesHarnessPathTable(filePath, table) {
+  const normalized = normalizePath(filePath);
+  const file = normalized.split("/").pop() ?? "";
+  return table.pathSubstrings.some((substring) => normalized.includes(substring)) || table.filenames.includes(file) || table.filenamePrefixes.some((prefix) => file.startsWith(prefix));
+}
+function isTestPath(filePath, patterns) {
+  if (patterns.length === 0)
+    return matchesTestPathTable(filePath);
+  return matchesAnyGlob(patterns, filePath.replace(/\\/g, "/"));
+}
+function isHarnessPath(filePath) {
+  return matchesHarnessPathTable(filePath, HARNESS_PATH_TABLE);
 }
 var SKIP_FOCUS_PATTERNS = {
   js: [/\.(?:skip|only|todo)\s*\(/, /\b(?:xit|xdescribe|xtest)\s*\(/],

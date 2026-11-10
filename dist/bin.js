@@ -872,35 +872,27 @@ function matchesGlob(pattern, filePath) {
 function matchesAnyGlob(patterns, filePath) {
   return patterns.some((pattern) => matchesGlob(pattern, filePath));
 }
-function matchPathFilter(patterns, filePath, fallback) {
-  if (patterns.length === 0)
-    return fallback ? matchesAnyGlob(fallback, filePath) : true;
-  return matchesAnyGlob(patterns, filePath);
-}
 
 // src/rules/tests/patterns.ts
-var DEFAULT_TEST_PATTERNS = [
-  "**/*.test.*",
-  "**/*_test.*",
-  "**/test_*.py",
-  "**/tests/**",
-  "**/__tests__/**",
-  "**/*.spec.*"
-];
-function isTestPath(filePath, patterns) {
-  return matchPathFilter(patterns, filePath, DEFAULT_TEST_PATTERNS);
+var TEST_PATH_TABLE = {
+  directorySegments: ["tests", "test", "__tests__", "spec", "specs"],
+  filenamePrefixes: ["test_", "test-"],
+  filenameInfixes: ["_test.", ".test.", ".spec.", "_spec."]
+};
+var DEFAULT_TEST_PATTERNS = [];
+function normalizePath(filePath) {
+  return filePath.replace(/\\/g, "/").toLowerCase();
 }
-var HARNESS_FILES = new Set([
-  ".test-checker.json",
-  "pytest.ini",
-  "tox.ini",
-  "conftest.py",
-  "setup.cfg",
-  "pyproject.toml",
-  "package.json",
-  "makefile",
-  "codecov.yml"
-]);
+function matchesTestPathTable(filePath, table = TEST_PATH_TABLE) {
+  const normalized = normalizePath(filePath);
+  const file = normalized.split("/").pop() ?? "";
+  return normalized.split("/").some((segment) => table.directorySegments.includes(segment)) || table.filenamePrefixes.some((prefix) => file.startsWith(prefix)) || table.filenameInfixes.some((infix) => file.includes(infix));
+}
+function isTestPath(filePath, patterns) {
+  if (patterns.length === 0)
+    return matchesTestPathTable(filePath);
+  return matchesAnyGlob(patterns, filePath.replace(/\\/g, "/"));
+}
 var SKIP_FOCUS_PATTERNS = {
   js: [/\.(?:skip|only|todo)\s*\(/, /\b(?:xit|xdescribe|xtest)\s*\(/],
   ts: [/\.(?:skip|only|todo)\s*\(/, /\b(?:xit|xdescribe|xtest)\s*\(/],

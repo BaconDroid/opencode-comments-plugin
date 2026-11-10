@@ -165,7 +165,6 @@ tests. It reuses the same tuple, under a sibling `test_guard` key:
       "test_guard": {
         "enabled": true,
         "engine": "binary",
-        "test_patterns": ["**/*.test.*", "**/*_test.*", "**/test_*.py", "**/tests/**", "**/__tests__/**", "**/*.spec.*"],
         "checks": { "protected-paths": "warn", "skip-focus-added": "warn" },
         "mutation": { "enabled": false, "command": "npx stryker run --reporters json", "timeout_ms": 120000 },
         "judge": { "enabled": false, "model": "opencode/big-pickle", "timeout_ms": 30000 },
@@ -206,10 +205,15 @@ per session, names both versions, and uses the in-process regex rules for that
 run instead of silently trusting the wrong engine. The same check applies to
 `comment-checker`.
 
-`test_patterns` selects test files only. Harness/config paths (CI workflows,
-`.test-checker.json`, `jest`/`vitest`/`karma` config, `pytest.ini`, `tox.ini`,
-`conftest.py`, `package.json`, ...) are classified independently, mirroring the
-binary's `is_harness_path`, and are always forwarded to the binary so
+`test_patterns` overrides the built-in test-path table; leave it unset to use
+the table. The table matches the binary's `is_test_path`: a directory segment
+`tests`, `test`, `__tests__`, `spec`, or `specs`; a filename prefix `test_` or
+`test-`; or a filename infix `_test.`, `.test.`, `.spec.`, or `_spec.`.
+
+Harness/config paths (CI workflows, `.test-checker.json`,
+`jest`/`vitest`/`karma` config, `pytest.ini`, `tox.ini`, `conftest.py`,
+`package.json`, ...) are classified independently, mirroring the binary's
+`is_harness_path`, and are always forwarded to the binary so
 `config-edited`/`harness-edited`/`gate-weakened` fire even when they do not match
 `test_patterns`.
 

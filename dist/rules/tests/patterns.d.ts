@@ -1,7 +1,24 @@
 import type { Language } from "../../core/diff";
+export interface TestPathTable {
+    readonly directorySegments: readonly string[];
+    readonly filenamePrefixes: readonly string[];
+    readonly filenameInfixes: readonly string[];
+}
+export declare const TEST_PATH_TABLE: TestPathTable;
 export declare const DEFAULT_TEST_PATTERNS: string[];
+export interface HarnessPathTable {
+    readonly pathSubstrings: readonly string[];
+    readonly filenames: readonly string[];
+    readonly filenamePrefixes: readonly string[];
+}
+export declare const HARNESS_PATH_TABLE: HarnessPathTable;
+export declare const SENSITIVE_HARNESS_PATH_TABLE: HarnessPathTable;
+export declare function matchesTestPathTable(filePath: string, table?: TestPathTable): boolean;
 export declare function isTestPath(filePath: string, patterns: string[]): boolean;
 export declare function isHarnessPath(filePath: string): boolean;
+export declare function isSensitiveHarnessPath(filePath: string): boolean;
+export declare function isSelectedTestPath(filePath: string, patterns: string[]): boolean;
+export declare function isTestFileForAnalysis(filePath: string, patterns: string[]): boolean;
 export declare const SKIP_FOCUS_PATTERNS: Partial<Record<Language, RegExp[]>>;
 export declare const CONDITIONAL_SKIP_PATTERNS: RegExp[];
 export declare const TAUTOLOGICAL_PATTERNS: RegExp[];

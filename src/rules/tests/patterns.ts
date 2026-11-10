@@ -11,50 +11,111 @@
 //   ruff/flake8-pytest-style PT015/PT018/B011, SonarJS S1607, SonarQube S2699.
 
 import type { Language } from "../../core/diff"
-import { matchPathFilter } from "../../core/glob"
+import { matchesAnyGlob } from "../../core/glob"
 
-export const DEFAULT_TEST_PATTERNS = [
-  "**/*.test.*",
-  "**/*_test.*",
-  "**/test_*.py",
-  "**/tests/**",
-  "**/__tests__/**",
-  "**/*.spec.*",
-]
-
-export function isTestPath(filePath: string, patterns: string[]): boolean {
-  return matchPathFilter(patterns, filePath, DEFAULT_TEST_PATTERNS)
+// Test-path truth, matching test-checker's `is_test_path`: a directory segment,
+// a filename prefix, or a filename infix decides. The table is data so a
+// generated table can replace it without touching call sites.
+export interface TestPathTable {
+  readonly directorySegments: readonly string[]
+  readonly filenamePrefixes: readonly string[]
+  readonly filenameInfixes: readonly string[]
 }
 
-// Test harness/config paths that carry a test gate but are not test files.
-// Mirrors test-checker's `is_harness_path` so the live hook forwards the same
-// paths the binary classifies independently of language. `.test-checker.json`
-// is included because the binary reports it as `config-edited` before it
-// reaches the harness branch; forwarding it is what surfaces that rule.
-const HARNESS_FILES = new Set([
-  ".test-checker.json",
-  "pytest.ini",
-  "tox.ini",
-  "conftest.py",
-  "setup.cfg",
-  "pyproject.toml",
-  "package.json",
-  "makefile",
-  "codecov.yml",
-])
+export const TEST_PATH_TABLE: TestPathTable = {
+  directorySegments: ["tests", "test", "__tests__", "spec", "specs"],
+  filenamePrefixes: ["test_", "test-"],
+  filenameInfixes: ["_test.", ".test.", ".spec.", "_spec."],
+}
 
-export function isHarnessPath(filePath: string): boolean {
-  const normalized = filePath.replace(/\\/g, "/").toLowerCase()
+// `test_patterns` is an override; an empty list selects the built-in table.
+// Keeping the constant keeps the resolved-config shape stable while the table
+// remains the single source of the default selection.
+export const DEFAULT_TEST_PATTERNS: string[] = []
+
+// Paths that carry a test gate but are not test files. Mirrors test-checker's
+// `is_harness_path` so the live hook forwards the same paths the binary
+// classifies independently of language. `.test-checker.json` belongs here
+// because the binary reports it as `config-edited` before its harness branch,
+// and forwarding it is what surfaces that rule.
+export interface HarnessPathTable {
+  readonly pathSubstrings: readonly string[]
+  readonly filenames: readonly string[]
+  readonly filenamePrefixes: readonly string[]
+}
+
+export const HARNESS_PATH_TABLE: HarnessPathTable = {
+  pathSubstrings: [".github/workflows/", ".gitlab-ci"],
+  filenames: [
+    ".test-checker.json",
+    "pytest.ini",
+    "tox.ini",
+    "conftest.py",
+    "setup.cfg",
+    "pyproject.toml",
+    "package.json",
+    "makefile",
+    "codecov.yml",
+  ],
+  filenamePrefixes: ["jest.config", "vitest.config", "karma.conf", ".nycrc"],
+}
+
+// The harness paths whose edit directly decides what CI runs. The binary
+// resolves a finding on these above the Medium gate; every other harness file
+// stays Low telemetry.
+export const SENSITIVE_HARNESS_PATH_TABLE: HarnessPathTable = {
+  pathSubstrings: [".github/workflows/", ".gitlab-ci"],
+  filenames: ["pytest.ini", "tox.ini", "conftest.py"],
+  filenamePrefixes: ["jest.config", "vitest.config"],
+}
+
+function normalizePath(filePath: string): string {
+  return filePath.replace(/\\/g, "/").toLowerCase()
+}
+
+export function matchesTestPathTable(filePath: string, table: TestPathTable = TEST_PATH_TABLE): boolean {
+  const normalized = normalizePath(filePath)
   const file = normalized.split("/").pop() ?? ""
   return (
-    normalized.includes(".github/workflows/") ||
-    normalized.includes(".gitlab-ci") ||
-    HARNESS_FILES.has(file) ||
-    file.startsWith("jest.config") ||
-    file.startsWith("vitest.config") ||
-    file.startsWith("karma.conf") ||
-    file.startsWith(".nycrc")
+    normalized.split("/").some(segment => table.directorySegments.includes(segment)) ||
+    table.filenamePrefixes.some(prefix => file.startsWith(prefix)) ||
+    table.filenameInfixes.some(infix => file.includes(infix))
   )
+}
+
+function matchesHarnessPathTable(filePath: string, table: HarnessPathTable): boolean {
+  const normalized = normalizePath(filePath)
+  const file = normalized.split("/").pop() ?? ""
+  return (
+    table.pathSubstrings.some(substring => normalized.includes(substring)) ||
+    table.filenames.includes(file) ||
+    table.filenamePrefixes.some(prefix => file.startsWith(prefix))
+  )
+}
+
+export function isTestPath(filePath: string, patterns: string[]): boolean {
+  if (patterns.length === 0) return matchesTestPathTable(filePath)
+  return matchesAnyGlob(patterns, filePath.replace(/\\/g, "/"))
+}
+
+export function isHarnessPath(filePath: string): boolean {
+  return matchesHarnessPathTable(filePath, HARNESS_PATH_TABLE)
+}
+
+export function isSensitiveHarnessPath(filePath: string): boolean {
+  return isHarnessPath(filePath) && matchesHarnessPathTable(filePath, SENSITIVE_HARNESS_PATH_TABLE)
+}
+
+// One gate for the live hook, audit, CI and cleanup. A path is selected when it
+// is a test file or a harness/config file. Harness wins when a path is both
+// (for example `tests/conftest.py`): the binary handles the harness branch
+// before the test branch, so the in-process rules must not treat it as a test.
+export function isSelectedTestPath(filePath: string, patterns: string[]): boolean {
+  return isHarnessPath(filePath) || isTestPath(filePath, patterns)
+}
+
+export function isTestFileForAnalysis(filePath: string, patterns: string[]): boolean {
+  return isTestPath(filePath, patterns) && !isHarnessPath(filePath)
 }
 
 // jest/no-disabled-tests + ruff PT015 + go t.Skip + rust #[ignore].
