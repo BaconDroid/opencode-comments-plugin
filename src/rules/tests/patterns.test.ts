@@ -6,6 +6,7 @@ import {
   isHarnessPath,
   isSelectedTestPath,
   isSensitiveHarnessPath,
+  isTestConfigPath,
   isTestFileForAnalysis,
   isTestPath,
   matchesTestPathTable,
@@ -90,8 +91,13 @@ test("isHarnessPath matches the binary's harness paths", () => {
   }
 })
 
-test("isHarnessPath includes the suppression config the binary gates first", () => {
-  expect(isHarnessPath(".test-checker.json")).toBe(true)
+test("the suppression config is its own path, gated before harness", () => {
+  expect(isHarnessPath(".test-checker.json")).toBe(false)
+  expect(isTestConfigPath(".test-checker.json")).toBe(true)
+  expect(isTestConfigPath("config/.test-checker.json")).toBe(true)
+  expect(isTestConfigPath("src/app.py")).toBe(false)
+  expect(isSelectedTestPath(".test-checker.json", [])).toBe(true)
+  expect(isTestFileForAnalysis(".test-checker.json", [])).toBe(false)
 })
 
 test("isHarnessPath rejects production paths and test files", () => {

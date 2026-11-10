@@ -124,9 +124,8 @@ test("engine binary does not invoke the binary for a non-test change", async () 
 
 // --- harness/config forwarding ---
 
-test("isHarnessPath matches the binary's harness and suppression-config paths", () => {
+test("isHarnessPath matches the binary's harness paths", () => {
   for (const path of [
-    ".test-checker.json",
     "pytest.ini",
     "conftest.py",
     ".github/workflows/ci.yml",
@@ -139,6 +138,20 @@ test("isHarnessPath matches the binary's harness and suppression-config paths", 
   }
   expect(isHarnessPath("src/app.py")).toBe(false)
   expect(isHarnessPath("src/app.test.ts")).toBe(false)
+})
+
+test("the regex analyzer applies harness-wins to a path that is both", () => {
+  const analyze = createRuleAnalyzer(() => ({
+    enabled: true,
+    testPatterns: [],
+    checks: { "forced-success": "warn" },
+  }))
+
+  const harness = runAnalyzer(analyze, ctx(change("exit 0\n", "/work/tests/conftest.py")))
+  const testFile = runAnalyzer(analyze, ctx(change("exit 0\n", "/work/tests/app_test.py")))
+
+  expect(harness.findings ?? []).toEqual([])
+  expect(testFile.findings?.some(finding => finding.rule === "forced-success")).toBe(true)
 })
 
 test("engine binary forwards a harness path with is_test_file false", async () => {

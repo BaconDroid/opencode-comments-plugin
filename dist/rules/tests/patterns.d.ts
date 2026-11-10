@@ -12,11 +12,13 @@ export interface HarnessPathTable {
     readonly filenamePrefixes: readonly string[];
 }
 export declare const HARNESS_PATH_TABLE: HarnessPathTable;
+export declare const TEST_CONFIG_BASENAMES: readonly string[];
 export declare const SENSITIVE_HARNESS_PATH_TABLE: HarnessPathTable;
 export declare function matchesTestPathTable(filePath: string, table?: TestPathTable): boolean;
 export declare function isTestPath(filePath: string, patterns: string[]): boolean;
 export declare function isHarnessPath(filePath: string): boolean;
 export declare function isSensitiveHarnessPath(filePath: string): boolean;
+export declare function isTestConfigPath(filePath: string): boolean;
 export declare function isSelectedTestPath(filePath: string, patterns: string[]): boolean;
 export declare function isTestFileForAnalysis(filePath: string, patterns: string[]): boolean;
 export declare const SKIP_FOCUS_PATTERNS: Partial<Record<Language, RegExp[]>>;

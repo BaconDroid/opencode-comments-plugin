@@ -4,6 +4,7 @@ export interface AuditFile {
     filePath: string;
     display: string;
     language: Language;
+    isTestFile?: boolean;
 }
 export interface CommentFinding {
     filePath: string;

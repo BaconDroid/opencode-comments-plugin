@@ -617,25 +617,68 @@ function runAnalyzer(analyzer, ctx) {
 
 // src/core/diff.ts
 import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
-var EXTENSION_LANGUAGE = {
+var LANGUAGE_BY_EXTENSION = {
+  ".bash": "bash",
+  ".sh": "bash",
+  ".bats": "bash",
+  ".c": "c",
+  ".h": "c",
+  ".cpp": "cpp",
+  ".cxx": "cpp",
+  ".cc": "cpp",
+  ".hpp": "cpp",
+  ".hxx": "cpp",
+  ".cs": "csharp",
+  ".css": "css",
+  ".cue": "cue",
+  ".dart": "dart",
+  ".dockerfile": "dockerfile",
+  ".ex": "elixir",
+  ".exs": "elixir",
+  ".elm": "elm",
+  ".go": "go",
+  ".groovy": "groovy",
+  ".gradle": "groovy",
+  ".hs": "haskell",
+  ".hcl": "hcl",
+  ".html": "html",
+  ".htm": "html",
+  ".java": "java",
   ".js": "js",
   ".jsx": "js",
   ".mjs": "js",
   ".cjs": "js",
+  ".kt": "kotlin",
+  ".kts": "kotlin",
+  ".lua": "lua",
+  ".ml": "ocaml",
+  ".php": "php",
+  ".proto": "proto",
+  ".py": "python",
+  ".pyi": "python",
+  ".pyw": "python",
+  ".r": "r",
+  ".rb": "ruby",
+  ".rs": "rust",
+  ".scala": "scala",
+  ".sql": "sql",
+  ".svelte": "svelte",
+  ".swift": "swift",
+  ".toml": "toml",
   ".ts": "ts",
   ".tsx": "ts",
   ".mts": "ts",
   ".cts": "ts",
-  ".py": "python",
-  ".pyi": "python",
-  ".go": "go",
-  ".rs": "rust"
+  ".yaml": "yaml",
+  ".yml": "yaml",
+  ".zig": "zig"
 };
 function detectLanguage(filePath) {
-  const match = filePath.toLowerCase().match(/\.[a-z0-9]+$/);
-  if (!match)
-    return "unknown";
-  return EXTENSION_LANGUAGE[match[0]] ?? "unknown";
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+  const file = normalized.split("/").pop() ?? "";
+  const dot = file.lastIndexOf(".");
+  const extension = dot >= 0 ? file.slice(dot) : `.${file.replace(/^\.+/, "")}`;
+  return LANGUAGE_BY_EXTENSION[extension] ?? "unknown";
 }
 function isSupportedLanguage(language) {
   return language !== "unknown";
@@ -684,6 +727,35 @@ var LINE_COMMENT = {
   python: ["#"],
   go: ["//"],
   rust: ["//"],
+  ruby: ["#"],
+  java: ["//"],
+  php: ["//", "#"],
+  csharp: ["//"],
+  kotlin: ["//"],
+  swift: ["//"],
+  scala: ["//"],
+  elixir: ["#"],
+  lua: ["--"],
+  c: ["//"],
+  cpp: ["//"],
+  groovy: ["//"],
+  ocaml: ["(*"],
+  elm: ["--"],
+  bash: ["#"],
+  css: ["/*"],
+  cue: ["//"],
+  dart: ["//"],
+  dockerfile: ["#"],
+  haskell: ["--"],
+  hcl: ["//", "#"],
+  html: ["<!--"],
+  proto: ["//"],
+  r: ["#"],
+  sql: ["--"],
+  svelte: ["//", "<!--"],
+  toml: ["#"],
+  yaml: ["#"],
+  zig: ["//"],
   unknown: ["//", "#"]
 };
 function stripComments(text, language) {
@@ -790,9 +862,12 @@ function isCommentLine(line, language) {
   const trimmed = line.trim();
   if (trimmed.length === 0)
     return false;
-  if (trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*") || trimmed.startsWith("*/"))
+  if (trimmed.startsWith("/*") || trimmed.startsWith("*") || trimmed.startsWith("*/"))
     return true;
-  if (language === "python" && (trimmed.startsWith("#") || trimmed.startsWith('"""') || trimmed.startsWith("'''")))
+  const markers = LINE_COMMENT[language] ?? ["//"];
+  if (markers.some((marker) => trimmed.startsWith(marker)))
+    return true;
+  if (language === "python" && (trimmed.startsWith('"""') || trimmed.startsWith("'''")))
     return true;
   return false;
 }
@@ -880,6 +955,21 @@ var TEST_PATH_TABLE = {
   filenameInfixes: ["_test.", ".test.", ".spec.", "_spec."]
 };
 var DEFAULT_TEST_PATTERNS = [];
+var HARNESS_PATH_TABLE = {
+  pathSubstrings: [".github/workflows/", ".gitlab-ci"],
+  filenames: [
+    "pytest.ini",
+    "tox.ini",
+    "conftest.py",
+    "setup.cfg",
+    "pyproject.toml",
+    "package.json",
+    "makefile",
+    "codecov.yml"
+  ],
+  filenamePrefixes: ["jest.config", "vitest.config", "karma.conf", ".nycrc"]
+};
+var TEST_CONFIG_BASENAMES = [".test-checker.json"];
 function normalizePath(filePath) {
   return filePath.replace(/\\/g, "/").toLowerCase();
 }
@@ -888,10 +978,28 @@ function matchesTestPathTable(filePath, table = TEST_PATH_TABLE) {
   const file = normalized.split("/").pop() ?? "";
   return normalized.split("/").some((segment) => table.directorySegments.includes(segment)) || table.filenamePrefixes.some((prefix) => file.startsWith(prefix)) || table.filenameInfixes.some((infix) => file.includes(infix));
 }
+function matchesHarnessPathTable(filePath, table) {
+  const normalized = normalizePath(filePath);
+  const file = normalized.split("/").pop() ?? "";
+  return table.pathSubstrings.some((substring) => normalized.includes(substring)) || table.filenames.includes(file) || table.filenamePrefixes.some((prefix) => file.startsWith(prefix));
+}
 function isTestPath(filePath, patterns) {
   if (patterns.length === 0)
     return matchesTestPathTable(filePath);
   return matchesAnyGlob(patterns, filePath.replace(/\\/g, "/"));
+}
+function isHarnessPath(filePath) {
+  return matchesHarnessPathTable(filePath, HARNESS_PATH_TABLE);
+}
+function isTestConfigPath(filePath) {
+  const file = normalizePath(filePath).split("/").pop() ?? "";
+  return TEST_CONFIG_BASENAMES.includes(file);
+}
+function isSelectedTestPath(filePath, patterns) {
+  return isHarnessPath(filePath) || isTestConfigPath(filePath) || isTestPath(filePath, patterns);
+}
+function isTestFileForAnalysis(filePath, patterns) {
+  return isTestPath(filePath, patterns) && !isHarnessPath(filePath) && !isTestConfigPath(filePath);
 }
 var SKIP_FOCUS_PATTERNS = {
   js: [/\.(?:skip|only|todo)\s*\(/, /\b(?:xit|xdescribe|xtest)\s*\(/],
@@ -1975,7 +2083,7 @@ function createRuleAnalyzer(getConfig) {
       const config = getConfig();
       const result = runTestRules({
         change,
-        isTestFile: config.isTestFile ?? isTestPath(change.filePath, config.testPatterns),
+        isTestFile: config.isTestFile ?? isTestFileForAnalysis(change.filePath, config.testPatterns),
         config: {
           enabled: config.enabled,
           testPatterns: config.testPatterns,
@@ -2036,7 +2144,7 @@ function readWorktree(filePath) {
   }
 }
 function changedTestChanges(directory, base, testPatterns) {
-  return diffChanges(directory, base).filter((change) => isSupportedLanguage(change.language) && isTestPath(change.filePath, testPatterns));
+  return diffChanges(directory, base).filter((change) => isSelectedTestPath(change.filePath, testPatterns) && (isHarnessPath(change.filePath) || isTestConfigPath(change.filePath) || isSupportedLanguage(change.language)));
 }
 function diffChanges(directory, base) {
   const changes = [];
@@ -2092,9 +2200,14 @@ function runDiffCheck(options) {
   const addedByFile = new Map;
   for (const change of changes)
     addedByFile.set(change.filePath, assertionLines(change.addedLines, change.language));
-  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns, checks, isTestFile: true }));
   const findings = [];
   for (const change of changes) {
+    const analyzer = createRuleAnalyzer(() => ({
+      enabled: true,
+      testPatterns,
+      checks,
+      isTestFile: isTestFileForAnalysis(change.filePath, testPatterns)
+    }));
     const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-check", change });
     for (const finding of result.findings ?? []) {
       if (finding.rule === "gutted-test" && isMovedTest(change, addedByFile)) {
@@ -2549,7 +2662,8 @@ function auditTestFile(file, includeAdvisory) {
     isDelete: false
   });
   const checks = buildRuleChecks(includeAdvisory);
-  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns: [], checks, isTestFile: true }));
+  const isTestFile = file.isTestFile ?? true;
+  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns: [], checks, isTestFile }));
   const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-audit", change });
   const findings = [];
   for (const finding of result.findings ?? []) {
@@ -2677,11 +2791,12 @@ async function runAudit(options, deps = {}) {
       continue;
     }
     const language = detectLanguage(filePath);
-    if (!isSupportedLanguage(language))
+    const nonTestGate = isHarnessPath(filePath) || isTestConfigPath(filePath);
+    if (!isSupportedLanguage(language) && !(nonTestGate && scope !== "comments"))
       continue;
-    if (scope !== "comments" && !isTestPath(filePath, testPatterns))
+    if (scope !== "comments" && !isSelectedTestPath(filePath, testPatterns))
       continue;
-    audited.push({ filePath, display: display(filePath), language });
+    audited.push({ filePath, display: display(filePath), language, isTestFile: isTestFileForAnalysis(filePath, testPatterns) });
   }
   const comments = [];
   const tests = [];
@@ -2698,7 +2813,7 @@ async function runAudit(options, deps = {}) {
     }
   }
   if (scope === "tests" || scope === "both") {
-    const fileTexts = audited.filter((file) => isTestPath(file.filePath, testPatterns)).map((file) => ({ filePath: file.filePath, text: readText(file.filePath) ?? "", language: file.language })).filter((entry) => entry.text.length > 0);
+    const fileTexts = audited.filter((file) => isTestFileForAnalysis(file.filePath, testPatterns)).map((file) => ({ filePath: file.filePath, text: readText(file.filePath) ?? "", language: file.language })).filter((entry) => entry.text.length > 0);
     for (const duplicate of findCrossFileDuplicates(fileTexts)) {
       if (!validExcerpt(duplicate.excerpt))
         continue;
@@ -2808,10 +2923,13 @@ async function collectCleanup(options, deps = {}) {
       skipped.push(`${display2(filePath, directory)} (secret file pattern)`);
       continue;
     }
-    const language = detectLanguage(filePath);
-    if (!isSupportedLanguage(language))
+    if (!isSelectedTestPath(filePath, testPatterns))
       continue;
-    if (!isTestPath(filePath, testPatterns))
+    if (isHarnessPath(filePath) || isTestConfigPath(filePath)) {
+      skipped.push(`${display2(filePath, directory)} (harness/config; nothing to strip)`);
+      continue;
+    }
+    if (!isSupportedLanguage(detectLanguage(filePath)))
       continue;
     testFiles.push(filePath);
   }

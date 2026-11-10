@@ -35,9 +35,7 @@ export const DEFAULT_TEST_PATTERNS: string[] = []
 
 // Paths that carry a test gate but are not test files. Mirrors test-checker's
 // `is_harness_path` so the live hook forwards the same paths the binary
-// classifies independently of language. `.test-checker.json` belongs here
-// because the binary reports it as `config-edited` before its harness branch,
-// and forwarding it is what surfaces that rule.
+// classifies independently of language.
 export interface HarnessPathTable {
   readonly pathSubstrings: readonly string[]
   readonly filenames: readonly string[]
@@ -47,7 +45,6 @@ export interface HarnessPathTable {
 export const HARNESS_PATH_TABLE: HarnessPathTable = {
   pathSubstrings: [".github/workflows/", ".gitlab-ci"],
   filenames: [
-    ".test-checker.json",
     "pytest.ini",
     "tox.ini",
     "conftest.py",
@@ -59,6 +56,11 @@ export const HARNESS_PATH_TABLE: HarnessPathTable = {
   ],
   filenamePrefixes: ["jest.config", "vitest.config", "karma.conf", ".nycrc"],
 }
+
+// The binary recognises its own suppression config before either the config
+// or harness branch runs, and reports `config-edited` for it. The plugin
+// forwards it as a non-test path for the same reason.
+export const TEST_CONFIG_BASENAMES: readonly string[] = [".test-checker.json"]
 
 // The harness paths whose edit directly decides what CI runs. The binary
 // resolves a finding on these above the Medium gate; every other harness file
@@ -106,16 +108,22 @@ export function isSensitiveHarnessPath(filePath: string): boolean {
   return isHarnessPath(filePath) && matchesHarnessPathTable(filePath, SENSITIVE_HARNESS_PATH_TABLE)
 }
 
+export function isTestConfigPath(filePath: string): boolean {
+  const file = normalizePath(filePath).split("/").pop() ?? ""
+  return TEST_CONFIG_BASENAMES.includes(file)
+}
+
 // One gate for the live hook, audit, CI and cleanup. A path is selected when it
-// is a test file or a harness/config file. Harness wins when a path is both
-// (for example `tests/conftest.py`): the binary handles the harness branch
-// before the test branch, so the in-process rules must not treat it as a test.
+// is a test file, a harness/config file, or the suppression config. Harness
+// wins when a path is both (for example `tests/conftest.py`): the binary
+// handles the harness branch before the test branch, so the in-process rules
+// must not treat it as a test.
 export function isSelectedTestPath(filePath: string, patterns: string[]): boolean {
-  return isHarnessPath(filePath) || isTestPath(filePath, patterns)
+  return isHarnessPath(filePath) || isTestConfigPath(filePath) || isTestPath(filePath, patterns)
 }
 
 export function isTestFileForAnalysis(filePath: string, patterns: string[]): boolean {
-  return isTestPath(filePath, patterns) && !isHarnessPath(filePath)
+  return isTestPath(filePath, patterns) && !isHarnessPath(filePath) && !isTestConfigPath(filePath)
 }
 
 // jest/no-disabled-tests + ruff PT015 + go t.Skip + rust #[ignore].

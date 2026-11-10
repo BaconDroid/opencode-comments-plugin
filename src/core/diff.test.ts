@@ -2,7 +2,7 @@ import { test, expect } from "bun:test"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { changeTextsFromTool, diffLines, extractToolChange, readFileIfExists } from "./diff"
+import { changeTextsFromTool, detectLanguage, diffLines, extractToolChange, readFileIfExists, type Language } from "./diff"
 
 test("readFileIfExists returns the file content", () => {
   const dir = mkdtempSync(join(tmpdir(), "guard-preimage-"))
@@ -39,6 +39,78 @@ test("changeTextsFromTool joins multiple edits", () => {
 
 test("changeTextsFromTool returns undefined for an unsupported tool", () => {
   expect(changeTextsFromTool("bash", { content: "x" }, undefined)).toBeUndefined()
+})
+
+test("detectLanguage covers the extension set the binary parses", () => {
+  const cases: Array<[string, Language]> = [
+    ["a.js", "js"],
+    ["a.jsx", "js"],
+    ["a.mjs", "js"],
+    ["a.cjs", "js"],
+    ["a.ts", "ts"],
+    ["a.tsx", "ts"],
+    ["a.mts", "ts"],
+    ["a.cts", "ts"],
+    ["a.py", "python"],
+    ["a.pyi", "python"],
+    ["a.pyw", "python"],
+    ["a.go", "go"],
+    ["a.rs", "rust"],
+    ["a.rb", "ruby"],
+    ["a.java", "java"],
+    ["a.php", "php"],
+    ["a.cs", "csharp"],
+    ["a.kt", "kotlin"],
+    ["a.kts", "kotlin"],
+    ["a.swift", "swift"],
+    ["a.scala", "scala"],
+    ["a.ex", "elixir"],
+    ["a.exs", "elixir"],
+    ["a.lua", "lua"],
+    ["a.c", "c"],
+    ["a.h", "c"],
+    ["a.cpp", "cpp"],
+    ["a.cxx", "cpp"],
+    ["a.cc", "cpp"],
+    ["a.hpp", "cpp"],
+    ["a.hxx", "cpp"],
+    ["a.groovy", "groovy"],
+    ["a.gradle", "groovy"],
+    ["a.ml", "ocaml"],
+    ["a.elm", "elm"],
+    ["a.sh", "bash"],
+    ["a.bash", "bash"],
+    ["a.bats", "bash"],
+    ["a.css", "css"],
+    ["a.cue", "cue"],
+    ["a.dart", "dart"],
+    ["a.dockerfile", "dockerfile"],
+    ["a.hs", "haskell"],
+    ["a.hcl", "hcl"],
+    ["a.html", "html"],
+    ["a.htm", "html"],
+    ["a.proto", "proto"],
+    ["a.r", "r"],
+    ["a.sql", "sql"],
+    ["a.svelte", "svelte"],
+    ["a.toml", "toml"],
+    ["a.yaml", "yaml"],
+    ["a.yml", "yaml"],
+    ["a.zig", "zig"],
+  ]
+  for (const [path, language] of cases) expect(detectLanguage(path)).toBe(language)
+})
+
+test("detectLanguage handles case, paths and extensionless Dockerfiles", () => {
+  expect(detectLanguage("src/App.RB")).toBe("ruby")
+  expect(detectLanguage("src\\test\\App.java")).toBe("java")
+  expect(detectLanguage("Dockerfile")).toBe("dockerfile")
+})
+
+test("detectLanguage leaves non-code files unknown", () => {
+  for (const path of ["README.md", "package.json", "notes.txt", "Makefile", "src/app"]) {
+    expect(detectLanguage(path)).toBe("unknown")
+  }
 })
 
 test("extractToolChange and changeTextsFromTool share the same derivation", () => {
