@@ -1,5 +1,7 @@
 import { test, expect } from "bun:test"
-import { existsSync, readFileSync } from "node:fs"
+import { spawnSync } from "node:child_process"
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import binaryRuleIds from "./binary-rule-ids.json"
 import { buildRuleChecks } from "./index"
@@ -182,4 +184,44 @@ test("an explicit current-id setting wins over a legacy alias", () => {
   })
   expect(explicit["skip-added"]).toBe("off")
   expect(explicit["focus-added"]).toBe("warn")
+})
+
+const scriptPath = join(resolve(import.meta.dir, "../../.."), "scripts", "generate-rule-ids.mjs")
+
+function runCheckWithReadme(ids: readonly string[]) {
+  const dir = mkdtempSync(join(tmpdir(), "rule-ids-check-"))
+  try {
+    writeFileSync(join(dir, "README.md"), `# test-checker\n\n## Rules\n\n${ids.map(id => `\`${id}\``).join(" ")}\n`)
+    const git = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" })
+    expect(git(["init", "-q"]).status).toBe(0)
+    expect(git(["add", "."]).status).toBe(0)
+    expect(
+      git(["-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-qm", "fixture"]).status,
+    ).toBe(0)
+    return spawnSync("node", [scriptPath, "--check"], {
+      cwd: resolve(import.meta.dir, "../../.."),
+      env: { ...process.env, TC_REPO: dir },
+      encoding: "utf8",
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+test("--check passes when the ids match and only the recorded ref differs", () => {
+  const result = runCheckWithReadme(binaryRuleIds.rules)
+  expect(result.status).toBe(0)
+  expect(result.stdout).toContain(`note: recorded ref ${binaryRuleIds.ref}, sibling at `)
+  expect(result.stdout).toContain("; ids match")
+})
+
+test("--check fails when an id is removed, added or renamed", () => {
+  const removed = binaryRuleIds.rules.slice(0, -1)
+  const added = [...binaryRuleIds.rules, "brand-new-id"]
+  const renamed = ["renamed-id", ...binaryRuleIds.rules.slice(1)]
+  for (const ids of [removed, added, renamed]) {
+    const result = runCheckWithReadme(ids)
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain("rule-id contract is stale")
+  }
 })

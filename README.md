@@ -239,8 +239,9 @@ is rewritten from the test-checker README `## Rules` paragraph (33 ids at tc
 `60e58e0`) by `node scripts/generate-rule-ids.mjs`; point `TC_REPO` at a current
 checkout when the default `../test-checker` is stale or absent. Every binary id
 is enabled at `warn` because the binary has already applied its own confidence
-gate. `npm run check:rule-ids` regenerates in memory and exits non-zero on any
-diff, so a tc bump can be detected without rewriting the file.
+gate. `npm run check:rule-ids` compares the parsed id set and exits non-zero only
+when an id is added, removed or renamed, so a tc bump that leaves the ids intact
+does not demand a contract refresh.
 
 Older regex ids keep working through these aliases. An explicit legacy override
 applies to every listed binary id unless that id is configured itself:
@@ -512,11 +513,13 @@ edit them by hand. Set `TC_REPO` to a current checkout when the default
 | `src/rules/tests/binary-rule-ids.json` | test-checker README `## Rules` paragraph                                          | `npm run rules:generate`        | `npm run check:rule-ids`        |
 | `src/rules/tests/path-predicates.json` | test-checker `eval/path-predicates.json`, itself generated from `src/language.rs` | `npm run rules:path-predicates` | `npm run check:path-predicates` |
 
-Each `check:` command regenerates the contract in memory and exits non-zero on
-a diff, so a sibling bump is detected without rewriting the file. The
-path-predicate artifact records the `source` repository and `ref` it came from;
-`src/rules/tests/patterns.ts` reads its tables, so the test and harness path
-predicates track the binary instead of a hand transcription.
+Each `check:` command compares the contract content: `check:rule-ids` compares
+the id set, and `check:path-predicates` compares the predicate body. The recorded
+`ref` is provenance only, so a sibling commit that leaves the content unchanged
+does not fail the check. The path-predicate artifact records the `source`
+repository and `ref` it came from; `src/rules/tests/patterns.ts` reads its
+tables, so the test and harness path predicates track the binary instead of a
+hand transcription.
 
 The invariants a change must preserve are in
 [`docs/design-constraints.md`](docs/design-constraints.md).

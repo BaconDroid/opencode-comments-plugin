@@ -8,7 +8,7 @@
 //   TC_REPO=/path/to/test-checker node scripts/generate-rule-ids.mjs
 //   TC_REPO=/path/to/test-checker node scripts/generate-rule-ids.mjs --check
 //
-// `--check` regenerates in memory and exits 1 on a diff without writing.
+// `--check` compares the parsed rule-id set; `ref` is provenance only.
 import { execFileSync } from "node:child_process"
 import { readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
@@ -39,13 +39,20 @@ const ref = execFileSync("git", ["-C", tcRepo, "rev-parse", "HEAD"], { encoding:
 const generated = `${JSON.stringify({ source: "BaconDroid/test-checker", ref, rules }, null, 2)}\n`
 
 if (process.argv.includes("--check")) {
-  const current = readFileSync(outputPath, "utf8")
-  if (current !== generated) {
+  const current = JSON.parse(readFileSync(outputPath, "utf8"))
+  if (!Array.isArray(current.rules)) throw new Error(`${outputPath} has no \`rules\` array`)
+  const recorded = new Set(current.rules)
+  const present = new Set(rules)
+  const sameIds = recorded.size === present.size && [...present].every(id => recorded.has(id))
+  if (!sameIds) {
     console.error(
       `rule-id contract is stale: ${outputPath} does not match ${readmePath} (${ref}). ` +
         "Run `npm run rules:generate` and commit the result.",
     )
     process.exit(1)
+  }
+  if (current.ref !== ref) {
+    console.log(`note: recorded ref ${current.ref}, sibling at ${ref}; ids match`)
   }
   console.log(`rule-id contract is up to date (${rules.length} ids, ${ref})`)
 } else {
