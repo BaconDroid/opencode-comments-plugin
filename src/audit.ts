@@ -15,7 +15,13 @@ import { createReadonlyTool } from "./core/idle-advisory"
 import { createRuleAnalyzer } from "./rules/tests/analyzer"
 import { buildRuleChecks } from "./rules/tests"
 import { findCrossFileDuplicates } from "./rules/tests/content"
-import { PLACEHOLDER_PATTERN, isTestPath } from "./rules/tests/patterns"
+import {
+  PLACEHOLDER_PATTERN,
+  isHarnessPath,
+  isSelectedTestPath,
+  isTestConfigPath,
+  isTestFileForAnalysis,
+} from "./rules/tests/patterns"
 
 const EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "build", "vendor", ".cache", "coverage"])
 const SECRET_PATTERNS = [/(?:^|\/)\.env(?:\.|$)/, /\.pem$/, /\.key$/, /(?:^|\/)id_(?:rsa|ed25519)$/, /\.p12$/]
@@ -25,6 +31,9 @@ export interface AuditFile {
   filePath: string
   display: string
   language: Language
+  // Harness files are selected without language resolution but are not test
+  // files; unset means the caller pre-selected the file as a test.
+  isTestFile?: boolean
 }
 
 export interface CommentFinding {
@@ -196,7 +205,8 @@ export function auditTestFile(file: AuditFile, includeAdvisory: boolean): TestAu
   })
 
   const checks = buildRuleChecks(includeAdvisory)
-  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns: [], checks, isTestFile: true }))
+  const isTestFile = file.isTestFile ?? true
+  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns: [], checks, isTestFile }))
   const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-audit", change })
 
   const findings: TestAuditFinding[] = []
@@ -348,9 +358,10 @@ export async function runAudit(options: AuditRunOptions, deps: CommentAuditDeps 
       continue
     }
     const language = detectLanguage(filePath)
-    if (!isSupportedLanguage(language)) continue
-    if (scope !== "comments" && !isTestPath(filePath, testPatterns)) continue
-    audited.push({ filePath, display: display(filePath), language })
+    const nonTestGate = isHarnessPath(filePath) || isTestConfigPath(filePath)
+    if (!isSupportedLanguage(language) && !(nonTestGate && scope !== "comments")) continue
+    if (scope !== "comments" && !isSelectedTestPath(filePath, testPatterns)) continue
+    audited.push({ filePath, display: display(filePath), language, isTestFile: isTestFileForAnalysis(filePath, testPatterns) })
   }
 
   const comments: CommentFinding[] = []
@@ -373,7 +384,7 @@ export async function runAudit(options: AuditRunOptions, deps: CommentAuditDeps 
   // per-file pass (the live hook cannot see other files).
   if (scope === "tests" || scope === "both") {
     const fileTexts = audited
-      .filter(file => isTestPath(file.filePath, testPatterns))
+      .filter(file => isTestFileForAnalysis(file.filePath, testPatterns))
       .map(file => ({ filePath: file.filePath, text: readText(file.filePath) ?? "", language: file.language }))
       .filter(entry => entry.text.length > 0)
     for (const duplicate of findCrossFileDuplicates(fileTexts)) {

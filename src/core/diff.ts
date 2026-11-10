@@ -6,27 +6,108 @@
 
 import { existsSync, readFileSync } from "node:fs"
 
-export type Language = "js" | "ts" | "python" | "go" | "rust" | "unknown"
+export type Language =
+  | "js"
+  | "ts"
+  | "python"
+  | "go"
+  | "rust"
+  | "ruby"
+  | "java"
+  | "php"
+  | "csharp"
+  | "kotlin"
+  | "swift"
+  | "scala"
+  | "elixir"
+  | "lua"
+  | "c"
+  | "cpp"
+  | "groovy"
+  | "ocaml"
+  | "elm"
+  | "bash"
+  | "css"
+  | "cue"
+  | "dart"
+  | "dockerfile"
+  | "haskell"
+  | "hcl"
+  | "html"
+  | "proto"
+  | "r"
+  | "sql"
+  | "svelte"
+  | "toml"
+  | "yaml"
+  | "zig"
+  | "unknown"
 
-const EXTENSION_LANGUAGE: Record<string, Language> = {
+// The extension set the bundled test-checker builds parse (TSLP_LANGUAGES in
+// its `.cargo/config.toml`). The plugin classifies only; it ships no parser.
+export const LANGUAGE_BY_EXTENSION: Readonly<Record<string, Language>> = {
+  ".bash": "bash",
+  ".sh": "bash",
+  ".bats": "bash",
+  ".c": "c",
+  ".h": "c",
+  ".cpp": "cpp",
+  ".cxx": "cpp",
+  ".cc": "cpp",
+  ".hpp": "cpp",
+  ".hxx": "cpp",
+  ".cs": "csharp",
+  ".css": "css",
+  ".cue": "cue",
+  ".dart": "dart",
+  ".dockerfile": "dockerfile",
+  ".ex": "elixir",
+  ".exs": "elixir",
+  ".elm": "elm",
+  ".go": "go",
+  ".groovy": "groovy",
+  ".gradle": "groovy",
+  ".hs": "haskell",
+  ".hcl": "hcl",
+  ".html": "html",
+  ".htm": "html",
+  ".java": "java",
   ".js": "js",
   ".jsx": "js",
   ".mjs": "js",
   ".cjs": "js",
+  ".kt": "kotlin",
+  ".kts": "kotlin",
+  ".lua": "lua",
+  ".ml": "ocaml",
+  ".php": "php",
+  ".proto": "proto",
+  ".py": "python",
+  ".pyi": "python",
+  ".pyw": "python",
+  ".r": "r",
+  ".rb": "ruby",
+  ".rs": "rust",
+  ".scala": "scala",
+  ".sql": "sql",
+  ".svelte": "svelte",
+  ".swift": "swift",
+  ".toml": "toml",
   ".ts": "ts",
   ".tsx": "ts",
   ".mts": "ts",
   ".cts": "ts",
-  ".py": "python",
-  ".pyi": "python",
-  ".go": "go",
-  ".rs": "rust",
+  ".yaml": "yaml",
+  ".yml": "yaml",
+  ".zig": "zig",
 }
 
 export function detectLanguage(filePath: string): Language {
-  const match = filePath.toLowerCase().match(/\.[a-z0-9]+$/)
-  if (!match) return "unknown"
-  return EXTENSION_LANGUAGE[match[0]] ?? "unknown"
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase()
+  const file = normalized.split("/").pop() ?? ""
+  const dot = file.lastIndexOf(".")
+  const extension = dot >= 0 ? file.slice(dot) : `.${file.replace(/^\.+/, "")}`
+  return LANGUAGE_BY_EXTENSION[extension] ?? "unknown"
 }
 
 export function isSupportedLanguage(language: Language): boolean {
@@ -90,12 +171,41 @@ export function extractChange(raw: RawChange): ExtractedChange {
   }
 }
 
-const LINE_COMMENT: Record<Language, string[]> = {
+const LINE_COMMENT: Partial<Record<Language, string[]>> = {
   js: ["//"],
   ts: ["//"],
   python: ["#"],
   go: ["//"],
   rust: ["//"],
+  ruby: ["#"],
+  java: ["//"],
+  php: ["//", "#"],
+  csharp: ["//"],
+  kotlin: ["//"],
+  swift: ["//"],
+  scala: ["//"],
+  elixir: ["#"],
+  lua: ["--"],
+  c: ["//"],
+  cpp: ["//"],
+  groovy: ["//"],
+  ocaml: ["(*"],
+  elm: ["--"],
+  bash: ["#"],
+  css: ["/*"],
+  cue: ["//"],
+  dart: ["//"],
+  dockerfile: ["#"],
+  haskell: ["--"],
+  hcl: ["//", "#"],
+  html: ["<!--"],
+  proto: ["//"],
+  r: ["#"],
+  sql: ["--"],
+  svelte: ["//", "<!--"],
+  toml: ["#"],
+  yaml: ["#"],
+  zig: ["//"],
   unknown: ["//", "#"],
 }
 
@@ -208,8 +318,10 @@ export function stripStringLiterals(text: string): string {
 export function isCommentLine(line: string, language: Language): boolean {
   const trimmed = line.trim()
   if (trimmed.length === 0) return false
-  if (trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*") || trimmed.startsWith("*/")) return true
-  if (language === "python" && (trimmed.startsWith("#") || trimmed.startsWith('"""') || trimmed.startsWith("'''"))) return true
+  if (trimmed.startsWith("/*") || trimmed.startsWith("*") || trimmed.startsWith("*/")) return true
+  const markers = LINE_COMMENT[language] ?? ["//"]
+  if (markers.some(marker => trimmed.startsWith(marker))) return true
+  if (language === "python" && (trimmed.startsWith('"""') || trimmed.startsWith("'''"))) return true
   return false
 }
 

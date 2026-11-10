@@ -11,7 +11,7 @@ import { createDebugLog } from "../../core/debug"
 import { stripComments, type ExtractedChange } from "../../core/diff"
 import type { HookInput, TestCheckerFinding, TestCheckerResult } from "../../types"
 import { runTestChecker } from "../../cli"
-import { isHarnessPath, isTestPath } from "./patterns"
+import { isHarnessPath, isTestConfigPath, isTestFileForAnalysis, isTestPath } from "./patterns"
 import { runTestRules } from "./index"
 import { collectBypasses } from "./content"
 import { resolveRuleSeverity } from "./rule-ids"
@@ -59,7 +59,7 @@ export function createRuleAnalyzer(getConfig: () => RuleAnalyzerConfig): SyncAna
       const config = getConfig()
       const result = runTestRules({
         change,
-        isTestFile: config.isTestFile ?? isTestPath(change.filePath, config.testPatterns),
+        isTestFile: config.isTestFile ?? isTestFileForAnalysis(change.filePath, config.testPatterns),
         config: {
           enabled: config.enabled,
           testPatterns: config.testPatterns,
@@ -189,9 +189,10 @@ export function createTestEngineAnalyzer(
       // over `isTestFile` so a test-pattern match (e.g. `tests/conftest.py`)
       // cannot route a harness file down the test-file analysis path.
       const isHarnessFile = isHarnessPath(change.filePath)
+      const isConfigFile = isTestConfigPath(change.filePath)
       const useBinary =
         (config.engine ?? "binary") === "binary" &&
-        (isTestFile || isHarnessFile) &&
+        (isTestFile || isHarnessFile || isConfigFile) &&
         !change.isDelete &&
         change.newText.trim().length > 0
 
@@ -211,7 +212,7 @@ export function createTestEngineAnalyzer(
         }
         let outcome: TestCheckerResult | null = null
         try {
-          outcome = await run(buildTestCheckerInput(change, ctx, isTestFile && !isHarnessFile))
+          outcome = await run(buildTestCheckerInput(change, ctx, isTestFile && !isHarnessFile && !isConfigFile))
         } catch {
           // Fail-open: an engine failure degrades to the regex fallback.
           outcome = null

@@ -4,6 +4,7 @@ export interface AuditFile {
     filePath: string;
     display: string;
     language: Language;
+    isTestFile?: boolean;
 }
 export interface CommentFinding {
     filePath: string;
@@ -59,8 +60,8 @@ export declare function createGuardAuditTool(options: {
     description: string;
     args: {
         scope: import("zod").ZodOptional<import("zod").ZodEnum<{
-            comments: "comments";
             tests: "tests";
+            comments: "comments";
             both: "both";
         }>>;
         paths: import("zod").ZodOptional<import("zod").ZodArray<import("zod").ZodString>>;
@@ -71,7 +72,7 @@ export declare function createGuardAuditTool(options: {
         include_advisory: import("zod").ZodOptional<import("zod").ZodBoolean>;
     };
     execute(args: {
-        scope?: "comments" | "tests" | "both" | undefined;
+        scope?: "tests" | "comments" | "both" | undefined;
         paths?: string[] | undefined;
         format?: "markdown" | "json" | undefined;
         include_advisory?: boolean | undefined;

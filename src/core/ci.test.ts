@@ -1,8 +1,8 @@
 import { test, expect, beforeEach, afterEach } from "bun:test"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { runCommentDiffCheck, runDiffCheck } from "./ci"
+import { changedTestChanges, runCommentDiffCheck, runDiffCheck } from "./ci"
 
 let dir: string
 
@@ -56,6 +56,25 @@ test("suppresses gutted-test when the assertions move to another file", () => {
 
   const result = runDiffCheck({ directory: dir, base: "HEAD" })
   expect(result.findings.map(f => f.rule)).not.toContain("gutted-test")
+})
+
+test("selects Ruby, Java and harness paths the shared gate covers", () => {
+  writeFileSync(join(dir, "base.txt"), "")
+  git(["add", "."])
+  git(["commit", "-m", "init"])
+
+  mkdirSync(join(dir, "pkg"))
+  writeFileSync(join(dir, "pkg/foo_spec.rb"), "it 'sums' do\nend\n")
+  mkdirSync(join(dir, "src/test/java"), { recursive: true })
+  writeFileSync(join(dir, "src/test/java/AppTest.java"), "class AppTest {}\n")
+  writeFileSync(join(dir, "pytest.ini"), "[pytest]\n")
+  writeFileSync(join(dir, "app.py"), "print(1)\n")
+
+  const paths = changedTestChanges(dir, "HEAD", []).map(change => change.filePath)
+  expect(paths.some(path => path.endsWith("foo_spec.rb"))).toBe(true)
+  expect(paths.some(path => path.endsWith("AppTest.java"))).toBe(true)
+  expect(paths.some(path => path.endsWith("pytest.ini"))).toBe(true)
+  expect(paths.some(path => path.endsWith("app.py"))).toBe(false)
 })
 
 test("json output is parseable", () => {

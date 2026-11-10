@@ -93,6 +93,26 @@ test("runAudit emits valid json when asked", async () => {
   expect(parsed.tests.length).toBeGreaterThan(0)
 })
 
+test("audit selects Ruby and Java tests and treats a harness path as harness", async () => {
+  const d = mkdtempSync(join(tmpdir(), "guard-audit-langs-"))
+  mkdirSync(join(d, "pkg"))
+  writeFileSync(join(d, "pkg/foo_spec.rb"), "exit 0\n")
+  mkdirSync(join(d, "src/test/java"), { recursive: true })
+  writeFileSync(join(d, "src/test/java/AppTest.java"), "exit 0\n")
+  mkdirSync(join(d, "tests"))
+  writeFileSync(join(d, "tests/conftest.py"), "exit 0\n")
+
+  const out = await runAudit(
+    { scope: "tests", paths: [d], directory: d, format: "json", getConfig: () => ({ ...config(), testPatterns: [] }) },
+    { runCheck: async () => [] },
+  )
+  const parsed = JSON.parse(out) as AuditReport
+  const files = parsed.tests.map(finding => finding.filePath)
+  expect(files.some(path => path.endsWith("foo_spec.rb"))).toBe(true)
+  expect(files.some(path => path.endsWith("AppTest.java"))).toBe(true)
+  expect(files.some(path => path.endsWith("conftest.py"))).toBe(false)
+})
+
 test("audit reports cross-file duplicate tests", async () => {
   const d = mkdtempSync(join(tmpdir(), "guard-audit-dup-"))
   const body = 'test("same", () => {\n  expect(compute(1)).toBe(42)\n})\n'
@@ -158,6 +178,38 @@ test("cleanup forwards test files and drops non-test files", async () => {
   expect(calls).toHaveLength(1)
   expect(calls[0]).toBe(join(dir, "a.test.ts"))
   expect(report.files.map(file => file.display)).toEqual(["a.test.ts"])
+})
+
+test("cleanup selects Ruby and Java tests and skips harness files", async () => {
+  const d = mkdtempSync(join(tmpdir(), "guard-cleanup-langs-"))
+  mkdirSync(join(d, "pkg"))
+  writeFileSync(join(d, "pkg/foo_spec.rb"), "it 'sums' do\nend\n")
+  mkdirSync(join(d, "src/test/java"), { recursive: true })
+  writeFileSync(join(d, "src/test/java/AppTest.java"), "class AppTest {}\n")
+  mkdirSync(join(d, "tests"))
+  writeFileSync(join(d, "tests/conftest.py"), "")
+  writeFileSync(join(d, "app.py"), "")
+
+  const calls: string[] = []
+  const report = await collectCleanup(
+    { directory: d, paths: [d], testPatterns: [], cliPath: "/fake/test-checker" },
+    {
+      run: async input => {
+        calls.push(input.tool_input.file_path!)
+        return {
+          kind: "output",
+          exitCode: 2,
+          stderr: "[test-checker] cleanup pass: 0 removed, 0 kept awaiting approval.",
+        }
+      },
+    },
+  )
+
+  expect(calls.some(path => path.endsWith("foo_spec.rb"))).toBe(true)
+  expect(calls.some(path => path.endsWith("AppTest.java"))).toBe(true)
+  expect(calls.some(path => path.endsWith("conftest.py"))).toBe(false)
+  expect(calls.some(path => path.endsWith("app.py"))).toBe(false)
+  expect(report.skipped.some(entry => entry.includes("conftest.py"))).toBe(true)
 })
 
 test("cleanup renders removed and kept items with the approval pointer", async () => {

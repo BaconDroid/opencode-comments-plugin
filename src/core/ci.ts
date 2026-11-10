@@ -7,7 +7,14 @@ import { commentHookInput, getCommentCheckerPath, runCommentChecker } from "../c
 import { runAnalyzer } from "./analyzer"
 import { extractChange, isSupportedLanguage, stripComments, type ExtractedChange, type Language } from "./diff"
 import { formatFindings, type Finding } from "./feedback"
-import { ASSERTION_COUNT_PATTERNS, DEFAULT_TEST_PATTERNS, isTestPath } from "../rules/tests/patterns"
+import {
+  ASSERTION_COUNT_PATTERNS,
+  DEFAULT_TEST_PATTERNS,
+  isHarnessPath,
+  isSelectedTestPath,
+  isTestConfigPath,
+  isTestFileForAnalysis,
+} from "../rules/tests/patterns"
 import { createRuleAnalyzer } from "../rules/tests/analyzer"
 import { buildRuleChecks } from "../rules/tests"
 import type { CheckResult } from "../types"
@@ -43,10 +50,14 @@ function readWorktree(filePath: string): string | undefined {
   }
 }
 
-// Changed files that are test files in a supported language.
+// Changed files the shared gate selects: test files in a supported language,
+// plus harness/config files, which the binary checks without language
+// resolution.
 export function changedTestChanges(directory: string, base: string, testPatterns: string[]): ExtractedChange[] {
   return diffChanges(directory, base).filter(
-    change => isSupportedLanguage(change.language) && isTestPath(change.filePath, testPatterns),
+    change =>
+      isSelectedTestPath(change.filePath, testPatterns) &&
+      (isHarnessPath(change.filePath) || isTestConfigPath(change.filePath) || isSupportedLanguage(change.language)),
   )
 }
 
@@ -119,9 +130,14 @@ export function runDiffCheck(options: DiffCheckOptions): DiffCheckResult {
   const addedByFile = new Map<string, Set<string>>()
   for (const change of changes) addedByFile.set(change.filePath, assertionLines(change.addedLines, change.language))
 
-  const analyzer = createRuleAnalyzer(() => ({ enabled: true, testPatterns, checks, isTestFile: true }))
   const findings: Finding[] = []
   for (const change of changes) {
+    const analyzer = createRuleAnalyzer(() => ({
+      enabled: true,
+      testPatterns,
+      checks,
+      isTestFile: isTestFileForAnalysis(change.filePath, testPatterns),
+    }))
     const result = runAnalyzer(analyzer, { tool: "", sessionID: "guard-check", change })
     for (const finding of result.findings ?? []) {
       if (finding.rule === "gutted-test" && isMovedTest(change, addedByFile)) {

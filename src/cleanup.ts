@@ -16,7 +16,7 @@ import { COMMENT_CHECKER_EVENT } from "./constants"
 import { detectLanguage, isSupportedLanguage } from "./core/diff"
 import type { ResolvedTestGuard } from "./core/dispatch"
 import { runProcess } from "./core/runner"
-import { isTestPath } from "./rules/tests/patterns"
+import { isHarnessPath, isSelectedTestPath, isTestConfigPath } from "./rules/tests/patterns"
 import type { HookInput } from "./types"
 
 const CLEANUP_TIMEOUT_MS = 30_000
@@ -170,9 +170,12 @@ export async function collectCleanup(options: CleanupOptions, deps: CleanupDeps 
       skipped.push(`${display(filePath, directory)} (secret file pattern)`)
       continue
     }
-    const language = detectLanguage(filePath)
-    if (!isSupportedLanguage(language)) continue
-    if (!isTestPath(filePath, testPatterns)) continue
+    if (!isSelectedTestPath(filePath, testPatterns)) continue
+    if (isHarnessPath(filePath) || isTestConfigPath(filePath)) {
+      skipped.push(`${display(filePath, directory)} (harness/config; nothing to strip)`)
+      continue
+    }
+    if (!isSupportedLanguage(detectLanguage(filePath))) continue
     testFiles.push(filePath)
   }
 

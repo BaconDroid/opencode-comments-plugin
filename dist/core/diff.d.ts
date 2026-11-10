@@ -1,4 +1,5 @@
-export type Language = "js" | "ts" | "python" | "go" | "rust" | "unknown";
+export type Language = "js" | "ts" | "python" | "go" | "rust" | "ruby" | "java" | "php" | "csharp" | "kotlin" | "swift" | "scala" | "elixir" | "lua" | "c" | "cpp" | "groovy" | "ocaml" | "elm" | "bash" | "css" | "cue" | "dart" | "dockerfile" | "haskell" | "hcl" | "html" | "proto" | "r" | "sql" | "svelte" | "toml" | "yaml" | "zig" | "unknown";
+export declare const LANGUAGE_BY_EXTENSION: Readonly<Record<string, Language>>;
 export declare function detectLanguage(filePath: string): Language;
 export declare function isSupportedLanguage(language: Language): boolean;
 export interface ExtractedChange {
