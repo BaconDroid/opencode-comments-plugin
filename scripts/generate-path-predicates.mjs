@@ -10,7 +10,8 @@
 //   TC_REPO=/path/to/test-checker node scripts/generate-path-predicates.mjs
 //   TC_REPO=/path/to/test-checker node scripts/generate-path-predicates.mjs --check
 //
-// `--check` regenerates in memory and exits 1 on a diff without writing.
+// `--check` compares the predicate body; the recorded `ref` is provenance
+// only, so a sibling commit that leaves the tables intact is not drift.
 import { execFileSync } from "node:child_process"
 import { readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
@@ -56,14 +57,32 @@ const contract = parsePathPredicateContract(readFileSync(contractPath, "utf8"))
 const ref = execFileSync("git", ["-C", tcRepo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim()
 const generated = `${JSON.stringify({ source: "BaconDroid/test-checker", ref, ...contract }, null, 2)}\n`
 
+function contractBody(value) {
+  const { source, ref, ...body } = value
+  return body
+}
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical)
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])]))
+  }
+  return value
+}
+
 if (process.argv.includes("--check")) {
-  const current = readFileSync(outputPath, "utf8")
-  if (current !== generated) {
+  const current = JSON.parse(readFileSync(outputPath, "utf8"))
+  const sameContent =
+    JSON.stringify(canonical(contractBody(current))) === JSON.stringify(canonical(contractBody(contract)))
+  if (!sameContent) {
     console.error(
       `path-predicate contract is stale: ${outputPath} does not match ${contractPath} (${ref}). ` +
         "Run `npm run rules:path-predicates` and commit the result.",
     )
     process.exit(1)
+  }
+  if (current.ref !== ref) {
+    console.log(`note: recorded ref ${current.ref}, sibling at ${ref}; content matches`)
   }
   console.log(`path-predicate contract is up to date (${ref})`)
 } else {

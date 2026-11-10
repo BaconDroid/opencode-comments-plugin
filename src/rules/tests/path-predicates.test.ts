@@ -74,3 +74,30 @@ test("the generator --check detects a contract copied with a changed predicate",
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("the generator --check passes when the predicates match and only the recorded ref differs", () => {
+  const dir = mkdtempSync(join(tmpdir(), "path-predicates-ref-"))
+  try {
+    mkdirSync(join(dir, "eval"), { recursive: true })
+    const fixture = { ...pathPredicateData, ref: "0".repeat(40) }
+    writeFileSync(join(dir, "eval", "path-predicates.json"), `${JSON.stringify(fixture, null, 2)}\n`)
+
+    const git = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" })
+    expect(git(["init", "-q"]).status).toBe(0)
+    expect(git(["add", "."]).status).toBe(0)
+    expect(
+      git(["-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-qm", "fixture"]).status,
+    ).toBe(0)
+
+    const result = spawnSync("node", [scriptPath, "--check"], {
+      cwd: repoRoot,
+      env: { ...process.env, TC_REPO: dir },
+      encoding: "utf8",
+    })
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain(`note: recorded ref ${pathPredicateData.ref}, sibling at `)
+    expect(result.stdout).toContain("; content matches")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
