@@ -950,7 +950,7 @@ function matchesAnyGlob(patterns, filePath) {
 // src/rules/tests/path-predicates.json
 var path_predicates_default = {
   source: "BaconDroid/test-checker",
-  ref: "4a009686caf82cd7c1fc5559865773665ac4b732",
+  ref: "9c983972581f68160fa84d44580ad706b667df3b",
   extension_test_name_rules: [
     {
       extensions: [
@@ -2020,7 +2020,7 @@ var ADVISORY_RULES = [
 // src/rules/tests/binary-rule-ids.json
 var binary_rule_ids_default = {
   source: "BaconDroid/test-checker",
-  ref: "4313271890fb9ff79be5b0fb48ad1a39856b3615",
+  ref: "9c983972581f68160fa84d44580ad706b667df3b",
   rules: [
     "skip-added",
     "focus-added",
